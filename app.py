@@ -5,6 +5,7 @@ from pathlib import Path
 import requests
 import base64
 import io
+import zipfile
 
 st.set_page_config(
     page_title="MásOnline | Venta",
@@ -86,28 +87,30 @@ LOCAL_FILE = Path(__file__).resolve().parent / "Dashboard Mas-Online.xlsx"
 REPO = "2026-Masonline/masonline-dashboard"
 BRANCH = "main"
 EXCEL_NAME = "Dashboard Mas-Online.xlsx"
-EXCEL_API_URL = (
-    f"https://api.github.com/repos/{REPO}/contents/"
-    f"{requests.utils.quote(EXCEL_NAME)}?ref={BRANCH}"
-)
+REPO_ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 
 def obtener_excel():
     if LOCAL_FILE.exists():
         return pd.ExcelFile(LOCAL_FILE, engine="openpyxl")
 
-    response = requests.get(
-        EXCEL_API_URL,
-        headers={"Accept": "application/vnd.github+json"},
-        timeout=30,
-    )
+    response = requests.get(REPO_ZIP_URL, timeout=60)
     response.raise_for_status()
 
-    data = response.json()
-    if data.get("encoding") != "base64" or "content" not in data:
-        raise RuntimeError("GitHub no devolvió el contenido del Excel.")
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        candidatos = [
+            nombre for nombre in z.namelist()
+            if nombre.endswith("/" + EXCEL_NAME) or nombre == EXCEL_NAME
+        ]
 
-    contenido = base64.b64decode(data["content"])
-    return pd.ExcelFile(io.BytesIO(contenido), engine="openpyxl")
+        if not candidatos:
+            raise FileNotFoundError(
+                f"No encontré '{EXCEL_NAME}' dentro del repositorio GitHub."
+            )
+
+        excel_bytes = z.read(candidatos[0])
+
+    return pd.ExcelFile(io.BytesIO(excel_bytes), engine="openpyxl")
+
 
 def moneda_mm(valor):
     return f"${valor/1e6:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -393,4 +396,3 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True
 )
-
