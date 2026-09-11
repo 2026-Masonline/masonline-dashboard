@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from pathlib import Path
 
 st.set_page_config(
     page_title="MásOnline | Venta",
@@ -78,7 +79,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------- HELPERS ----------
-FILE = "Dashboard Mas-Online.xlsx"
+FILE = Path(__file__).resolve().parent / "Dashboard Mas-Online.xlsx"
 
 def moneda_mm(valor):
     return f"${valor/1e6:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -88,7 +89,7 @@ def porcentaje(valor):
 
 @st.cache_data
 def cargar_dashboard():
-    df = pd.read_excel(FILE, sheet_name="Dashboard")
+    df = pd.read_excel(FILE, sheet_name="Dashboard", engine="openpyxl")
 
     fechas = pd.to_datetime(df.iloc[:, 8], errors="coerce")
     compania = pd.to_numeric(df.iloc[:, 9], errors="coerce")
@@ -108,7 +109,7 @@ def cargar_dashboard():
 
 @st.cache_data
 def cargar_ecommerce_historico(sheet_name):
-    d = pd.read_excel(FILE, sheet_name=sheet_name)
+    d = pd.read_excel(FILE, sheet_name=sheet_name, engine="openpyxl")
     d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
     d["Venta - Ecommerce"] = pd.to_numeric(
         d["Venta - Ecommerce"], errors="coerce"
@@ -120,10 +121,9 @@ def cargar_ecommerce_historico(sheet_name):
 # ---------- CARGA ----------
 try:
     df = cargar_dashboard()
-except Exception:
+except Exception as e:
     st.error(
-        "No pude leer el Excel. Verificá que 'Dashboard Mas-Online.xlsx' "
-        "esté en la misma carpeta que app.py."
+        f"No pude leer el Excel. Error: {type(e).__name__}: {e}"
     )
     st.stop()
 
@@ -363,4 +363,3 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True
 )
-
