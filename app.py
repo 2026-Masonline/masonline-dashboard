@@ -3,9 +3,7 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 import requests
-import base64
 import io
-import zipfile
 
 st.set_page_config(
     page_title="MásOnline | Venta",
@@ -84,33 +82,7 @@ st.markdown("""
 
 # ---------- HELPERS ----------
 LOCAL_FILE = Path(__file__).resolve().parent / "Dashboard Mas-Online.xlsx"
-REPO = "2026-Masonline/masonline-dashboard"
-BRANCH = "main"
-EXCEL_NAME = "Dashboard Mas-Online.xlsx"
-REPO_ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
-
-def obtener_excel():
-    if LOCAL_FILE.exists():
-        return pd.ExcelFile(LOCAL_FILE, engine="openpyxl")
-
-    response = requests.get(REPO_ZIP_URL, timeout=60)
-    response.raise_for_status()
-
-    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-        candidatos = [
-            nombre for nombre in z.namelist()
-            if nombre.endswith("/" + EXCEL_NAME) or nombre == EXCEL_NAME
-        ]
-
-        if not candidatos:
-            raise FileNotFoundError(
-                f"No encontré '{EXCEL_NAME}' dentro del repositorio GitHub."
-            )
-
-        excel_bytes = z.read(candidatos[0])
-
-    return pd.ExcelFile(io.BytesIO(excel_bytes), engine="openpyxl")
-
+EXCEL_URL = "https://github.com/2026-Masonline/masonline-dashboard/raw/refs/heads/main/Dashboard%20Mas-Online.xlsx"
 
 def moneda_mm(valor):
     return f"${valor/1e6:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -120,8 +92,12 @@ def porcentaje(valor):
 
 @st.cache_data
 def cargar_dashboard():
-    xls = obtener_excel()
-    df = pd.read_excel(xls, sheet_name="Dashboard")
+    if LOCAL_FILE.exists():
+        df = pd.read_excel(LOCAL_FILE, sheet_name="Dashboard", engine="openpyxl")
+    else:
+        response = requests.get(EXCEL_URL, timeout=60)
+        response.raise_for_status()
+        df = pd.read_excel(io.BytesIO(response.content), sheet_name="Dashboard", engine="openpyxl")
 
     fechas = pd.to_datetime(df.iloc[:, 8], errors="coerce")
     compania = pd.to_numeric(df.iloc[:, 9], errors="coerce")
@@ -141,8 +117,12 @@ def cargar_dashboard():
 
 @st.cache_data
 def cargar_ecommerce_historico(sheet_name):
-    xls = obtener_excel()
-    d = pd.read_excel(xls, sheet_name=sheet_name)
+    if LOCAL_FILE.exists():
+        d = pd.read_excel(LOCAL_FILE, sheet_name=sheet_name, engine="openpyxl")
+    else:
+        response = requests.get(EXCEL_URL, timeout=60)
+        response.raise_for_status()
+        d = pd.read_excel(io.BytesIO(response.content), sheet_name=sheet_name, engine="openpyxl")
     d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
     d["Venta - Ecommerce"] = pd.to_numeric(
         d["Venta - Ecommerce"], errors="coerce"
