@@ -79,7 +79,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------- HELPERS ----------
-FILE = Path(__file__).resolve().parent / "Dashboard Mas-Online.xlsx"
+LOCAL_FILE = Path(__file__).resolve().parent / "Dashboard Mas-Online.xlsx"
+EXCEL_URL = "https://raw.githubusercontent.com/2026-Masonline/masonline-dashboard/main/Dashboard%20Mas-Online.xlsx"
 
 def moneda_mm(valor):
     return f"${valor/1e6:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -89,7 +90,10 @@ def porcentaje(valor):
 
 @st.cache_data
 def cargar_dashboard():
-    df = pd.read_excel(FILE, sheet_name="Dashboard", engine="openpyxl")
+    try:
+        df = pd.read_excel(LOCAL_FILE, sheet_name="Dashboard", engine="openpyxl")
+    except FileNotFoundError:
+        df = pd.read_excel(EXCEL_URL, sheet_name="Dashboard", engine="openpyxl")
 
     fechas = pd.to_datetime(df.iloc[:, 8], errors="coerce")
     compania = pd.to_numeric(df.iloc[:, 9], errors="coerce")
@@ -109,7 +113,10 @@ def cargar_dashboard():
 
 @st.cache_data
 def cargar_ecommerce_historico(sheet_name):
-    d = pd.read_excel(FILE, sheet_name=sheet_name, engine="openpyxl")
+    try:
+        d = pd.read_excel(LOCAL_FILE, sheet_name=sheet_name, engine="openpyxl")
+    except FileNotFoundError:
+        d = pd.read_excel(EXCEL_URL, sheet_name=sheet_name, engine="openpyxl")
     d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
     d["Venta - Ecommerce"] = pd.to_numeric(
         d["Venta - Ecommerce"], errors="coerce"
@@ -363,5 +370,4 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True
 )
-
 
