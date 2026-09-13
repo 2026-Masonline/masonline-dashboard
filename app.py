@@ -144,13 +144,35 @@ def normalize_uploaded_excel(file):
         orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
         units=("Cantidad Venta Operativa - Ecommerce", "sum")
     )
+    out = out.rename(columns={"Fecha": "date"})
     out["source"] = "Reporte subido"
     return out
 
 if uploaded is not None:
     try:
-        df = normalize_uploaded_excel(uploaded)
-        st.success(f"Datos actualizados desde: {uploaded.name} · {len(df)} días encontrados")
+        uploaded_df = normalize_uploaded_excel(uploaded)
+
+        # Conservamos agosto 2026 y septiembre 2025 de data.csv para las comparaciones.
+        # El Excel subido reemplaza únicamente los registros de septiembre 2026.
+        historical = base_df[
+            ~(
+                (base_df["date"].dt.year == 2026) &
+                (base_df["date"].dt.month == 9)
+            )
+        ].copy()
+
+        df = pd.concat([historical, uploaded_df], ignore_index=True)
+        df = (
+            df.sort_values("date")
+              .drop_duplicates(subset=["date"], keep="last")
+              .reset_index(drop=True)
+        )
+
+        st.success(
+            f"Datos actualizados desde: {uploaded.name} · "
+            f"{len(uploaded_df)} días encontrados · "
+            f"Se mantienen las bases históricas para las comparaciones."
+        )
     except Exception as e:
         st.error(f"No pude procesar el Excel: {e}")
         st.stop()
@@ -159,6 +181,9 @@ else:
 
 # El reporte puede traer el día actual todavía abierto. Para el dashboard usamos
 # siempre el último día cerrado: excluimos la fecha de hoy de Argentina.
+df["date"] = pd.to_datetime(df["date"], errors="coerce")
+df = df.dropna(subset=["date"]).copy()
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
