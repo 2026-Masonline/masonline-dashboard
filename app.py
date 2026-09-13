@@ -7,7 +7,7 @@ import calendar
 
 st.set_page_config(page_title="MásOnline | Ecommerce", page_icon="📊", layout="wide")
 
-st.markdown(f"""
+st.markdown("""
 <style>
     .stApp { background: #f5f7fa; }
     .block-container { max-width: 1500px; padding: 0 1.2rem 1.2rem; }
