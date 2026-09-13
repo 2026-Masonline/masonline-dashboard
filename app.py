@@ -2,377 +2,174 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
-import requests
-import io
+import calendar
 
-st.set_page_config(
-    page_title="MásOnline | Venta",
-    page_icon="📊",
-    layout="wide"
-)
+st.set_page_config(page_title="MásOnline | Ecommerce", page_icon="📊", layout="wide")
 
-# ---------- ESTILO ----------
 st.markdown("""
 <style>
-    .main {background-color:#f5f6f7;}
-    .block-container {padding-top:1.5rem; padding-bottom:1.5rem; max-width:1500px;}
-    .kpi {
-        background:white;
-        border-radius:16px;
-        padding:20px 22px;
-        box-shadow:0 2px 10px rgba(0,0,0,.06);
-        min-height:145px;
+    .stApp { background: #f5f7fa; }
+    .block-container { max-width: 1500px; padding-top: 1.2rem; }
+    .title { font-size: 34px; font-weight: 800; color: #20252b; margin-bottom: 0; }
+    .subtitle { color: #6b7280; font-size: 15px; margin-bottom: 22px; }
+    .card {
+        background: white; border-radius: 14px; padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        min-height: 125px; border: 1px solid #e8ebef;
     }
-    .kpi-title {
-        font-size:13px;
-        font-weight:800;
-        text-transform:uppercase;
-        color:#777;
-        letter-spacing:.05em;
-    }
-    .kpi-value {
-        font-size:30px;
-        font-weight:800;
-        color:#20242a;
-        margin-top:8px;
-    }
-    .kpi-sub {
-        font-size:13px;
-        color:#777;
-        margin-top:6px;
-    }
-    .section {
-        font-size:20px;
-        font-weight:800;
-        color:#20242a;
-        margin:22px 0 10px;
-    }
-    .compare-card {
-        background:white;
-        border-radius:16px;
-        padding:18px 20px;
-        box-shadow:0 2px 10px rgba(0,0,0,.06);
-        min-height:125px;
-    }
-    .compare-title {
-        font-size:13px;
-        font-weight:800;
-        text-transform:uppercase;
-        color:#777;
-        letter-spacing:.04em;
-    }
-    .compare-value {
-        font-size:28px;
-        font-weight:800;
-        color:#20242a;
-        margin-top:8px;
-    }
-    .compare-detail {
-        font-size:12px;
-        color:#777;
-        margin-top:5px;
-    }
-    .source {
-        color:#777;
-        font-size:12px;
-        margin-top:22px;
-    }
+    .label { color: #6b7280; font-size: 14px; font-weight: 600; }
+    .value { color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }
+    .small { color: #6b7280; font-size: 13px; margin-top: 5px; }
+    .section { font-size: 20px; font-weight: 800; color: #20252b; margin: 28px 0 12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- HELPERS ----------
-LOCAL_FILE = Path(__file__).resolve().parent / "Dashboard Mas-Online.xlsx"
-EXCEL_URL = "https://github.com/2026-Masonline/masonline-dashboard/raw/refs/heads/main/Dashboard%20Mas-Online.xlsx"
-
-def moneda_mm(valor):
-    return f"${valor/1e6:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def porcentaje(valor):
-    return f"{valor:+.1%}"
+DATA_FILE = Path(__file__).resolve().parent / "data.csv"
 
 @st.cache_data
-def cargar_dashboard():
-    if LOCAL_FILE.exists():
-        df = pd.read_excel(LOCAL_FILE, sheet_name="Dashboard", engine="openpyxl")
-    else:
-        response = requests.get(EXCEL_URL, timeout=60)
-        response.raise_for_status()
-        df = pd.read_excel(io.BytesIO(response.content), sheet_name="Dashboard", engine="openpyxl")
+def load_data():
+    df = pd.read_csv(DATA_FILE)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
-    fechas = pd.to_datetime(df.iloc[:, 8], errors="coerce")
-    compania = pd.to_numeric(df.iloc[:, 9], errors="coerce")
-    ecommerce = pd.to_numeric(df.iloc[:, 10], errors="coerce")
-    pedidos = pd.to_numeric(df.iloc[:, 11], errors="coerce")
-    unidades = pd.to_numeric(df.iloc[:, 12], errors="coerce")
-
-    datos = pd.DataFrame({
-        "Fecha": fechas,
-        "Facturacion_Compañia": compania,
-        "Venta_Ecommerce": ecommerce,
-        "Pedidos": pedidos,
-        "Unidades": unidades
-    }).dropna(subset=["Fecha", "Facturacion_Compañia", "Venta_Ecommerce"])
-
-    return datos
-
-@st.cache_data
-def cargar_ecommerce_historico(sheet_name):
-    if LOCAL_FILE.exists():
-        d = pd.read_excel(LOCAL_FILE, sheet_name=sheet_name, engine="openpyxl")
-    else:
-        response = requests.get(EXCEL_URL, timeout=60)
-        response.raise_for_status()
-        d = pd.read_excel(io.BytesIO(response.content), sheet_name=sheet_name, engine="openpyxl")
-    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
-    d["Venta - Ecommerce"] = pd.to_numeric(
-        d["Venta - Ecommerce"], errors="coerce"
-    ).fillna(0)
-
-    d = d.dropna(subset=["Fecha"])
-    return d
-
-# ---------- CARGA ----------
 try:
-    df = cargar_dashboard()
+    df = load_data()
 except Exception as e:
-    st.error(
-        f"No pude leer el Excel. Error: {type(e).__name__}: {e}"
-    )
+    st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
 
-# ---------- SEPTIEMBRE 2026 ----------
-df = df[
-    (df["Fecha"].dt.year == 2026) &
-    (df["Fecha"].dt.month == 9)
-].copy()
+# Current period: September 2026
+current = df[(df["source"] == "Dashboard") &
+             (df["date"].dt.year == 2026) &
+             (df["date"].dt.month == 9)].copy()
 
-df = df.sort_values("Fecha")
-
-if df.empty:
-    st.warning("No hay datos de septiembre 2026.")
+if current.empty:
+    st.error("No hay datos de septiembre 2026.")
     st.stop()
 
-# ---------- CALCULOS PRINCIPALES ----------
-dias_cargados = len(df)
-ultimo = df.iloc[-1]
-dia_corte = int(ultimo["Fecha"].day)
-dias_mes = int(ultimo["Fecha"].days_in_month)
+current = current.sort_values("date")
+latest = current.iloc[-1]
+prev = current.iloc[-2] if len(current) > 1 else None
+days_elapsed = len(current)
+days_month = calendar.monthrange(2026, 9)[1]
 
-venta_ecom = df["Venta_Ecommerce"].sum()
-venta_compania = df["Facturacion_Compañia"].sum()
-share = venta_ecom / venta_compania if venta_compania else 0
+acc_ecom = current["ecommerce_tax"].sum()
+acc_company = current["company_tax"].sum()
+share = acc_ecom / acc_company if acc_company else 0
+target = 0.03
+gap = target - share
 
-objetivo = 0.03
-avance_objetivo = share / objetivo if objetivo else 0
+projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
+day_change = ((latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1) if prev is not None and prev["ecommerce_tax"] else 0
 
-venta_ultimo = ultimo["Venta_Ecommerce"]
+# Like-for-like comparisons: same number of elapsed days
+n = days_elapsed
+aug = df[(df["source"] == "Agosto 2026") &
+         (df["date"].dt.year == 2026) &
+         (df["date"].dt.month == 8)].sort_values("date").head(n)
+sep25 = df[(df["source"] == "Septiembre 2025") &
+           (df["date"].dt.year == 2025) &
+           (df["date"].dt.month == 9)].sort_values("date").head(n)
 
-if len(df) >= 2:
-    venta_anterior = df.iloc[-2]["Venta_Ecommerce"]
-    vs_dia_anterior = (
-        venta_ultimo / venta_anterior - 1
-        if venta_anterior else 0
-    )
-else:
-    vs_dia_anterior = 0
+aug_acc = aug["ecommerce_tax"].sum()
+sep25_acc = sep25["ecommerce_tax"].sum()
+vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
+vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 
-promedio_diario = venta_ecom / dias_cargados
-proyeccion = promedio_diario * dias_mes
+def money(v):
+    return f"${v/1_000_000:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# ---------- COMPARATIVOS LIKE-FOR-LIKE ----------
-# Se compara el mismo número de días cargados:
-# Sep-2026 1..N vs Ago-2026 1..N
-# Sep-2026 1..N vs Sep-2025 1..N
-try:
-    agosto = cargar_ecommerce_historico("Agosto 2026")
-    agosto_mismo_periodo = agosto[
-        agosto["Fecha"].dt.day <= dia_corte
-    ]["Venta - Ecommerce"].sum()
-    vs_mes_anterior = (
-        venta_ecom / agosto_mismo_periodo - 1
-        if agosto_mismo_periodo else None
-    )
-except Exception:
-    agosto_mismo_periodo = None
-    vs_mes_anterior = None
+def pct(v):
+    return f"{v*100:.2f}%".replace(".", ",")
 
-try:
-    sep25 = cargar_ecommerce_historico("Septiembre 2025")
-    sep25_mismo_periodo = sep25[
-        sep25["Fecha"].dt.day <= dia_corte
-    ]["Venta - Ecommerce"].sum()
-    vs_2025 = (
-        venta_ecom / sep25_mismo_periodo - 1
-        if sep25_mismo_periodo else None
-    )
-except Exception:
-    sep25_mismo_periodo = None
-    vs_2025 = None
+st.markdown('<div class="title">MásOnline | Dashboard Ecommerce</div>', unsafe_allow_html=True)
+st.markdown(
+    f'<div class="subtitle">Septiembre 2026 · Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</div>',
+    unsafe_allow_html=True
+)
 
-# ---------- HEADER ----------
-c1, c2 = st.columns([3, 1])
+# KPI cards
+c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    st.title("Venta e-commerce")
-    st.caption(
-        f"MásOnline · Septiembre 2026 · "
-        f"Último cierre: {ultimo['Fecha'].strftime('%d/%m/%Y')}"
-    )
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">PARTICIPACIÓN E-COMMERCE</div>
+      <div class="value">{pct(share)}</div>
+      <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
+    </div>""", unsafe_allow_html=True)
 
 with c2:
-    st.markdown(
-        "<div style='text-align:right;font-size:28px;font-weight:800;'>"
-        "MÁS<span style='font-weight:400;'>ONLINE</span></div>",
-        unsafe_allow_html=True
-    )
-
-# ---------- KPIs PRINCIPALES ----------
-cols = st.columns(4)
-
-with cols[0]:
     st.markdown(f"""
-    <div class="kpi">
-        <div class="kpi-title">Share e-commerce</div>
-        <div class="kpi-value">{share:.2%}</div>
-        <div class="kpi-sub">Objetivo: 3,00%</div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="card">
+      <div class="label">VENTA DÍA ANTERIOR</div>
+      <div class="value">{money(latest["ecommerce_tax"])}</div>
+      <div class="small">Vs día previo: {day_change:+.2%}</div>
+    </div>""".replace("%", "%"), unsafe_allow_html=True)
 
-with cols[1]:
-    color = "#d66c00" if vs_dia_anterior < 0 else "#4b9b63"
+with c3:
     st.markdown(f"""
-    <div class="kpi">
-        <div class="kpi-title">Venta día anterior</div>
-        <div class="kpi-value">{moneda_mm(venta_ultimo)}</div>
-        <div class="kpi-sub" style="color:#777;">
-            Cierre {ultimo['Fecha'].strftime('%d/%m')}
-        </div>
-        <div class="kpi-sub" style="color:{color};font-weight:800;">
-            Vs día anterior: {porcentaje(vs_dia_anterior)}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="card">
+      <div class="label">MES EN CURSO</div>
+      <div class="value">{money(acc_ecom)}</div>
+      <div class="small">{int(latest["orders"]):,} pedidos · {int(latest["units"]):,} unidades</div>
+    </div>""".replace(",", "."), unsafe_allow_html=True)
 
-with cols[2]:
+with c4:
     st.markdown(f"""
-    <div class="kpi">
-        <div class="kpi-title">Mes en curso</div>
-        <div class="kpi-value">{moneda_mm(venta_ecom)}</div>
-        <div class="kpi-sub">
-            {dias_cargados} días cargados · Promedio {moneda_mm(promedio_diario)}/día
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="card">
+      <div class="label">PROYECCIÓN DE CIERRE</div>
+      <div class="value">{money(projection)}</div>
+      <div class="small">Promedio diario × {days_month} días</div>
+    </div>""", unsafe_allow_html=True)
 
-with cols[3]:
-    st.markdown(f"""
-    <div class="kpi">
-        <div class="kpi-title">Proyección de cierre</div>
-        <div class="kpi-value">{moneda_mm(proyeccion)}</div>
-        <div class="kpi-sub">
-            Run-rate actual · {dias_mes} días
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_html=True)
+st.progress(min(share / target, 1.0))
+st.caption(f"Participación actual: {pct(share)} · Objetivo: {pct(target)}")
 
-# ---------- OBJETIVO ----------
-st.markdown(
-    '<div class="section">Avance hacia el objetivo de 3%</div>',
-    unsafe_allow_html=True
+st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+chart = px.line(
+    current, x="date", y="ecommerce_tax", markers=True,
+    labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
 )
-
-st.progress(min(max(avance_objetivo, 0), 1.0))
-st.caption(
-    f"Avance: {avance_objetivo:.1%} · "
-    f"Brecha actual: {(objetivo-share)*100:.2f} puntos porcentuales"
+chart.update_layout(
+    height=430, margin=dict(l=10,r=10,t=20,b=10),
+    yaxis_tickprefix="$", yaxis_tickformat=",.0f",
+    hovermode="x unified"
 )
+st.plotly_chart(chart, use_container_width=True)
 
-# ---------- GRAFICO ----------
-st.markdown(
-    '<div class="section">Evolución diaria de venta e-commerce</div>',
-    unsafe_allow_html=True
-)
-
-chart = df[["Fecha", "Venta_Ecommerce"]].copy()
-chart["Venta MM"] = chart["Venta_Ecommerce"] / 1e6
-
-fig = px.line(
-    chart,
-    x="Fecha",
-    y="Venta MM",
-    markers=True,
-    labels={"Fecha": "", "Venta MM": "Venta ($ MM)"}
-)
-
-fig.update_layout(
-    height=390,
-    margin=dict(l=10, r=10, t=10, b=10),
-    plot_bgcolor="white",
-    paper_bgcolor="white"
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# ---------- COMPARATIVOS ----------
-st.markdown(
-    '<div class="section">Evolución vs períodos comparables</div>',
-    unsafe_allow_html=True
-)
-
+st.markdown('<div class="section">Comparaciones — misma cantidad de días</div>', unsafe_allow_html=True)
 a, b, c = st.columns(3)
 
+def comparison_card(title, value, base_text):
+    sign = "+" if value >= 0 else ""
+    return f"""
+    <div class="card">
+      <div class="label">{title}</div>
+      <div class="value">{sign}{value*100:.1f}%</div>
+      <div class="small">{base_text}</div>
+    </div>"""
+
 with a:
-    valor = "—" if vs_mes_anterior is None else porcentaje(vs_mes_anterior)
-    detalle = (
-        f"Sep 2026 1–{dia_corte}: {moneda_mm(venta_ecom)}"
-        + (
-            f" · Ago 2026 1–{dia_corte}: {moneda_mm(agosto_mismo_periodo)}"
-            if agosto_mismo_periodo is not None else ""
-        )
-    )
-    st.markdown(f"""
-    <div class="compare-card">
-        <div class="compare-title">Vs mes anterior</div>
-        <div class="compare-value">{valor}</div>
-        <div class="compare-detail">{detalle}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    if vs_aug is not None:
+        st.markdown(comparison_card("VS MES ANTERIOR", vs_aug, f"Sep 1–{n} vs Ago 1–{n}"), unsafe_allow_html=True)
+    else:
+        st.markdown(comparison_card("VS MES ANTERIOR", 0, "Sin base disponible"), unsafe_allow_html=True)
 
 with b:
-    valor = "—" if vs_2025 is None else porcentaje(vs_2025)
-    detalle = (
-        f"Sep 2026 1–{dia_corte}: {moneda_mm(venta_ecom)}"
-        + (
-            f" · Sep 2025 1–{dia_corte}: {moneda_mm(sep25_mismo_periodo)}"
-            if sep25_mismo_periodo is not None else ""
-        )
-    )
-    st.markdown(f"""
-    <div class="compare-card">
-        <div class="compare-title">Vs 2025</div>
-        <div class="compare-value">{valor}</div>
-        <div class="compare-detail">{detalle}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    if vs_25 is not None:
+        st.markdown(comparison_card("VS 2025", vs_25, f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"), unsafe_allow_html=True)
+    else:
+        st.markdown(comparison_card("VS 2025", 0, "Sin base disponible"), unsafe_allow_html=True)
 
 with c:
     st.markdown(f"""
-    <div class="compare-card">
-        <div class="compare-title">Avance al objetivo</div>
-        <div class="compare-value">{avance_objetivo:.1%}</div>
-        <div class="compare-detail">
-            Share actual {share:.2%} · Objetivo 3,00%
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="card">
+      <div class="label">AVANCE AL OBJETIVO</div>
+      <div class="value">{share/target:.1%}</div>
+      <div class="small">Objetivo de participación: 3,00%</div>
+    </div>""", unsafe_allow_html=True)
 
-# ---------- FUENTE ----------
-st.markdown(
-    '<div class="source">'
-    'Fuente: venta con impuesto extraída de MicroStrategy · '
-    'Datos cargados desde el Excel de MásOnline. '
-    'Las comparaciones contra mes anterior y 2025 utilizan el mismo '
-    'número de días cargados del mes en curso.'
-    '</div>',
-    unsafe_allow_html=True
-)
+st.markdown("---")
+st.caption("Fuente: venta con impuesto de MicroStrategy. Comparaciones históricas calculadas sobre la misma cantidad de días transcurridos.")
