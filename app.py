@@ -9,18 +9,79 @@ st.set_page_config(page_title="MásOnline | Ecommerce", page_icon="📊", layout
 st.markdown("""
 <style>
     .stApp { background: #f5f7fa; }
-    .block-container { max-width: 1500px; padding-top: 1.2rem; }
-    .title { foimportnt-size: 34px; font-weight: 800; color: #20252b; margin-bottom: 0; }
-    .subtitle { color: #6b7280; font-size: 15px; margin-bottom: 22px; }
+    .block-container { max-width: 1500px; padding: 0 1.2rem 1.2rem; }
+
+    .hero {
+        background: #171b20;
+        margin: -1rem -1.2rem 1.2rem;
+        padding: 22px 28px;
+        color: white;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 4px solid #20252b;
+    }
+    .hero-brand { font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+    .hero-brand span { font-weight: 400; }
+    .hero-sub { font-size: 11px; letter-spacing: 3px; margin-top: 3px; opacity: .85; }
+    .hero-date { text-align: right; font-size: 19px; font-weight: 800; }
+    .hero-date small { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; opacity: .8; }
+
     .card {
         background: white; border-radius: 14px; padding: 20px 22px;
         box-shadow: 0 2px 10px rgba(0,0,0,.06);
         min-height: 125px; border: 1px solid #e8ebef;
     }
-    .label { color: #6b7280; font-size: 14px; font-weight: 600; }
+    .label { color: #6b7280; font-size: 14px; font-weight: 700; }
     .value { color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }
-    .small { color: #6b7280; font-size: 13px; margin-top: 5px; }
-    .section { font-size: 20px; font-weight: 800; color: #20252b; margin: 28px 0 12px; }
+    .small { color: #6b7280; font-size: 13px; margin-top: 7px; }
+
+    .section {
+        font-size: 20px; font-weight: 800; color: #20252b;
+        margin: 26px 0 12px;
+    }
+
+    .progress-wrap {
+        background: white; border-radius: 14px; padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        border: 1px solid #e8ebef;
+    }
+    .progress-track {
+        height: 16px; background: #e6e9ed; border-radius: 20px;
+        overflow: hidden; margin: 10px 0 8px;
+    }
+    .progress-fill { height: 100%; background: #2f9e66; border-radius: 20px; }
+    .progress-row {
+        display: flex; justify-content: space-between; color: #6b7280;
+        font-size: 13px;
+    }
+    .progress-target {
+        color: #208653; font-size: 30px; font-weight: 800;
+        text-align: right; line-height: 1;
+    }
+    .progress-target small { display: block; color: #6b7280; font-size: 12px; font-weight: 400; margin-top: 5px; }
+
+    .chart-card {
+        background: white; border-radius: 14px; padding: 12px 16px 4px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        border: 1px solid #e8ebef;
+    }
+
+    .compare-card {
+        background: white; border-radius: 14px; padding: 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        border: 1px solid #e8ebef; min-height: 125px;
+    }
+    .compare-title { color: #20252b; font-size: 16px; font-weight: 800; }
+    .compare-base { color: #6b7280; font-size: 13px; margin-top: 5px; }
+    .compare-value { font-size: 31px; font-weight: 800; margin-top: 14px; }
+    .negative { color: #d64545; }
+    .positive { color: #208653; }
+
+    .footer {
+        display: flex; justify-content: space-between; color: #6b7280;
+        font-size: 12px; margin-top: 12px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -95,11 +156,18 @@ def pct(v):
 def pct_change(v):
     return f"{v:+.2%}".replace(".", ",")
 
-st.markdown('<div class="title">MásOnline | Dashboard Ecommerce</div>', unsafe_allow_html=True)
-st.markdown(
-    f'<div class="subtitle">Septiembre 2026 · Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</div>',
-    unsafe_allow_html=True
-)
+st.markdown(f"""
+<div class="hero">
+  <div>
+    <div class="hero-brand">Más<span>Online</span></div>
+    <div class="hero-sub">E-COMMERCE</div>
+  </div>
+  <div class="hero-date">
+    Septiembre 2026
+    <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 c1, c2, c3, c4 = st.columns(4)
 
@@ -136,10 +204,26 @@ with c4:
     </div>""", unsafe_allow_html=True)
 
 st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_html=True)
-st.progress(min(share / target, 1.0))
-st.caption(f"Participación actual: {pct(share)} · Objetivo: {pct(target)}")
+progress = min(share / target, 1.0) * 100
+st.markdown(f"""
+<div class="progress-wrap">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="flex:1;">
+      <div class="progress-track"><div class="progress-fill" style="width:{progress:.1f}%;"></div></div>
+      <div class="progress-row">
+        <span>Participación actual: {pct(share)}</span>
+        <span>Objetivo: {pct(target)}</span>
+      </div>
+    </div>
+    <div style="width:150px;">
+      <div class="progress-target">{share/target:.0%}<small>del objetivo</small></div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+st.markdown('<div class="chart-card">', unsafe_allow_html=True)
 chart = px.line(
     current, x="date", y="ecommerce_tax", markers=True,
     labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
@@ -150,38 +234,33 @@ chart.update_layout(
     hovermode="x unified"
 )
 st.plotly_chart(chart, use_container_width=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown('<div class="section">Comparaciones — misma cantidad de días</div>', unsafe_allow_html=True)
-a, b, c = st.columns(3)
+st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
+st.markdown('<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Variación de ventas e-commerce sobre la misma cantidad de días</div>', unsafe_allow_html=True)
 
-def comparison_card(title, value, base_text):
-    sign = "+" if value >= 0 else ""
+a, b = st.columns(2)
+
+def compare_box(title, value, base_text):
+    cls = "positive" if value >= 0 else "negative"
+    arrow = "↑" if value >= 0 else "↓"
     return f"""
-    <div class="card">
-      <div class="label">{title}</div>
-      <div class="value">{sign}{value*100:.1f}%</div>
-      <div class="small">{base_text}</div>
+    <div class="compare-card">
+      <div class="compare-title">{title}</div>
+      <div class="compare-base">{base_text}</div>
+      <div class="compare-value {cls}">{arrow}&nbsp;&nbsp;{value:+.1%}</div>
     </div>"""
 
 with a:
     if vs_aug is not None:
-        st.markdown(comparison_card("VS MES ANTERIOR", vs_aug, f"Sep 1–{n} vs Ago 1–{n}"), unsafe_allow_html=True)
+        st.markdown(compare_box("VS MES ANTERIOR", vs_aug, f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"), unsafe_allow_html=True)
     else:
-        st.markdown(comparison_card("VS MES ANTERIOR", 0, "Sin base disponible"), unsafe_allow_html=True)
+        st.markdown(compare_box("VS MES ANTERIOR", 0, "Sin base disponible"), unsafe_allow_html=True)
 
 with b:
     if vs_25 is not None:
-        st.markdown(comparison_card("VS 2025", vs_25, f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"), unsafe_allow_html=True)
+        st.markdown(compare_box("VS MISMO MES AÑO ANTERIOR", vs_25, f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"), unsafe_allow_html=True)
     else:
-        st.markdown(comparison_card("VS 2025", 0, "Sin base disponible"), unsafe_allow_html=True)
+        st.markdown(compare_box("VS MISMO MES AÑO ANTERIOR", 0, "Sin base disponible"), unsafe_allow_html=True)
 
-with c:
-    st.markdown(f"""
-    <div class="card">
-      <div class="label">AVANCE AL OBJETIVO</div>
-      <div class="value">{share/target:.1%}</div>
-      <div class="small">Objetivo de participación: 3,00%</div>
-    </div>""", unsafe_allow_html=True)
-
-st.markdown("---")
-st.caption("Fuente: venta con impuesto de MicroStrategy. Comparaciones históricas calculadas sobre la misma cantidad de días transcurridos.")
+st.markdown('<div class="footer"><span>Fuente: venta con impuesto de MicroStrategy.</span><span>MásOnline &nbsp;|&nbsp; E-commerce</span></div>', unsafe_allow_html=True)
