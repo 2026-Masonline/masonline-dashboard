@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
+import base64
 import calendar
 
 st.set_page_config(page_title="MásOnline | Ecommerce", page_icon="📊", layout="wide")
