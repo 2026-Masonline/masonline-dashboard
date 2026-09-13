@@ -1,4 +1,4 @@
-import streamlit as st
+streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
@@ -10,7 +10,7 @@ st.markdown("""
 <style>
     .stApp { background: #f5f7fa; }
     .block-container { max-width: 1500px; padding-top: 1.2rem; }
-    .title { font-size: 34px; font-weight: 800; color: #20252b; margin-bottom: 0; }
+    .title { foimportnt-size: 34px; font-weight: 800; color: #20252b; margin-bottom: 0; }
     .subtitle { color: #6b7280; font-size: 15px; margin-bottom: 22px; }
     .card {
         background: white; border-radius: 14px; padding: 20px 22px;
@@ -26,28 +26,28 @@ st.markdown("""
 
 DATA_FILE = Path(__file__).resolve().parent / "data.csv"
 
-@st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_FILE)
-    df["date"] = pd.to_datetime(df["date"])
-    return df
-
+# Read the CSV directly. No cache, so a new data.csv is picked up after redeploy/refresh.
 try:
-    df = load_data()
+    df = pd.read_csv(DATA_FILE)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df = df.dropna(subset=["date"])
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
 
-# Current period: September 2026
-current = df[(df["source"] == "Dashboard") &
-             (df["date"].dt.year == 2026) &
-             (df["date"].dt.month == 9)].copy()
+# Current period: September 2026. The source column is intentionally not used
+# because the uploaded report labels all rows with the same source text.
+current = df[
+    (df["date"].dt.year == 2026) &
+    (df["date"].dt.month == 9)
+].copy().sort_values("date")
 
 if current.empty:
     st.error("No hay datos de septiembre 2026.")
     st.stop()
 
-current = current.sort_values("date")
 latest = current.iloc[-1]
 prev = current.iloc[-2] if len(current) > 1 else None
 days_elapsed = len(current)
@@ -55,21 +55,31 @@ days_month = calendar.monthrange(2026, 9)[1]
 
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
+acc_orders = current["orders"].sum()
+acc_units = current["units"].sum()
 share = acc_ecom / acc_company if acc_company else 0
 target = 0.03
 gap = target - share
 
 projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
-day_change = ((latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1) if prev is not None and prev["ecommerce_tax"] else 0
+day_change = (
+    (latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1
+    if prev is not None and prev["ecommerce_tax"] else 0
+)
 
-# Like-for-like comparisons: same number of elapsed days
+# Like-for-like comparisons: same number of elapsed days.
+# We use dates, not the source label, so the report's source text can change safely.
 n = days_elapsed
-aug = df[(df["source"] == "Agosto 2026") &
-         (df["date"].dt.year == 2026) &
-         (df["date"].dt.month == 8)].sort_values("date").head(n)
-sep25 = df[(df["source"] == "Septiembre 2025") &
-           (df["date"].dt.year == 2025) &
-           (df["date"].dt.month == 9)].sort_values("date").head(n)
+aug = df[
+    (df["date"].dt.year == 2026) &
+    (df["date"].dt.month == 8) &
+    (df["date"].dt.day <= n)
+].sort_values("date")
+sep25 = df[
+    (df["date"].dt.year == 2025) &
+    (df["date"].dt.month == 9) &
+    (df["date"].dt.day <= n)
+].sort_values("date")
 
 aug_acc = aug["ecommerce_tax"].sum()
 sep25_acc = sep25["ecommerce_tax"].sum()
@@ -82,13 +92,15 @@ def money(v):
 def pct(v):
     return f"{v*100:.2f}%".replace(".", ",")
 
+def pct_change(v):
+    return f"{v:+.2%}".replace(".", ",")
+
 st.markdown('<div class="title">MásOnline | Dashboard Ecommerce</div>', unsafe_allow_html=True)
 st.markdown(
     f'<div class="subtitle">Septiembre 2026 · Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</div>',
     unsafe_allow_html=True
 )
 
-# KPI cards
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
@@ -104,15 +116,15 @@ with c2:
     <div class="card">
       <div class="label">VENTA DÍA ANTERIOR</div>
       <div class="value">{money(latest["ecommerce_tax"])}</div>
-      <div class="small">Vs día previo: {day_change:+.2%}</div>
-    </div>""".replace("%", "%"), unsafe_allow_html=True)
+      <div class="small">Vs día previo: {pct_change(day_change)}</div>
+    </div>""", unsafe_allow_html=True)
 
 with c3:
     st.markdown(f"""
     <div class="card">
       <div class="label">MES EN CURSO</div>
       <div class="value">{money(acc_ecom)}</div>
-      <div class="small">{int(latest["orders"]):,} pedidos · {int(latest["units"]):,} unidades</div>
+      <div class="small">{int(acc_orders):,} pedidos · {int(acc_units):,} unidades</div>
     </div>""".replace(",", "."), unsafe_allow_html=True)
 
 with c4:
@@ -133,7 +145,7 @@ chart = px.line(
     labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
 )
 chart.update_layout(
-    height=430, margin=dict(l=10,r=10,t=20,b=10),
+    height=430, margin=dict(l=10, r=10, t=20, b=10),
     yaxis_tickprefix="$", yaxis_tickformat=",.0f",
     hovermode="x unified"
 )
