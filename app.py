@@ -694,11 +694,6 @@ body {{
   </div>
 </div>
 
-<div class="section">Evolución diaria</div>
-<div class="chart-card">
-{svg}
-</div>
-
 <div class="section">Comparaciones</div>
 <div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">
 Variación de ventas e-commerce sobre la misma cantidad de días
@@ -715,6 +710,11 @@ Variación de ventas e-commerce sobre la misma cantidad de días
     vs_25,
     f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
 )}
+</div>
+
+<div class="section">Evolución diaria</div>
+<div class="chart-card">
+{svg}
 </div>
 
 <div class="footer">
@@ -806,28 +806,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
-st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-
-chart = px.line(
-    current,
-    x="date",
-    y="ecommerce_tax",
-    markers=True,
-    labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
-)
-
-chart.update_layout(
-    height=430,
-    margin=dict(l=10, r=10, t=20, b=10),
-    yaxis_tickprefix="$",
-    yaxis_tickformat=",.0f",
-    hovermode="x unified"
-)
-
-st.plotly_chart(chart, use_container_width=True)
-st.markdown("</div>", unsafe_allow_html=True)
-
 st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
 st.markdown(
     '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
@@ -881,6 +859,28 @@ with b:
             compare_box("VS MISMO MES AÑO ANTERIOR", 0, "Sin base disponible"),
             unsafe_allow_html=True
         )
+
+st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+
+chart = px.line(
+    current,
+    x="date",
+    y="ecommerce_tax",
+    markers=True,
+    labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
+)
+
+chart.update_layout(
+    height=430,
+    margin=dict(l=10, r=10, t=20, b=10),
+    yaxis_tickprefix="$",
+    yaxis_tickformat=",.0f",
+    hovermode="x unified"
+)
+
+st.plotly_chart(chart, use_container_width=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown(
     '<div class="footer">'
