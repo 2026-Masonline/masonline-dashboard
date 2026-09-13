@@ -398,7 +398,7 @@ small {{ color: #697386; }}
 
 <div class="card">
     <div class="label">MES EN CURSO</div>
-    <div class="value">{money(mtd_ecommerce)}</div>
+    <div class="value">{money(acc_ecom)}</div>
     <small>Datos acumulados</small>
 </div>
 
