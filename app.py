@@ -78,6 +78,17 @@ st.markdown("""
     .negative { color: #d64545; }
     .positive { color: #208653; }
 
+    .upload-box {
+        background: white; border-radius: 14px; padding: 16px 18px 8px;
+        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.05);
+        margin-bottom: 6px; min-height: 82px;
+    }
+    .upload-current { border-top: 4px solid #ff5a1f; }
+    .upload-prev { border-top: 4px solid #2f9e66; }
+    .upload-ly { border-top: 4px solid #59636e; }
+    .upload-title { color:#20252b; font-size:14px; font-weight:800; }
+    .upload-text { color:#6b7280; font-size:12px; margin-top:5px; }
+
     .footer {
         display: flex; justify-content: space-between; color: #6b7280;
         font-size: 12px; margin-top: 12px;
@@ -106,11 +117,52 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-uploaded = st.file_uploader(
-    "Subir reporte Excel",
-    type=["xlsx", "xls"],
-    help="Usá el reporte Venta Con y sin Impuesto. La carga actualiza el dashboard durante esta sesión."
-)
+u1, u2, u3 = st.columns(3)
+
+with u1:
+    st.markdown("""
+    <div class="upload-box upload-current">
+      <div class="upload-title">MES EN CURSO</div>
+      <div class="upload-text">Subí el Excel de Septiembre 2026</div>
+    </div>
+    """, unsafe_allow_html=True)
+    upload_current = st.file_uploader(
+        "Archivo mes en curso",
+        type=["xlsx", "xls"],
+        key="upload_current",
+        label_visibility="collapsed",
+        help="Reporte Venta Con y sin Impuesto del mes en curso."
+    )
+
+with u2:
+    st.markdown("""
+    <div class="upload-box upload-prev">
+      <div class="upload-title">MES ANTERIOR</div>
+      <div class="upload-text">Subí el Excel de Agosto 2026</div>
+    </div>
+    """, unsafe_allow_html=True)
+    upload_prev = st.file_uploader(
+        "Archivo mes anterior",
+        type=["xlsx", "xls"],
+        key="upload_prev",
+        label_visibility="collapsed",
+        help="Reporte Venta Con y sin Impuesto del mes anterior."
+    )
+
+with u3:
+    st.markdown("""
+    <div class="upload-box upload-ly">
+      <div class="upload-title">MISMO PERÍODO AÑO PASADO</div>
+      <div class="upload-text">Subí el Excel de Septiembre 2025</div>
+    </div>
+    """, unsafe_allow_html=True)
+    upload_ly = st.file_uploader(
+        "Archivo año pasado",
+        type=["xlsx", "xls"],
+        key="upload_ly",
+        label_visibility="collapsed",
+        help="Reporte Venta Con y sin Impuesto del mismo mes del año pasado."
+    )
 
 def normalize_uploaded_excel(file):
     raw = pd.read_excel(file, sheet_name=0, header=None)
@@ -148,36 +200,46 @@ def normalize_uploaded_excel(file):
     out["source"] = "Reporte subido"
     return out
 
-if uploaded is not None:
-    try:
-        uploaded_df = normalize_uploaded_excel(uploaded)
+# Cada botón reemplaza únicamente el período que corresponde.
+# Si no se sube un archivo, se usa la base histórica de data.csv.
+df = base_df.copy()
 
-        # Conservamos agosto 2026 y septiembre 2025 de data.csv para las comparaciones.
-        # El Excel subido reemplaza únicamente los registros de septiembre 2026.
-        historical = base_df[
+def replace_period(uploaded_file, year, month, label):
+    global df
+    if uploaded_file is None:
+        return
+    try:
+        incoming = normalize_uploaded_excel(uploaded_file)
+        incoming = incoming[
+            (incoming["date"].dt.year == year) &
+            (incoming["date"].dt.month == month)
+        ].copy()
+
+        if incoming.empty:
+            st.error(f"{label}: no encontré datos de {month:02d}/{year} en el archivo.")
+            return
+
+        df = df[
             ~(
-                (base_df["date"].dt.year == 2026) &
-                (base_df["date"].dt.month == 9)
+                (df["date"].dt.year == year) &
+                (df["date"].dt.month == month)
             )
         ].copy()
 
-        df = pd.concat([historical, uploaded_df], ignore_index=True)
+        df = pd.concat([df, incoming], ignore_index=True)
         df = (
             df.sort_values("date")
               .drop_duplicates(subset=["date"], keep="last")
               .reset_index(drop=True)
         )
 
-        st.success(
-            f"Datos actualizados desde: {uploaded.name} · "
-            f"{len(uploaded_df)} días encontrados · "
-            f"Se mantienen las bases históricas para las comparaciones."
-        )
+        st.success(f"{label}: {len(incoming)} días cargados correctamente.")
     except Exception as e:
-        st.error(f"No pude procesar el Excel: {e}")
-        st.stop()
-else:
-    df = base_df
+        st.error(f"{label}: no pude procesar el Excel: {e}")
+
+replace_period(upload_current, 2026, 9, "Mes en curso")
+replace_period(upload_prev, 2026, 8, "Mes anterior")
+replace_period(upload_ly, 2025, 9, "Mismo período año pasado")
 
 # El reporte puede traer el día actual todavía abierto. Para el dashboard usamos
 # siempre el último día cerrado: excluimos la fecha de hoy de Argentina.
@@ -247,10 +309,18 @@ def pct(v):
 def pct_change(v):
     return f"{v:+.2%}".replace(".", ",")
 
+logo_file = Path(__file__).resolve().parent / "masonline_logo.png"
+if logo_file.exists():
+    import base64
+    logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("utf-8")
+    brand_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:58px;max-width:330px;object-fit:contain;">'
+else:
+    brand_html = '<div class="hero-brand">Más<span>Online</span></div>'
+
 st.markdown(f"""
 <div class="hero">
   <div>
-    <div class="hero-brand">Más<span>Online</span></div>
+    {brand_html}
     <div class="hero-sub">E-COMMERCE</div>
   </div>
   <div class="hero-date">
