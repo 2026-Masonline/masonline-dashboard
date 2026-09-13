@@ -330,7 +330,97 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
+html_descarga = f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MásOnline - Dashboard Ecommerce</title>
+<style>
+body {{
+    font-family: Arial, sans-serif;
+    background: #f5f7fa;
+    margin: 0;
+    padding: 40px;
+    color: #252a31;
+}}
+.header {{
+    background: #171b20;
+    padding: 25px 35px;
+    color: white;
+    margin-bottom: 25px;
+}}
+h1 {{ margin: 0; }}
+.grid {{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+}}
+.card {{
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+}}
+.label {{
+    font-size: 14px;
+    font-weight: bold;
+    color: #697386;
+}}
+.value {{
+    font-size: 30px;
+    font-weight: bold;
+    margin-top: 15px;
+}}
+small {{ color: #697386; }}
+</style>
+</head>
+<body>
 
+<div class="header">
+    <h1>MásOnline</h1>
+    <div>E-COMMERCE · Septiembre 2026</div>
+</div>
+
+<div class="grid">
+
+<div class="card">
+    <div class="label">PARTICIPACIÓN E-COMMERCE</div>
+    <div class="value">{pct(share)}</div>
+    <small>Objetivo: 3,00%</small>
+</div>
+
+<div class="card">
+    <div class="label">VENTA DÍA ANTERIOR</div>
+    <div class="value">{money(latest["ecommerce_tax"])}</div>
+    <small>Último día cerrado</small>
+</div>
+
+<div class="card">
+    <div class="label">MES EN CURSO</div>
+    <div class="value">{money(mtd)}</div>
+    <small>Datos acumulados</small>
+</div>
+
+<div class="card">
+    <div class="label">PROYECCIÓN DE CIERRE</div>
+    <div class="value">{money(projection)}</div>
+    <small>Proyección mensual</small>
+</div>
+
+</div>
+
+</body>
+</html>
+"""
+
+st.download_button(
+    "⬇️ Descargar dashboard HTML",
+    data=html_descarga,
+    file_name="dashboard_masonline.html",
+    mime="text/html",
+    use_container_width=True
+)
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
