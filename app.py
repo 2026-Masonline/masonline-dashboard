@@ -87,16 +87,82 @@ st.markdown("""
 
 DATA_FILE = Path(__file__).resolve().parent / "data.csv"
 
-# Read the CSV directly. No cache, so a new data.csv is picked up after redeploy/refresh.
+# Carga base: data.csv. El archivo subido en la app puede reemplazarlo para esta sesión.
 try:
-    df = pd.read_csv(DATA_FILE)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    base_df = pd.read_csv(DATA_FILE)
+    base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
     for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    df = df.dropna(subset=["date"])
+        base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
+    base_df = base_df.dropna(subset=["date"])
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
+
+# Carga opcional del reporte original de "Venta Con y sin Impuesto".
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;padding:12px 16px;margin-bottom:14px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">ACTUALIZAR DATOS</div>
+  <div style="font-size:12px;color:#6b7280;">Subí el Excel "Venta Con y sin Impuesto" y el dashboard calculará los indicadores con ese archivo.</div>
+</div>
+""", unsafe_allow_html=True)
+
+uploaded = st.file_uploader(
+    "Subir reporte Excel",
+    type=["xlsx", "xls"],
+    help="Usá el reporte Venta Con y sin Impuesto. La carga actualiza el dashboard durante esta sesión."
+)
+
+def normalize_uploaded_excel(file):
+    raw = pd.read_excel(file, sheet_name=0, header=None)
+    header_row = None
+    for i in range(min(10, len(raw))):
+        vals = raw.iloc[i].astype(str).str.strip().tolist()
+        if "Fecha" in vals and "Facturacion" in vals and "Venta - Ecommerce" in vals:
+            header_row = i
+            break
+    if header_row is None:
+        raise ValueError("No encontré las columnas Fecha, Facturacion y Venta - Ecommerce en el archivo.")
+
+    d = pd.read_excel(file, sheet_name=0, header=header_row)
+    required = [
+        "Fecha", "Facturacion", "Venta - Ecommerce",
+        "Cantidad Venta Operativa - Ecommerce",
+        "Pedidos Facturados con Venta Operativa - Ecommerce"
+    ]
+    missing = [c for c in required if c not in d.columns]
+    if missing:
+        raise ValueError("Faltan columnas: " + ", ".join(missing))
+
+    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+    for c in required[1:]:
+        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
+    d = d.dropna(subset=["Fecha"])
+
+    out = d.groupby("Fecha", as_index=False).agg(
+        company_tax=("Facturacion", "sum"),
+        ecommerce_tax=("Venta - Ecommerce", "sum"),
+        orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
+        units=("Cantidad Venta Operativa - Ecommerce", "sum")
+    )
+    out["source"] = "Reporte subido"
+    return out
+
+if uploaded is not None:
+    try:
+        df = normalize_uploaded_excel(uploaded)
+        st.success(f"Datos actualizados desde: {uploaded.name} · {len(df)} días encontrados")
+    except Exception as e:
+        st.error(f"No pude procesar el Excel: {e}")
+        st.stop()
+else:
+    df = base_df
+
+# El reporte puede traer el día actual todavía abierto. Para el dashboard usamos
+# siempre el último día cerrado: excluimos la fecha de hoy de Argentina.
+from datetime import datetime
+from zoneinfo import ZoneInfo
+arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+df = df[df["date"].dt.date < arg_today].copy()
 
 # Current period: September 2026. The source column is intentionally not used
 # because the uploaded report labels all rows with the same source text.
