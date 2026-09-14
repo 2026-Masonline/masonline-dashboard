@@ -387,7 +387,7 @@ if current.empty:
     st.stop()
 
 latest = current.iloc[-1]
-weekend = current[current["date"].dt.weekday >= 4]["ecommerce_tax"].sum()
+weekend = current[current["date"] >= latest["date"] - pd.Timedelta(days=3)]["ecommerce_tax"].sum()
 is_monday = latest["date"].weekday() == 0
 
 days_elapsed = len(current)
