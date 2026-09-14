@@ -394,8 +394,12 @@ friday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(
 saturday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=2))]["ecommerce_tax"].sum()
 sunday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=1))]["ecommerce_tax"].sum()
 
+friday_units = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=3))]["units"].sum()
+saturday_units = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=2))]["units"].sum()
+
 # Fin de semana = Viernes + Sábado (no se suma el Domingo)
 weekend = friday_sales + saturday_sales
+weekend_units = friday_units + saturday_units
 
 sales_label = "VENTA DÍA ANTERIOR"
 if is_monday:
