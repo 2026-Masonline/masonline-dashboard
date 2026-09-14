@@ -387,7 +387,8 @@ if current.empty:
     st.stop()
 
 latest = current.iloc[-1]
-prev = current.iloc[-2] if len(current) > 1 else None
+weekend = current[current["date"].dt.weekday >= 4]["ecommerce_tax"].sum()
+is_monday = latest["date"].weekday() == 0
 
 days_elapsed = len(current)
 days_month = calendar.monthrange(2026, 9)[1]
