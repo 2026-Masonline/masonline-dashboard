@@ -16,18 +16,18 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stApp { background: #f5f7fa; }
+    .stApp { background: #ffffff; }
     .block-container { max-width: 1500px; padding: 0 1.2rem 1.2rem; }
 
     .hero {
-        background: #171b20;
+        background: #ffffff;
         margin: -1rem -1.2rem 1.2rem;
         padding: 22px 28px;
-        color: white;
+        color: #20252b;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-bottom: 4px solid #20252b;
+        border-bottom: 4px solid #ff5a1f;
     }
     .hero-brand { font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
     .hero-brand span { font-weight: 400; }
