@@ -390,8 +390,8 @@ latest = current.iloc[-1]
 prev = current.iloc[-2] if len(current) > 1 else None
 weekend = current[(current["date"] >= pd.Timestamp(arg_today - pd.Timedelta(days=3))) & (current["date"] < pd.Timestamp(arg_today))]["ecommerce_tax"].sum()
 is_monday = arg_today.weekday() == 0
-sales_label = "VENTA FIN DE SEMANA" if is_monday else "VENTA DÍA ANTERIOR"
-sales_value = weekend if is_monday else latest["ecommerce_tax"]
+sales_label = "VENTA DÍA ANTERIOR"
+sales_value = latest["ecommerce_tax"]
 friday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=3))]["ecommerce_tax"].sum()
 saturday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=2))]["ecommerce_tax"].sum()
 sunday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=1))]["ecommerce_tax"].sum()
