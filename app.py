@@ -579,20 +579,20 @@ def build_standalone_html():
 body {{
     margin: 0;
     padding: 34px 42px 42px;
-    background: #f5f7fa;
+    background: #ffffff;
     color: #20252b;
     font-family: Arial, Helvetica, sans-serif;
 }}
 .container {{ max-width: 1500px; margin: 0 auto; }}
 .hero {{
-    background: #171b20;
-    color: white;
+    background: #ffffff;
+    color: #20252b;
     padding: 22px 28px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     min-height: 112px;
-    border-bottom: 4px solid #20252b;
+    border-bottom: 4px solid #ff5a1f;
 }}
 .hero-sub {{
     font-size: 11px;
