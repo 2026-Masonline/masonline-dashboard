@@ -431,7 +431,7 @@ vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 
 def money(v):
     return (
-        f"${v/1_000_000:,.2f} MM"
+       f"${v/1_000_000:,.2f} M"
         .replace(",", "X")
         .replace(".", ",")
         .replace("X", ".")
