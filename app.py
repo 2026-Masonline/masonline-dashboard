@@ -759,8 +759,8 @@ body {{
 </div>
 
 <div class="card">
-  <div class="label">VENTA DÍA ANTERIOR</div>
-  <div class="value">{html.escape(money(latest["ecommerce_tax"]))}</div>
+<div class="label">{sales_label}</div>
+<div class="value">{html.escape(money(sales_value))}</div>
   <div class="small">Vs día previo: {html.escape(pct_change(day_change))}</div>
 </div>
 
@@ -859,8 +859,8 @@ with c1:
 with c2:
     st.markdown(f"""
     <div class="card">
-      <div class="label">VENTA DÍA ANTERIOR</div>
-      <div class="value">{money(latest["ecommerce_tax"])}</div>
+      <div class="label">{sales_label}</div>
+<div class="value">{money(sales_value)}</div>
       <div class="small">Vs día previo: {pct_change(day_change)}</div>
     </div>
     """, unsafe_allow_html=True)
