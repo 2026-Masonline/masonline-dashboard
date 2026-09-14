@@ -891,7 +891,7 @@ st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_
 if is_monday:
     st.markdown(f"""
     <div class="section">Detalle de venta - Fin de semana</div>
-   <div class="weekend-card" style="display:flex;justify-content:space-between;align-items:center;gap:20px;padding:20px;border:1px solid #e1e5ea;border-radius:14px;background:#fff;">
+   <div class="weekend-card" style="display:flex;justify-content:space-between;align-items:center;gap:20px;padding:20px;border:1px solid #e1e5ea;border-radius:14px;background:#fff;color:#171b20;">nd:#fff;">
         <div><span>VIERNES</span><strong>{money(friday_sales)}</strong></div>
         <div><span>SÁBADO</span><strong>{money(saturday_sales)}</strong></div>
         <div><span>DOMINGO</span><strong>{money(sunday_sales)}</strong></div>
