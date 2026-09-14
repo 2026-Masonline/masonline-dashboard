@@ -804,7 +804,6 @@ body {{
            <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div><div style="font-size:12px;opacity:.9;margin-top:3px;">{int(weekend_units):,} unidades</div></div>
         </div>
 
-        <div class="section">Avance de participación</div>
 <div class="section">Avance de participación</div>
 <div class="progress-wrap">
   <div class="progress-layout">
