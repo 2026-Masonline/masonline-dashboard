@@ -132,9 +132,7 @@ padding:12px 16px;margin-bottom:14px;">
   </div>
 </div>
 """, unsafe_allow_html=True)
-""", unsafe_allow_html=True)
 
-u1, u2, u3 = st.columns(3)
 u1, u2, u3 = st.columns(3)
 
 with u1:
