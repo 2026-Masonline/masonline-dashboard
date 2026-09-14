@@ -888,6 +888,17 @@ with c4:
     """, unsafe_allow_html=True)
 
 st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_html=True)
+if is_monday:
+    st.markdown(f"""
+    <div class="section">Detalle de venta - Fin de semana</div>
+   <div class="weekend-card" style="display:flex;justify-content:space-between;align-items:center;gap:20px;padding:20px;border:1px solid #e1e5ea;border-radius:14px;background:#fff;">
+        <div><span>VIERNES</span><strong>{money(friday_sales)}</strong></div>
+        <div><span>SÁBADO</span><strong>{money(saturday_sales)}</strong></div>
+        <div><span>DOMINGO</span><strong>{money(sunday_sales)}</strong></div>
+        <div><span>TOTAL</span><strong>{money(weekend)}</strong></div>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 progress = min(share / target, 1.0) * 100
 
