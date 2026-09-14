@@ -388,10 +388,13 @@ if current.empty:
 
 latest = current.iloc[-1]
 prev = current.iloc[-2] if len(current) > 1 else None
-weekend = current[(current["date"] >= latest["date"] - pd.Timedelta(days=3)) & (current["date"] < latest["date"])]["ecommerce_tax"].sum()
+weekend = current[(current["date"] >= pd.Timestamp(arg_today - pd.Timedelta(days=3))) & (current["date"] < pd.Timestamp(arg_today))]["ecommerce_tax"].sum()
 is_monday = arg_today.weekday() == 0
 sales_label = "VENTA FIN DE SEMANA" if is_monday else "VENTA DÍA ANTERIOR"
 sales_value = weekend if is_monday else latest["ecommerce_tax"]
+friday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=3))]["ecommerce_tax"].sum()
+saturday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=2))]["ecommerce_tax"].sum()
+sunday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=1))]["ecommerce_tax"].sum()
 days_elapsed = len(current)
 days_month = calendar.monthrange(2026, 9)[1]
 
