@@ -796,7 +796,7 @@ body {{
             <div style="display:flex;align-items:stretch;gap:10px;">
                 <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">VIERNES</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div></div>
                 <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">SÁBADO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(saturday_sales)}</div></div>
-                <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">DOMINGO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(sunday_sales)}</div></div>
+              
                 <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div></div>
             </div>
         </div>
@@ -904,7 +904,7 @@ with st.container():
 <div style="display:flex;align-items:stretch;gap:10px;">
 <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">VIERNES</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div></div>
 <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">SÁBADO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(saturday_sales)}</div></div>
-<div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">DOMINGO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(sunday_sales)}</div></div>
+
 <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div></div>
 </div>
 </div>""", unsafe_allow_html=True)
