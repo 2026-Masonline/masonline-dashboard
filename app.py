@@ -890,6 +890,37 @@ with c4:
 st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_html=True)
 if is_monday:
     st.markdown(f"""
+    <div style="border:1px solid #ff5a1f;border-radius:12px;padding:14px 16px;background:#fff7f2;margin:10px 0 18px 0;">
+        <div style="font-weight:700;font-size:16px;color:#20252b;margin-bottom:12px;">
+            Detalle de venta - Fin de semana
+        </div>
+
+        <div style="display:flex;align-items:stretch;gap:10px;">
+
+            <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;">
+                <div style="font-size:12px;color:#6b7280;">VIERNES</div>
+                <div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div>
+            </div>
+
+            <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;">
+                <div style="font-size:12px;color:#6b7280;">SÁBADO</div>
+                <div style="font-size:22px;font-weight:700;color:#20252b;">{money(saturday_sales)}</div>
+            </div>
+
+            <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;">
+                <div style="font-size:12px;color:#6b7280;">DOMINGO</div>
+                <div style="font-size:22px;font-weight:700;color:#20252b;">{money(sunday_sales)}</div>
+            </div>
+
+            <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;">
+                <div style="font-size:12px;">TOTAL FIN DE SEMANA</div>
+                <div style="font-size:24px;font-weight:700;">{money(weekend)}</div>
+            </div>
+
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
     <div class="section">Detalle de venta - Fin de semana</div>
    <div class="weekend-card" style="display:flex;justify-content:space-between;align-items:center;gap:20px;padding:20px;border:1px solid #e1e5ea;border-radius:14px;background:#fff;color:#171b20;">nd:#fff;">
         <div><span>VIERNES</span><strong>{money(friday_sales)}</strong></div>
