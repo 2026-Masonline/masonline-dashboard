@@ -237,6 +237,7 @@ def replace_period(uploaded_file, year, month, label):
 
     try:
         incoming = normalize_uploaded_excel(uploaded_file)
+
         incoming = incoming[
             (incoming["date"].dt.year == year) &
             (incoming["date"].dt.month == month)
@@ -254,11 +255,111 @@ def replace_period(uploaded_file, year, month, label):
         ].copy()
 
         df = pd.concat([df, incoming], ignore_index=True)
+
         df = (
             df.sort_values("date")
-              .drop_duplicates(subset=["date"], keep="last")
-              .reset_index(drop=True)
+            .drop_duplicates(subset=["date"], keep="last")
+            .reset_index(drop=True)
         )
+
+        # GUARDAR LOS DATOS EN GITHUB
+        try:
+            import urllib.request
+            import urllib.error
+            import json
+            import base64
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            token = st.secrets.get("GITHUB_TOKEN")
+
+            if token:
+                repo = "2026-Masonline/masonline-dashboard"
+                path = "data.csv"
+                branch = "main"
+
+                url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "Masonline-Dashboard"
+                }
+
+                # Obtener SHA actual de data.csv
+                request_get = urllib.request.Request(
+                    f"{url}?ref={branch}",
+                    headers=headers,
+                    method="GET"
+                )
+
+                with urllib.request.urlopen(request_get, timeout=30) as response:
+                    github_file = json.loads(response.read().decode("utf-8"))
+
+                sha = github_file["sha"]
+
+                # No guardar el día actual si todavía está en curso
+                arg_today = datetime.now(
+                    ZoneInfo("America/Argentina/Buenos_Aires")
+                ).date()
+
+                save_df = df[
+                    df["date"].dt.date < arg_today
+                ].copy()
+
+                save_df = save_df.sort_values("date")
+
+                csv_text = save_df.to_csv(
+                    index=False,
+                    date_format="%Y-%m-%d"
+                )
+
+                content_b64 = base64.b64encode(
+                    csv_text.encode("utf-8")
+                ).decode("utf-8")
+
+                payload = {
+                    "message": f"Actualizar datos ecommerce - {label}",
+                    "content": content_b64,
+                    "sha": sha,
+                    "branch": branch
+                }
+
+                request_put = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        **headers,
+                        "Content-Type": "application/json"
+                    },
+                    method="PUT"
+                )
+
+                with urllib.request.urlopen(
+                    request_put,
+                    timeout=30
+                ) as response:
+                    response.read()
+
+                st.success(
+                    f"{label}: datos cargados y guardados correctamente."
+                )
+
+            else:
+                st.warning(
+                    "Los datos se cargaron para esta sesión, "
+                    "pero GITHUB_TOKEN no está configurado."
+                )
+
+        except Exception as github_error:
+            st.error(
+                f"Los datos se cargaron, pero no se pudieron guardar en GitHub: "
+                f"{github_error}"
+            )
+
+    except Exception as e:
+        st.error(f"{label}: error al procesar el archivo: {e}")
 
         st.success(f"{label}: {len(incoming)} días cargados correctamente.")
 
