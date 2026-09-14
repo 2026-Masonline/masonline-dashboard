@@ -387,6 +387,7 @@ if current.empty:
     st.stop()
 
 latest = current.iloc[-1]
+prev = current.iloc[-2] if len(current) > 1 else None
 weekend = current[(current["date"] >= latest["date"] - pd.Timedelta(days=3)) & (current["date"] < latest["date"])]["ecommerce_tax"].sum()
 is_monday = latest["date"].weekday() == 0
 sales_label = "VENTA FIN DE SEMANA" if is_monday else "VENTA DÍA ANTERIOR"
