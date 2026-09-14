@@ -878,8 +878,8 @@ with c3:
     </div>
     """.replace(",", "."), unsafe_allow_html=True)
 
-with c4:
-st.markdown(f"""<div style="border:1px solid #ff5a1f;border-radius:12px;padding:14px 16px;background:#fff7f2;margin:10px 0 18px 0;">
+   with st.container():
+       st.markdown(f"""<div style="...">""")  # ← 4 espacios de indentación
 <div style="font-weight:700;font-size:16px;color:#20252b;margin-bottom:12px;">Detalle de venta - Fin de semana</div>
 <div style="display:flex;align-items:stretch;gap:10px;">
 <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">VIERNES</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div></div>
