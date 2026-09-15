@@ -803,12 +803,6 @@ body {{
 </div>
         </div>
 
-        <div style="background:white;border-radius:14px;padding:16px 20px;box-shadow:0 2px 10px rgba(0,0,0,.06);border:1px solid #e8ebef;margin-top:16px;">
-            <div style="font-weight:700;font-size:16px;color:#20252b;margin-bottom:12px;">Detalle de venta - Fin de semana</div>
-            <div style="display:flex;align-items:stretch;gap:10px;">
-               <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">VIERNES</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div><div style="font-size:12px;color:#6b7280;margin-top:3px;">{int(friday_units):,} unidades</div></div>
-<div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">SÁBADO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(saturday_sales)}</div><div style="font-size:12px;color:#6b7280;margin-top:3px;">{int(saturday_units):,} unidades</div></div>              
-                <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div><div style="font-size:12px;opacity:.9;margin-top:3px;">{int(weekend_units):,} unidades</div></div>
         </div>
 
 <div class="section">Avance de participación</div>
@@ -906,17 +900,6 @@ with c3:
       <div class="small">{int(acc_orders):,} pedidos · {int(acc_units):,} unidades</div>
     </div>
     """.replace(",", "."), unsafe_allow_html=True)
-
-with st.container():
-    st.markdown(f"""<div style="background:white;border-radius:14px;padding:16px 20px;box-shadow:0 2px 10px rgba(0,0,0,.06);border:1px solid #e8ebef;margin-bottom:20px;">
-<div style="font-weight:700;font-size:16px;color:#20252b;margin-bottom:12px;">Detalle de venta - Fin de semana</div>
-<div style="display:flex;align-items:stretch;gap:10px;">
-<div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">VIERNES</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div></div>
-<div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">SÁBADO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(saturday_sales)}</div></div>
-
-<div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div></div>
-</div>
-</div>""", unsafe_allow_html=True)
 
 progress = min(share / target, 1.0) * 100
 
