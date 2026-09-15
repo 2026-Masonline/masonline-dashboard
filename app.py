@@ -390,12 +390,20 @@ latest = current.iloc[-1]
 prev = current.iloc[-2] if len(current) > 1 else None
 is_monday = arg_today.weekday() == 0
 
-friday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=3))]["ecommerce_tax"].sum()
-saturday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=2))]["ecommerce_tax"].sum()
-sunday_sales = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=1))]["ecommerce_tax"].sum()
+# Buscamos el Sábado más reciente con datos cargados (y el Viernes anterior),
+# sin asumir que "hoy" es Lunes: así funciona sin importar qué día se abra el dashboard.
+last_data_date = current["date"].max()
+days_since_saturday = (last_data_date.weekday() - 5) % 7  # Monday=0 ... Saturday=5, Sunday=6
+last_saturday = last_data_date - pd.Timedelta(days=days_since_saturday)
+last_friday = last_saturday - pd.Timedelta(days=1)
+last_sunday = last_saturday + pd.Timedelta(days=1)
 
-friday_units = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=3))]["units"].sum()
-saturday_units = current[current["date"] == pd.Timestamp(arg_today - pd.Timedelta(days=2))]["units"].sum()
+friday_sales = current[current["date"] == last_friday]["ecommerce_tax"].sum()
+saturday_sales = current[current["date"] == last_saturday]["ecommerce_tax"].sum()
+sunday_sales = current[current["date"] == last_sunday]["ecommerce_tax"].sum()
+
+friday_units = current[current["date"] == last_friday]["units"].sum()
+saturday_units = current[current["date"] == last_saturday]["units"].sum()
 
 # Fin de semana = Viernes + Sábado (no se suma el Domingo)
 weekend = friday_sales + saturday_sales
@@ -800,8 +808,7 @@ body {{
             <div style="display:flex;align-items:stretch;gap:10px;">
                <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">VIERNES</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(friday_sales)}</div><div style="font-size:12px;color:#6b7280;margin-top:3px;">{int(friday_units):,} unidades</div></div>
 <div style="flex:1;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #eee;"><div style="font-size:12px;color:#6b7280;">SÁBADO</div><div style="font-size:22px;font-weight:700;color:#20252b;">{money(saturday_sales)}</div><div style="font-size:12px;color:#6b7280;margin-top:3px;">{int(saturday_units):,} unidades</div></div>              
-                <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div></div>
-           <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div><div style="font-size:12px;opacity:.9;margin-top:3px;">{int(weekend_units):,} unidades</div></div>
+                <div style="flex:1;background:#ff5a1f;border-radius:8px;padding:10px 14px;color:#fff;"><div style="font-size:12px;">TOTAL FIN DE SEMANA</div><div style="font-size:24px;font-weight:700;">{money(weekend)}</div><div style="font-size:12px;opacity:.9;margin-top:3px;">{int(weekend_units):,} unidades</div></div>
         </div>
 
 <div class="section">Avance de participación</div>
