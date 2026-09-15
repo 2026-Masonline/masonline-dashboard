@@ -901,6 +901,15 @@ with c3:
     </div>
     """.replace(",", "."), unsafe_allow_html=True)
 
+with c4:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">PROYECCIÓN DE CIERRE</div>
+      <div class="value">{money(projection)}</div>
+      <div class="small">Promedio diario × {days_month} días</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 progress = min(share / target, 1.0) * 100
 
 st.markdown(f"""
