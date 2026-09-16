@@ -469,6 +469,9 @@ def pct(v):
 def pct_change(v):
     return f"{v:+.2%}".replace(".", ",")
 
+def intfmt(v):
+    return f"{int(v):,}".replace(",", ".")
+
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
     brand_html = (
@@ -873,148 +876,313 @@ st.download_button(
 # Dashboard principal
 # ---------------------------------------------------------------------
 
-c1, c2, c3, c4 = st.columns(4)
+tab1, tab2 = st.tabs(["📊 Dashboard completo", "📤 Resumen para GDN"])
 
-with c1:
+with tab1:
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">PARTICIPACIÓN E-COMMERCE</div>
+          <div class="value">{pct(share)}</div>
+          <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c2:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">{sales_label}</div>
+    <div class="value">{money(sales_value)}</div>
+          <div class="small">Vs día previo: {pct_change(day_change)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">MES EN CURSO</div>
+          <div class="value">{money(acc_ecom)}</div>
+          <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c4:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">PROYECCIÓN DE CIERRE</div>
+          <div class="value">{money(projection)}</div>
+          <div class="small">Promedio diario × {days_month} días</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    progress = min(share / target, 1.0) * 100
+
     st.markdown(f"""
-    <div class="card">
-      <div class="label">PARTICIPACIÓN E-COMMERCE</div>
-      <div class="value">{pct(share)}</div>
-      <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
+    <div class="progress-wrap">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="flex:1;">
+          <div class="progress-track">
+            <div class="progress-fill" style="width:{progress:.1f}%;"></div>
+          </div>
+          <div class="progress-row">
+            <span>Participación actual: {pct(share)}</span>
+            <span>Objetivo: {pct(target)}</span>
+          </div>
+        </div>
+        <div style="width:150px;">
+          <div class="progress-target">
+            {share/target:.0%}
+            <small>del objetivo</small>
+          </div>
+        </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-with c2:
+    # ---- Resumen visual: Compañía vs Ecommerce (Diario / Mensual) ----
+    share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+
     st.markdown(f"""
-    <div class="card">
-      <div class="label">{sales_label}</div>
-<div class="value">{money(sales_value)}</div>
-      <div class="small">Vs día previo: {pct_change(day_change)}</div>
+    <div style="display:flex;gap:16px;margin-top:20px;">
+      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+        <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
+          DIARIO &nbsp;|&nbsp; {latest["date"].strftime("%d-%m")}
+        </div>
+        <div style="padding:18px 16px;">
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
+              <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(latest["company_tax"])}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(latest["ecommerce_tax"])}</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders"])}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["units"])}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE DIARIO</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_daily)}</span>
+        </div>
+      </div>
+
+      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+        <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
+          MENSUAL &nbsp;SEPTIEMBRE 2026
+        </div>
+        <div style="padding:18px 16px;">
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
+              <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(acc_company)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(acc_ecom)}</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_units)}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fef6e7;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE MENSUAL</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share)}</span>
+        </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-with c3:
-    st.markdown(f"""
-    <div class="card">
-      <div class="label">MES EN CURSO</div>
-      <div class="value">{money(acc_ecom)}</div>
-      <div class="small">{int(acc_orders):,} pedidos · {int(acc_units):,} unidades</div>
-    </div>
-    """.replace(",", "."), unsafe_allow_html=True)
+    st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Variación de ventas e-commerce sobre la misma cantidad de días'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
-with c4:
+    a, b = st.columns(2)
+
+    def compare_box(title, value, base_text):
+        cls = "positive" if value >= 0 else "negative"
+        arrow = "↑" if value >= 0 else "↓"
+
+        return f"""
+        <div class="compare-card">
+          <div class="compare-title">{title}</div>
+          <div class="compare-base">{base_text}</div>
+          <div class="compare-value {cls}">{arrow}&nbsp;&nbsp;{value:+.1%}</div>
+        </div>
+        """
+
+    with a:
+        if vs_aug is not None:
+            st.markdown(
+                compare_box(
+                    "VS MES ANTERIOR",
+                    vs_aug,
+                    f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"
+                ),
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                compare_box("VS MES ANTERIOR", 0, "Sin base disponible"),
+                unsafe_allow_html=True
+            )
+
+    with b:
+        if vs_25 is not None:
+            st.markdown(
+                compare_box(
+                    "VS MISMO MES AÑO ANTERIOR",
+                    vs_25,
+                    f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
+                ),
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                compare_box("VS MISMO MES AÑO ANTERIOR", 0, "Sin base disponible"),
+                unsafe_allow_html=True
+            )
+
+    st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+
+    chart = px.line(
+        current,
+        x="date",
+        y="ecommerce_tax",
+        markers=True,
+        labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
+    )
+
+    chart.update_layout(
+        height=430,
+        margin=dict(l=10, r=10, t=20, b=10),
+        yaxis_tickprefix="$",
+        yaxis_tickformat=",.0f",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(chart, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="footer">'
+        '<span>Fuente: venta con impuesto de MicroStrategy.</span>'
+        '<span>MásOnline &nbsp;|&nbsp; E-commerce</span>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+with tab2:
+    st.markdown('<div class="section">Resumen para GDN</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
+        'Capturá esta card y enviala directo — sin tocar el resto del dashboard.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    share_daily_gdn = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+
     st.markdown(f"""
-    <div class="card">
-      <div class="label">PROYECCIÓN DE CIERRE</div>
-      <div class="value">{money(projection)}</div>
-      <div class="small">Promedio diario × {days_month} días</div>
+    <div style="display:flex;gap:16px;">
+      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+        <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
+          DIARIO &nbsp;|&nbsp; {latest["date"].strftime("%d-%m")}
+        </div>
+        <div style="padding:18px 16px;">
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
+              <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(latest["company_tax"])}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(latest["ecommerce_tax"])}</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders"])}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["units"])}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE DIARIO</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_daily_gdn)}</span>
+        </div>
+      </div>
+
+      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+        <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
+          MENSUAL &nbsp;SEPTIEMBRE 2026
+        </div>
+        <div style="padding:18px 16px;">
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
+              <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(acc_company)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(acc_ecom)}</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_units)}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fef6e7;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE MENSUAL</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share)}</span>
+        </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
-
-progress = min(share / target, 1.0) * 100
-
-st.markdown(f"""
-<div class="progress-wrap">
-  <div style="display:flex;justify-content:space-between;align-items:center;">
-    <div style="flex:1;">
-      <div class="progress-track">
-        <div class="progress-fill" style="width:{progress:.1f}%;"></div>
-      </div>
-      <div class="progress-row">
-        <span>Participación actual: {pct(share)}</span>
-        <span>Objetivo: {pct(target)}</span>
-      </div>
-    </div>
-    <div style="width:150px;">
-      <div class="progress-target">
-        {share/target:.0%}
-        <small>del objetivo</small>
-      </div>
-    </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-    'Variación de ventas e-commerce sobre la misma cantidad de días'
-    '</div>',
-    unsafe_allow_html=True
-)
-
-a, b = st.columns(2)
-
-def compare_box(title, value, base_text):
-    cls = "positive" if value >= 0 else "negative"
-    arrow = "↑" if value >= 0 else "↓"
-
-    return f"""
-    <div class="compare-card">
-      <div class="compare-title">{title}</div>
-      <div class="compare-base">{base_text}</div>
-      <div class="compare-value {cls}">{arrow}&nbsp;&nbsp;{value:+.1%}</div>
-    </div>
-    """
-
-with a:
-    if vs_aug is not None:
-        st.markdown(
-            compare_box(
-                "VS MES ANTERIOR",
-                vs_aug,
-                f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"
-            ),
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            compare_box("VS MES ANTERIOR", 0, "Sin base disponible"),
-            unsafe_allow_html=True
-        )
-
-with b:
-    if vs_25 is not None:
-        st.markdown(
-            compare_box(
-                "VS MISMO MES AÑO ANTERIOR",
-                vs_25,
-                f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
-            ),
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            compare_box("VS MISMO MES AÑO ANTERIOR", 0, "Sin base disponible"),
-            unsafe_allow_html=True
-        )
-
-st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
-st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-
-chart = px.line(
-    current,
-    x="date",
-    y="ecommerce_tax",
-    markers=True,
-    labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
-)
-
-chart.update_layout(
-    height=430,
-    margin=dict(l=10, r=10, t=20, b=10),
-    yaxis_tickprefix="$",
-    yaxis_tickformat=",.0f",
-    hovermode="x unified"
-)
-
-st.plotly_chart(chart, use_container_width=True)
-st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown(
-    '<div class="footer">'
-    '<span>Fuente: venta con impuesto de MicroStrategy.</span>'
-    '<span>MásOnline &nbsp;|&nbsp; E-commerce</span>'
-    '</div>',
-    unsafe_allow_html=True
-)
