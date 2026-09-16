@@ -42,7 +42,7 @@ st.markdown("""
     }
     .label { color: #6b7280; font-size: 14px; font-weight: 700; }
     .value { color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }
-    .small { color: #6b7280; font-size: 13px; margin-top: 7px; }
+    .small { color: #20252b; font-size: 13px; font-weight: 700; margin-top: 7px; }
 
     .section {
         font-size: 20px; font-weight: 800; color: #20252b;
@@ -666,8 +666,9 @@ body {{
     margin-top: 7px;
 }}
 .small {{
-    color: #6b7280;
+    color: #20252b;
     font-size: 13px;
+    font-weight: 700;
     margin-top: 7px;
 }}
 .section {{
@@ -900,6 +901,15 @@ with c3:
       <div class="small">{int(acc_orders):,} pedidos · {int(acc_units):,} unidades</div>
     </div>
     """.replace(",", "."), unsafe_allow_html=True)
+
+with c4:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">PROYECCIÓN DE CIERRE</div>
+      <div class="value">{money(projection)}</div>
+      <div class="small">Promedio diario × {days_month} días</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 progress = min(share / target, 1.0) * 100
 
