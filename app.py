@@ -1,448 +1,187 @@
-import streamlit as st
+streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from pathlib import Path
+import calendar
 
-# ---------------------------------------------------------
-# Configuración general de la página
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title="Ventas · Panel de control",
-    page_icon="📊",
-    layout="wide",
-)
+st.set_page_config(page_title="MásOnline | Ecommerce", page_icon="📊", layout="wide")
 
-# ---------------------------------------------------------
-# Sistema de diseño: colores, tipografía, estilos
-# ---------------------------------------------------------
-NAVY = "#12213D"
-NAVY_LIGHT = "#1C3159"
-TEAL = "#0E7C7B"
-TEAL_SOFT = "#DCEEEE"
-AMBER = "#E0973C"
-AMBER_SOFT = "#FBEADA"
-INK = "#1F2430"
-SLATE = "#6B7280"
-BG = "#F6F7F9"
-CARD_BORDER = "#E4E6EB"
-
-PALETTE_SEQUENCE = [TEAL, NAVY, AMBER, "#8FB8B7", "#5B7A99"]
-
-CUSTOM_CSS = f"""
+st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
-
-html, body, [class*="css"] {{
-    font-family: 'Inter', sans-serif;
-    color: {INK};
-}}
-
-.stApp {{
-    background-color: {BG};
-}}
-
-h1, h2, h3 {{
-    font-family: 'Sora', sans-serif !important;
-    color: {INK};
-}}
-
-/* Título principal */
-.dash-header {{
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    border-bottom: 2px solid {NAVY};
-    padding-bottom: 0.6rem;
-    margin-bottom: 1.6rem;
-}}
-.dash-header h1 {{
-    font-size: 1.9rem;
-    font-weight: 700;
-    margin: 0;
-}}
-.dash-header span {{
-    color: {SLATE};
-    font-size: 0.9rem;
-}}
-
-/* Sidebar oscuro */
-section[data-testid="stSidebar"] {{
-    background-color: {NAVY};
-}}
-section[data-testid="stSidebar"] * {{
-    color: #E7ECF5 !important;
-}}
-section[data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {{
-    background-color: {TEAL} !important;
-}}
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 {{
-    font-family: 'Sora', sans-serif !important;
-    color: #FFFFFF !important;
-}}
-
-/* Bloques KPI */
-.kpi-row {{
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 0.5rem;
-}}
-.kpi-block {{
-    flex: 1;
-    background: #FFFFFF;
-    border: 1px solid {CARD_BORDER};
-    border-left: 4px solid {TEAL};
-    border-radius: 4px;
-    padding: 0.9rem 1.1rem;
-}}
-.kpi-block.alt {{
-    border-left-color: {NAVY};
-}}
-.kpi-label {{
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #4B5160;
-    margin-bottom: 0.25rem;
-}}
-.kpi-value {{
-    font-family: 'Sora', sans-serif;
-    font-size: 1.55rem;
-    font-weight: 700;
-    color: {INK};
-    line-height: 1.2;
-}}
-.kpi-delta {{
-    font-size: 0.8rem;
-    font-weight: 600;
-    margin-top: 0.3rem;
-}}
-.kpi-delta.up {{ color: {TEAL}; }}
-.kpi-delta.down {{ color: {AMBER}; }}
-
-/* Encabezados de sección */
-.section-title {{
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    margin-top: 1.4rem;
-    margin-bottom: 0.6rem;
-}}
-.section-title .bar {{
-    width: 4px;
-    height: 1.3rem;
-    background-color: {TEAL};
-    border-radius: 2px;
-}}
-.section-title h3 {{
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 600;
-}}
-
-div[data-testid="stMetric"] {{
-    background: #FFFFFF;
-    border: 1px solid {CARD_BORDER};
-    border-radius: 4px;
-    padding: 0.6rem 0.8rem;
-}}
-
-hr {{
-    border-color: {CARD_BORDER};
-}}
+    .stApp { background: #f5f7fa; }
+    .block-container { max-width: 1500px; padding-top: 1.2rem; }
+    .title { foimportnt-size: 34px; font-weight: 800; color: #20252b; margin-bottom: 0; }
+    .subtitle { color: #6b7280; font-size: 15px; margin-bottom: 22px; }
+    .card {
+        background: white; border-radius: 14px; padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        min-height: 125px; border: 1px solid #e8ebef;
+    }
+    .label { color: #6b7280; font-size: 14px; font-weight: 600; }
+    .value { color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }
+    .small { color: #6b7280; font-size: 13px; margin-top: 5px; }
+    .section { font-size: 20px; font-weight: 800; color: #20252b; margin: 28px 0 12px; }
 </style>
-"""
+""", unsafe_allow_html=True)
 
-CHART_FONT = dict(family="Inter, sans-serif", color=INK)
+DATA_FILE = Path(__file__).resolve().parent / "data.csv"
 
-
-def style_fig(fig, title=None):
-    fig.update_layout(
-        font=CHART_FONT,
-        title=dict(text=title, font=dict(family="Sora, sans-serif", size=16, color=INK)) if title else None,
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(t=50 if title else 20, l=10, r=10, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, title=None),
-    )
-    fig.update_xaxes(gridcolor="#EDEEF2", zeroline=False)
-    fig.update_yaxes(gridcolor="#EDEEF2", zeroline=False)
-    return fig
-
-
-def section_title(text):
-    st.markdown(
-        f'<div class="section-title"><div class="bar"></div><h3>{text}</h3></div>',
-        unsafe_allow_html=True,
-    )
-
-
-DEFAULT_FILE = "Venta_Con_y_sin_Impuesto__20_.xlsx"
-
-COLUMN_MAP = {
-    0: "Mes",
-    1: "Fecha",
-    2: "Dia",
-    3: "Tienda_Cod",
-    4: "Tienda_Nombre",
-    5: "Facturacion",
-    6: "Venta_Ecommerce",
-    7: "Venta_Operativa",
-    8: "Venta_Operativa_Ecommerce",
-    9: "Cantidad_Venta_Ecommerce",
-    10: "Pedidos_Ecommerce",
-}
-
-
-@st.cache_data(show_spinner="Cargando datos...")
-def load_data(file) -> pd.DataFrame:
-    df = pd.read_excel(file, header=2)
-    df = df.rename(columns={df.columns[i]: name for i, name in COLUMN_MAP.items()})
-    df["Fecha"] = pd.to_datetime(df["Fecha"])
-    numeric_cols = [
-        "Facturacion",
-        "Venta_Ecommerce",
-        "Venta_Operativa",
-        "Venta_Operativa_Ecommerce",
-        "Cantidad_Venta_Ecommerce",
-        "Pedidos_Ecommerce",
-    ]
-    for col in numeric_cols:
+# Read the CSV directly. No cache, so a new data.csv is picked up after redeploy/refresh.
+try:
+    df = pd.read_csv(DATA_FILE)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    df["Tienda"] = df["Tienda_Cod"].astype(str) + " - " + df["Tienda_Nombre"].astype(str)
-    return df
+    df = df.dropna(subset=["date"])
+except Exception as e:
+    st.error(f"No se pudo leer data.csv: {e}")
+    st.stop()
 
+# Current period: September 2026. The source column is intentionally not used
+# because the uploaded report labels all rows with the same source text.
+current = df[
+    (df["date"].dt.year == 2026) &
+    (df["date"].dt.month == 9)
+].copy().sort_values("date")
 
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+if current.empty:
+    st.error("No hay datos de septiembre 2026.")
+    st.stop()
 
-# ---------------------------------------------------------
-# Carga del archivo
-# ---------------------------------------------------------
+latest = current.iloc[-1]
+prev = current.iloc[-2] if len(current) > 1 else None
+days_elapsed = len(current)
+days_month = calendar.monthrange(2026, 9)[1]
+
+acc_ecom = current["ecommerce_tax"].sum()
+acc_company = current["company_tax"].sum()
+acc_orders = current["orders"].sum()
+acc_units = current["units"].sum()
+share = acc_ecom / acc_company if acc_company else 0
+target = 0.03
+gap = target - share
+
+projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
+day_change = (
+    (latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1
+    if prev is not None and prev["ecommerce_tax"] else 0
+)
+
+# Like-for-like comparisons: same number of elapsed days.
+# We use dates, not the source label, so the report's source text can change safely.
+n = days_elapsed
+aug = df[
+    (df["date"].dt.year == 2026) &
+    (df["date"].dt.month == 8) &
+    (df["date"].dt.day <= n)
+].sort_values("date")
+sep25 = df[
+    (df["date"].dt.year == 2025) &
+    (df["date"].dt.month == 9) &
+    (df["date"].dt.day <= n)
+].sort_values("date")
+
+aug_acc = aug["ecommerce_tax"].sum()
+sep25_acc = sep25["ecommerce_tax"].sum()
+vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
+vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
+
+def money(v):
+    return f"${v/1_000_000:,.2f} MM".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def pct(v):
+    return f"{v*100:.2f}%".replace(".", ",")
+
+def pct_change(v):
+    return f"{v:+.2%}".replace(".", ",")
+
+st.markdown('<div class="title">MásOnline | Dashboard Ecommerce</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="dash-header"><h1>Ventas — Panel de control</h1>'
-    '<span>Facturación, ecommerce y performance por tienda</span></div>',
-    unsafe_allow_html=True,
+    f'<div class="subtitle">Septiembre 2026 · Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</div>',
+    unsafe_allow_html=True
 )
 
-data_source = None
-if Path(DEFAULT_FILE).exists():
-    data_source = DEFAULT_FILE
-else:
-    uploaded = st.file_uploader("Subí el archivo Excel de ventas (.xlsx)", type=["xlsx"])
-    if uploaded is not None:
-        data_source = uploaded
+c1, c2, c3, c4 = st.columns(4)
 
-if data_source is None:
-    st.info("Subí el archivo para comenzar, o colocá el Excel junto a este script con el nombre "
-            f"'{DEFAULT_FILE}'.")
-    st.stop()
-
-df = load_data(data_source)
-
-# ---------------------------------------------------------
-# Filtros (sidebar)
-# ---------------------------------------------------------
-st.sidebar.header("Filtros")
-
-meses_disponibles = sorted(df["Mes"].unique(), key=lambda m: df.loc[df["Mes"] == m, "Fecha"].min())
-meses_sel = st.sidebar.multiselect("Mes", meses_disponibles, default=meses_disponibles)
-
-tiendas_disponibles = sorted(df["Tienda"].unique())
-tiendas_sel = st.sidebar.multiselect("Tienda", tiendas_disponibles, default=[])
-
-fecha_min, fecha_max = df["Fecha"].min(), df["Fecha"].max()
-rango_fechas = st.sidebar.date_input(
-    "Rango de fechas",
-    value=(fecha_min, fecha_max),
-    min_value=fecha_min,
-    max_value=fecha_max,
-)
-
-df_f = df[df["Mes"].isin(meses_sel)]
-if tiendas_sel:
-    df_f = df_f[df_f["Tienda"].isin(tiendas_sel)]
-if isinstance(rango_fechas, tuple) and len(rango_fechas) == 2:
-    inicio, fin = pd.to_datetime(rango_fechas[0]), pd.to_datetime(rango_fechas[1])
-    df_f = df_f[(df_f["Fecha"] >= inicio) & (df_f["Fecha"] <= fin)]
-
-if df_f.empty:
-    st.warning("No hay datos para los filtros seleccionados.")
-    st.stop()
-
-# ---------------------------------------------------------
-# KPIs principales
-# ---------------------------------------------------------
-facturacion_total = df_f["Facturacion"].sum()
-venta_ecommerce_total = df_f["Venta_Ecommerce"].sum()
-pedidos_total = df_f["Pedidos_Ecommerce"].sum()
-ticket_promedio = venta_ecommerce_total / pedidos_total if pedidos_total > 0 else 0
-
-# Deltas mes contra mes, cuando hay al menos dos meses en la selección
-resumen_mes_kpi = df_f.groupby("Mes", as_index=False)[
-    ["Facturacion", "Venta_Ecommerce", "Pedidos_Ecommerce"]
-].sum()
-resumen_mes_kpi = resumen_mes_kpi.sort_values(
-    by="Mes", key=lambda s: s.map({m: df.loc[df["Mes"] == m, "Fecha"].min() for m in s})
-)
-
-
-def delta_html(serie):
-    if len(resumen_mes_kpi) < 2 or serie.iloc[0] == 0:
-        return ""
-    var = (serie.iloc[-1] - serie.iloc[0]) / serie.iloc[0] * 100
-    cls = "up" if var >= 0 else "down"
-    signo = "+" if var >= 0 else ""
-    return f'<div class="kpi-delta {cls}">{signo}{var:.1f}% vs {resumen_mes_kpi["Mes"].iloc[0]}</div>'
-
-
-kpis = [
-    ("Facturación total (con imp.)", f"${facturacion_total:,.0f}", delta_html(resumen_mes_kpi["Facturacion"]), ""),
-    ("Venta Ecommerce total", f"${venta_ecommerce_total:,.0f}", delta_html(resumen_mes_kpi["Venta_Ecommerce"]), "alt"),
-    ("Pedidos Ecommerce", f"{pedidos_total:,.0f}", delta_html(resumen_mes_kpi["Pedidos_Ecommerce"]), ""),
-    ("Ticket promedio Ecommerce", f"${ticket_promedio:,.0f}", "", "alt"),
-]
-
-kpi_html = '<div class="kpi-row">'
-for label, value, delta, alt_class in kpis:
-    kpi_html += (
-        f'<div class="kpi-block {alt_class}">'
-        f'<div class="kpi-label">{label}</div>'
-        f'<div class="kpi-value">{value}</div>'
-        f'{delta}'
-        f'</div>'
-    )
-kpi_html += "</div>"
-st.markdown(kpi_html, unsafe_allow_html=True)
-
-# ---------------------------------------------------------
-# Comparación Agosto vs Septiembre (u otros meses seleccionados)
-# ---------------------------------------------------------
-section_title("Comparación mensual")
-
-resumen_mes = (
-    df_f.groupby("Mes", as_index=False)[["Facturacion", "Venta_Ecommerce", "Pedidos_Ecommerce"]]
-    .sum()
-)
-resumen_mes = resumen_mes.sort_values(
-    by="Mes", key=lambda s: s.map({m: df.loc[df["Mes"] == m, "Fecha"].min() for m in s})
-)
-
-c1, c2 = st.columns([2, 1])
 with c1:
-    fig_mes = px.bar(
-        resumen_mes.melt(id_vars="Mes", value_vars=["Facturacion", "Venta_Ecommerce"],
-                          var_name="Métrica", value_name="Monto"),
-        x="Mes", y="Monto", color="Métrica", barmode="group",
-        color_discrete_map={"Facturacion": NAVY, "Venta_Ecommerce": TEAL},
-    )
-    fig_mes = style_fig(fig_mes, "Facturación vs Venta Ecommerce por mes")
-    st.plotly_chart(fig_mes, use_container_width=True)
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">PARTICIPACIÓN E-COMMERCE</div>
+      <div class="value">{pct(share)}</div>
+      <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
+    </div>""", unsafe_allow_html=True)
 
 with c2:
-    st.dataframe(
-        resumen_mes.rename(columns={
-            "Facturacion": "Facturación",
-            "Venta_Ecommerce": "Venta Ecommerce",
-            "Pedidos_Ecommerce": "Pedidos",
-        }),
-        hide_index=True,
-        use_container_width=True,
-    )
-    if len(resumen_mes) == 2:
-        variacion = (
-            (resumen_mes["Facturacion"].iloc[1] - resumen_mes["Facturacion"].iloc[0])
-            / resumen_mes["Facturacion"].iloc[0] * 100
-        )
-        st.metric(
-            f"Variación Facturación ({resumen_mes['Mes'].iloc[0]} → {resumen_mes['Mes'].iloc[1]})",
-            f"{variacion:+.1f}%",
-        )
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">VENTA DÍA ANTERIOR</div>
+      <div class="value">{money(latest["ecommerce_tax"])}</div>
+      <div class="small">Vs día previo: {pct_change(day_change)}</div>
+    </div>""", unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# Ranking de tiendas
-# ---------------------------------------------------------
-section_title("Ranking de tiendas")
+with c3:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">MES EN CURSO</div>
+      <div class="value">{money(acc_ecom)}</div>
+      <div class="small">{int(acc_orders):,} pedidos · {int(acc_units):,} unidades</div>
+    </div>""".replace(",", "."), unsafe_allow_html=True)
 
-metrica_ranking = st.selectbox(
-    "Métrica para el ranking",
-    ["Facturacion", "Venta_Ecommerce", "Venta_Operativa", "Pedidos_Ecommerce"],
-    format_func=lambda x: {
-        "Facturacion": "Facturación",
-        "Venta_Ecommerce": "Venta Ecommerce",
-        "Venta_Operativa": "Venta Operativa",
-        "Pedidos_Ecommerce": "Pedidos Ecommerce",
-    }[x],
+with c4:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">PROYECCIÓN DE CIERRE</div>
+      <div class="value">{money(projection)}</div>
+      <div class="small">Promedio diario × {days_month} días</div>
+    </div>""", unsafe_allow_html=True)
+
+st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_html=True)
+st.progress(min(share / target, 1.0))
+st.caption(f"Participación actual: {pct(share)} · Objetivo: {pct(target)}")
+
+st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+chart = px.line(
+    current, x="date", y="ecommerce_tax", markers=True,
+    labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
 )
-
-ranking = df_f.groupby("Tienda", as_index=False)[metrica_ranking].sum().sort_values(
-    metrica_ranking, ascending=False
+chart.update_layout(
+    height=430, margin=dict(l=10, r=10, t=20, b=10),
+    yaxis_tickprefix="$", yaxis_tickformat=",.0f",
+    hovermode="x unified"
 )
+st.plotly_chart(chart, use_container_width=True)
 
-top_n = st.slider("Cantidad de tiendas a mostrar en cada extremo", 3, 20, 10)
+st.markdown('<div class="section">Comparaciones — misma cantidad de días</div>', unsafe_allow_html=True)
+a, b, c = st.columns(3)
 
-r1, r2 = st.columns(2)
-with r1:
-    fig_top = px.bar(
-        ranking.head(top_n).sort_values(metrica_ranking),
-        x=metrica_ranking, y="Tienda", orientation="h",
-        color_discrete_sequence=[TEAL],
-    )
-    fig_top = style_fig(fig_top, f"Top {top_n} tiendas")
-    st.plotly_chart(fig_top, use_container_width=True)
+def comparison_card(title, value, base_text):
+    sign = "+" if value >= 0 else ""
+    return f"""
+    <div class="card">
+      <div class="label">{title}</div>
+      <div class="value">{sign}{value*100:.1f}%</div>
+      <div class="small">{base_text}</div>
+    </div>"""
 
-with r2:
-    fig_bottom = px.bar(
-        ranking.tail(top_n).sort_values(metrica_ranking, ascending=False).sort_values(metrica_ranking),
-        x=metrica_ranking, y="Tienda", orientation="h",
-        color_discrete_sequence=[AMBER],
-    )
-    fig_bottom = style_fig(fig_bottom, f"Bottom {top_n} tiendas")
-    st.plotly_chart(fig_bottom, use_container_width=True)
+with a:
+    if vs_aug is not None:
+        st.markdown(comparison_card("VS MES ANTERIOR", vs_aug, f"Sep 1–{n} vs Ago 1–{n}"), unsafe_allow_html=True)
+    else:
+        st.markdown(comparison_card("VS MES ANTERIOR", 0, "Sin base disponible"), unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# Evolución diaria
-# ---------------------------------------------------------
-section_title("Evolución diaria")
+with b:
+    if vs_25 is not None:
+        st.markdown(comparison_card("VS 2025", vs_25, f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"), unsafe_allow_html=True)
+    else:
+        st.markdown(comparison_card("VS 2025", 0, "Sin base disponible"), unsafe_allow_html=True)
 
-metrica_evolucion = st.selectbox(
-    "Métrica para la evolución diaria",
-    ["Facturacion", "Venta_Ecommerce", "Venta_Operativa", "Pedidos_Ecommerce"],
-    format_func=lambda x: {
-        "Facturacion": "Facturación",
-        "Venta_Ecommerce": "Venta Ecommerce",
-        "Venta_Operativa": "Venta Operativa",
-        "Pedidos_Ecommerce": "Pedidos Ecommerce",
-    }[x],
-    key="metrica_evolucion",
-)
+with c:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">AVANCE AL OBJETIVO</div>
+      <div class="value">{share/target:.1%}</div>
+      <div class="small">Objetivo de participación: 3,00%</div>
+    </div>""", unsafe_allow_html=True)
 
-serie_diaria = df_f.groupby("Fecha", as_index=False)[metrica_evolucion].sum()
-
-fig_evolucion = go.Figure()
-fig_evolucion.add_trace(
-    go.Scatter(
-        x=serie_diaria["Fecha"], y=serie_diaria[metrica_evolucion],
-        mode="lines+markers",
-        line=dict(color=NAVY, width=2),
-        marker=dict(color=TEAL, size=6),
-        fill="tozeroy",
-        fillcolor="rgba(14, 124, 123, 0.08)",
-    )
-)
-fig_evolucion = style_fig(fig_evolucion, f"Evolución diaria — {metrica_evolucion.replace('_', ' ')}")
-st.plotly_chart(fig_evolucion, use_container_width=True)
-
-# ---------------------------------------------------------
-# Tabla de detalle
-# ---------------------------------------------------------
-with st.expander("Ver datos detallados"):
-    st.dataframe(
-        df_f[[
-            "Fecha", "Mes", "Dia", "Tienda", "Facturacion", "Venta_Ecommerce",
-            "Venta_Operativa", "Venta_Operativa_Ecommerce",
-            "Cantidad_Venta_Ecommerce", "Pedidos_Ecommerce",
-        ]].sort_values("Fecha"),
-        use_container_width=True,
-        hide_index=True,
-    )
+st.markdown("---")
+st.caption("Fuente: venta con impuesto de MicroStrategy. Comparaciones históricas calculadas sobre la misma cantidad de días transcurridos.")
