@@ -46,8 +46,8 @@ APP_CSS = """
         margin: 26px 0 4px; display:flex; align-items:center; gap:10px;
     }
     .section .count-pill {
-        font-size: 12px; font-weight: 700; background:#eef0eb; color:#565d5f;
-        border-radius: 999px; padding: 2px 10px;
+        font-size: 15px; font-weight: 800; background:#fdeee5; color:#ff5a1f;
+        border-radius: 999px; padding: 3px 15px; box-shadow: 0 1px 5px rgba(255,90,31,.22);
     }
     .section-desc { color:#6b7280; font-size:12.5px; margin: -2px 0 10px; }
 
@@ -669,7 +669,7 @@ if any_data_loaded:
 
     # ---- Pedidos +72h ----
     st.markdown(
-        f'<div class="section">📦 Pedidos sin movimiento &gt; 72hs '
+        f'<div class="section">📦 Pedidos sin movimiento +72hs '
         f'<span class="count-pill">{len(pedidos_f) if pedidos_f is not None else 0}</span></div>'
         '<div class="section-desc">Pedidos que llevan más de 3 días en el mismo estado sin avanzar.</div>',
         unsafe_allow_html=True
@@ -702,7 +702,7 @@ if any_data_loaded:
                 + table_html(show[detail_cols])
             )
             html_doc = export_section_html(
-                "📦 Pedidos sin movimiento &gt; 72hs",
+                "📦 Pedidos sin movimiento +72hs",
                 "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.",
                 export_body
             )
