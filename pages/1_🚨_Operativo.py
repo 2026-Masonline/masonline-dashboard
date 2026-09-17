@@ -98,9 +98,11 @@ APP_CSS = """
     table.dashtable tbody tr:nth-child(even) { background: #fafaf8; }
     table.dashtable tbody tr:hover { background: #fdf1e8; }
     table.dashtable tbody tr.total-row {
-        background: #cfe8fb; font-weight: 800; color:#12314f;
+        background: #d7ecfc; font-weight: 800; color:#0f3a5c;
+        border-top: 2px solid #7fb8e8;
     }
-    table.dashtable tbody tr.total-row:hover { background: #cfe8fb; }
+    table.dashtable tbody tr.total-row td { padding: 10px 12px; font-size: 13.5px; }
+    table.dashtable tbody tr.total-row:hover { background: #d7ecfc; }
 
     div[data-testid="stDownloadButton"] button {
         background: #ffffff; color: #ff5a1f; border: 1.5px solid #ff5a1f;
@@ -669,8 +671,7 @@ if any_data_loaded:
 
     # ---- Pedidos +72h ----
     st.markdown(
-        f'<div class="section">📦 Pedidos sin movimiento +72hs '
-        f'<span class="count-pill">{len(pedidos_f) if pedidos_f is not None else 0}</span></div>'
+        '<div class="section">📦 Pedidos sin movimiento +72hs</div>'
         '<div class="section-desc">Pedidos que llevan más de 3 días en el mismo estado sin avanzar.</div>',
         unsafe_allow_html=True
     )
@@ -683,12 +684,12 @@ if any_data_loaded:
             detail_cols = ["Pedido", "Tienda", "Estado", "Fecha", "Días", "Monto", "Urgencia"]
 
             agg = pedidos_f.groupby("Tienda").agg(
-                Cantidad=("Pedido", "count"), Monto=("MontoNum", "sum")
+                Cantidad=("Pedido", "count")
             ).reset_index().sort_values("Cantidad", ascending=False)
 
             st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
             resumen_html = resumen_table_html(
-                agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}", "Monto": money}
+                agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}
             )
             st.write(resumen_html, unsafe_allow_html=True)
 
