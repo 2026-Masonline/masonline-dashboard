@@ -63,6 +63,16 @@ APP_CSS = """
     .kpi.warn .value { color:#c98500; }
     .kpi.crit .value { color:#d03b3b; }
 
+    a.kpi-link { text-decoration: none; display: block; }
+    a.kpi-link .kpi { cursor: pointer; transition: box-shadow .15s, transform .15s; position: relative; }
+    a.kpi-link .kpi::after {
+        content: "⬇ HTML"; position: absolute; top: 10px; right: 12px;
+        font-size: 9.5px; font-weight: 700; color: #ff5a1f; opacity: 0;
+        transition: opacity .15s; letter-spacing: .03em;
+    }
+    a.kpi-link:hover .kpi { box-shadow: 0 6px 18px rgba(0,0,0,.14); transform: translateY(-2px); }
+    a.kpi-link:hover .kpi::after { opacity: 1; }
+
     .badge {
         display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700;
         padding: 3px 10px; border-radius: 999px; white-space: nowrap;
@@ -356,6 +366,152 @@ def sev_faltante(alta_rotacion):
     return "warning", "Faltante"
 
 # ---------------------------------------------------------------------
+# HTML de cada sección, generado antes que las tarjetas KPI para poder
+# linkearlas directo (clickear la tarjeta baja el HTML de esa sección).
+# ---------------------------------------------------------------------
+
+def html_doc_pedidos(pedidos_f):
+    if pedidos_f is None or not len(pedidos_f):
+        return None
+    show = pedidos_f.copy().sort_values("Dias", ascending=False)
+    show["Días"] = show["Dias"].round(1)
+    show["Monto"] = show["MontoNum"].apply(money)
+    show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    detail_cols = ["Pedido", "Tienda", "Estado", "Fecha", "Días", "Monto", "Urgencia"]
+    agg = pedidos_f.groupby("Tienda").agg(
+        Cantidad=("Pedido", "count")
+    ).reset_index().sort_values("Cantidad", ascending=False)
+    resumen_html = resumen_table_html(agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
+    body = (
+        '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(show[detail_cols])
+    )
+    return export_section_html(
+        "📦 Pedidos sin movimiento +72hs",
+        "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.",
+        body
+    )
+
+def html_doc_reclamos(reclamos_f):
+    if reclamos_f is None or not len(reclamos_f):
+        return None
+    abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+    if not len(abiertos):
+        return None
+    show = abiertos.copy().sort_values("Horas", ascending=False)
+    show["Horas"] = show["Horas"].round(1)
+    show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
+    agg = abiertos.groupby("Tienda").apply(lambda g: pd.Series({
+        "Cantidad": len(g),
+        ">72h": int((g["Horas"] > 72).sum()),
+        "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
+    })).reset_index().sort_values("Cantidad", ascending=False)
+    resumen_html = resumen_table_html(
+        agg, "Tienda",
+        {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
+    )
+    body = (
+        '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(show[detail_cols])
+    )
+    return export_section_html(
+        "🗣️ Reclamos operativos",
+        "Franjas de alerta: 24hs y 72hs sin acción.",
+        body
+    )
+
+def html_doc_prepa(prepa_f):
+    if prepa_f is None or not len(prepa_f):
+        return None
+    show = prepa_f.copy().sort_values("OntimePct")
+    show["Ontime %"] = show["OntimePct"].apply(pct1)
+    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    show["Pedidos"] = show["Pedidos"].astype(int)
+    show["Fuera de horario"] = show["Fuera"].astype(int)
+    detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera de horario", "Ontime %", "Estado"]
+    return export_section_html(
+        "⏱️ On Time Preparación",
+        "Porcentaje de pedidos preparados en horario, por tienda.",
+        table_html(show[detail_cols])
+    )
+
+def html_doc_fr(fr_f):
+    if fr_f is None or not len(fr_f):
+        return None
+    show = fr_f.copy().sort_values("FRPct")
+    show["Unidades"] = show["Unidades"].astype(int)
+    show["Sin sustituto"] = show["SinSustituto"].astype(int)
+    show["Con sustituto"] = show["ConSustituto"].astype(int)
+    show["Monto faltante"] = show["MontoFaltante"].apply(money)
+    show["FR %"] = show["FRPct"].apply(pct1)
+    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
+    return export_section_html(
+        "🧩 Fill Rate — con y sin sustituto",
+        "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.",
+        table_html(show[detail_cols])
+    )
+
+def html_doc_cancelados(can_f):
+    if can_f is None or not len(can_f):
+        return None
+    agg = can_f.groupby("Tienda").agg(
+        Cancelados=("Pedido", "count"), Monto=("Total $", "sum")
+    ).reset_index().sort_values("Cancelados", ascending=False)
+    resumen_html = resumen_table_html(agg, "Tienda", {"Cancelados": lambda v: f"{int(v)}", "Monto": money})
+    det = can_f.copy().sort_values("Fecha", ascending=False)
+    det["Total $"] = det["Total $"].apply(money)
+    detail_cols = ["Pedido", "Tienda", "Fecha", "Total $"]
+    body = (
+        '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(det[detail_cols])
+    )
+    return export_section_html(
+        "🚫 Pedidos cancelados",
+        "Cancelaciones por tienda en el período del reporte.",
+        body
+    )
+
+def html_doc_faltantes(falt_f):
+    if falt_f is None or not len(falt_f):
+        return None
+    show = falt_f.copy().sort_values(["AltaRotacion", "VentaProm"], ascending=[False, False])
+    show["Días sin venta"] = show["DiasSinVenta"]
+    show["Venta prom. semanal"] = show["VentaProm"].round(1)
+    show["Prioridad"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    detail_cols = ["Tienda", "Producto", "Categoria", "Días sin venta", "Venta prom. semanal", "Prioridad"]
+    agg = falt_f.groupby("Tienda").agg(
+        Cantidad=("Producto", "count"), AltaRotacion=("AltaRotacion", "sum")
+    ).reset_index().rename(columns={"AltaRotacion": "Alta rotación"}).sort_values("Cantidad", ascending=False)
+    resumen_html = resumen_table_html(
+        agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}", "Alta rotación": lambda v: f"{int(v)}"}
+    )
+    body = (
+        '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(show[detail_cols])
+    )
+    return export_section_html(
+        "📉 Faltantes ECOM",
+        "SKUs marcados como faltante para e-commerce, por tienda.",
+        body
+    )
+
+def kpi_link_wrap(inner_html, html_doc, filename):
+    """Envuelve una tarjeta KPI en un link que descarga el HTML de esa sección al clickearla."""
+    if not html_doc:
+        return inner_html
+    b64 = base64.b64encode(html_doc.encode("utf-8")).decode("utf-8")
+    return (
+        f'<a class="kpi-link" href="data:text/html;base64,{b64}" download="{filename}" '
+        'title="Descargar esta sección como HTML">' + inner_html + '</a>'
+    )
+
+# ---------------------------------------------------------------------
 # Header + uploaders
 # ---------------------------------------------------------------------
 
@@ -620,51 +776,57 @@ if any_data_loaded:
 
     kpis = []
     if pedidos_f is not None:
-        kpis.append(kpi_card(
+        card = kpi_card(
             "Pedidos +72h sin mover", f"{len(pedidos_f)}",
             f"{money(pedidos_f['MontoNum'].sum())} en pedidos",
             "crit" if len(pedidos_f) > 0 else "good"
-        ))
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
     if reclamos_f is not None:
         abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
         r72 = (abiertos["Horas"] > 72).sum()
         r24 = ((abiertos["Horas"] >= 24) & (abiertos["Horas"] <= 72)).sum()
-        kpis.append(kpi_card(
+        card = kpi_card(
             "Reclamos abiertos", f"{len(abiertos)}",
             f"{r72} &gt;72h · {r24} 24–72h",
             "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
-        ))
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_reclamos(reclamos_f), "operativo_reclamos.html"))
     if prepa_f is not None and len(prepa_f):
         ped_tot = prepa_f["Pedidos"].sum()
         fuera_tot = prepa_f["Fuera"].sum()
         ot_pct = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
-        kpis.append(kpi_card(
+        card = kpi_card(
             "On time preparación", pct1(ot_pct),
             f"{int(fuera_tot)} de {int(ped_tot)} fuera de horario",
             "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
-        ))
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
     if fr_f is not None and len(fr_f):
         unid_tot = fr_f["Unidades"].sum()
         sin_tot = fr_f["SinSustituto"].sum()
         con_tot = fr_f["ConSustituto"].sum()
         fr_pct_tot = 100 * (1 - (sin_tot + con_tot) / unid_tot) if unid_tot else 0
-        kpis.append(kpi_card(
+        card = kpi_card(
             "Fill rate (con+sin sust.)", pct1(fr_pct_tot),
             f"{int(sin_tot)} unid. sin sustituto",
             "good" if fr_pct_tot >= 97 else ("warn" if fr_pct_tot >= 93 else "crit")
-        ))
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_fr(fr_f), "operativo_fill_rate.html"))
     if can_f is not None:
-        kpis.append(kpi_card(
+        card = kpi_card(
             "Pedidos cancelados", f"{len(can_f)}",
             f"{money(can_f['Total $'].sum())} totales"
-        ))
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_cancelados(can_f), "operativo_cancelados.html"))
     if falt_f is not None:
         alta = falt_f["AltaRotacion"].sum()
-        kpis.append(kpi_card(
+        card = kpi_card(
             "SKUs faltantes ECOM", f"{len(falt_f)}",
             f"{alta} de alta rotación",
             "crit" if alta > 0 else "warn"
-        ))
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_faltantes(falt_f), "operativo_faltantes.html"))
 
     if kpis:
         st.markdown(f'<div class="kpi-row">{"".join(kpis)}</div>', unsafe_allow_html=True)
