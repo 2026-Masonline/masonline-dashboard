@@ -902,17 +902,10 @@ if any_data_loaded:
                 "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
             })).reset_index().sort_values("Cantidad", ascending=False)
 
-            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
             resumen_html = resumen_table_html(
                 agg, "Tienda",
                 {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
             )
-            st.write(resumen_html, unsafe_allow_html=True)
-
-            with st.expander(f"Ver detalle de reclamos ({len(show)})"):
-                with st.container(height=380):
-                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
-
             export_body = (
                 '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
                 '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
@@ -923,6 +916,27 @@ if any_data_loaded:
                 "Franjas de alerta: 24hs y 72hs sin acción.",
                 export_body
             )
+
+            r72_tot = int((base["Horas"] > 72).sum())
+            r24_tot = int(((base["Horas"] >= 24) & (base["Horas"] <= 72)).sum())
+            mini_card = kpi_card(
+                "Reclamos abiertos" if solo_abiertos else "Reclamos (todos)", f"{len(show)}",
+                f"{r72_tot} &gt;72h · {r24_tot} 24–72h — clickeá para bajar el HTML",
+                "crit" if r72_tot > 0 else ("warn" if r24_tot > 0 else "good")
+            )
+            st.markdown(
+                f'<div class="kpi-row" style="margin:4px 0 14px; grid-template-columns: minmax(230px, 340px);">'
+                f'{kpi_link_wrap(mini_card, html_doc, "operativo_reclamos.html")}</div>',
+                unsafe_allow_html=True
+            )
+
+            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            st.write(resumen_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de reclamos ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
             section_download_button(html_doc, "operativo_reclamos.html", "dl_reclamos")
         else:
             st.markdown('<div class="empty-box">Sin reclamos para esta selección 🎉</div>', unsafe_allow_html=True)
