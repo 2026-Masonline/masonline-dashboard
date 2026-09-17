@@ -412,8 +412,17 @@ def html_doc_reclamos(reclamos_f):
         agg, "Tienda",
         {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
     )
+    agg_tipo = abiertos.groupby("Tipo").agg(
+        Cantidad=("Pedido", "count")
+    ).reset_index().sort_values("Cantidad", ascending=False)
+    resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
     body = (
-        '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html +
+        '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
+        '<div style="flex:1;min-width:260px;">'
+        '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html + '</div>'
+        '<div style="flex:1;min-width:260px;">'
+        '<div class="resumen-title">Resumen por tipo (abiertos)</div>' + resumen_tipo_html + '</div>'
+        '</div>'
         '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
@@ -634,6 +643,7 @@ if reclamos is not None:
     reclamos["Horas"] = (now_ref - reclamos["Fecha"]).dt.total_seconds() / 3600
     reclamos["Tienda"] = reclamos["Tienda"].apply(norm_txt)
     reclamos["Estado"] = reclamos["Estado"].apply(norm_txt)
+    reclamos["Tipo"] = reclamos["Tipo"].apply(norm_txt)
     reclamos[["Sev", "SevLabel"]] = reclamos.apply(
         lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"])), axis=1
     )
@@ -901,13 +911,25 @@ if any_data_loaded:
                 ">72h": int((g["Horas"] > 72).sum()),
                 "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
             })).reset_index().sort_values("Cantidad", ascending=False)
+            agg_tipo = base.groupby("Tipo").agg(
+                Cantidad=("Pedido", "count")
+            ).reset_index().sort_values("Cantidad", ascending=False)
 
             resumen_html = resumen_table_html(
                 agg, "Tienda",
                 {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
             )
+            resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
+            resumen_side_by_side = (
+                '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
+                '<div style="flex:1;min-width:260px;">'
+                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html + '</div>'
+                '<div style="flex:1;min-width:260px;">'
+                '<div class="resumen-title">Resumen por tipo</div>' + resumen_tipo_html + '</div>'
+                '</div>'
+            )
             export_body = (
-                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                resumen_side_by_side +
                 '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
                 + table_html(show[detail_cols])
             )
@@ -930,8 +952,13 @@ if any_data_loaded:
                 unsafe_allow_html=True
             )
 
-            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
-            st.write(resumen_html, unsafe_allow_html=True)
+            col_tienda, col_tipo = st.columns(2)
+            with col_tienda:
+                st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+                st.write(resumen_html, unsafe_allow_html=True)
+            with col_tipo:
+                st.markdown('<div class="resumen-title">Resumen por tipo</div>', unsafe_allow_html=True)
+                st.write(resumen_tipo_html, unsafe_allow_html=True)
 
             with st.expander(f"Ver detalle de reclamos ({len(show)})"):
                 with st.container(height=380):
