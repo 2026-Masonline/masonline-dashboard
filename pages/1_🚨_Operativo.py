@@ -1,5 +1,6 @@
 import re
 import base64
+import unicodedata
 from pathlib import Path
 import streamlit as st
 import pandas as pd
@@ -13,8 +14,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("""
-<style>
+APP_CSS = """
     .stApp { background: #ffffff; }
     .block-container { max-width: 1500px; padding: 0 1.2rem 1.2rem; }
 
@@ -77,8 +77,41 @@ st.markdown("""
         background:#fafaf8; border:1px dashed #dfe2db; border-radius:12px;
         padding: 22px; text-align:center; color:#868d8e; font-size:13px; margin-top:8px;
     }
-</style>
-""", unsafe_allow_html=True)
+
+    .resumen-title {
+        font-size: 12.5px; font-weight: 800; color:#565d5f; text-transform:uppercase;
+        letter-spacing:.04em; margin: 4px 0 6px;
+    }
+    table.dashtable {
+        width: 100%; border-collapse: collapse; font-size: 13px;
+        background: white; border-radius: 10px; overflow: hidden;
+    }
+    table.dashtable thead th {
+        background: #20252b; color: #ffffff; text-align: left;
+        padding: 9px 12px; font-size: 11.5px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: .03em;
+        position: sticky; top: 0;
+    }
+    table.dashtable tbody td {
+        padding: 8px 12px; border-bottom: 1px solid #eef0ef; color:#20252b;
+    }
+    table.dashtable tbody tr:nth-child(even) { background: #fafaf8; }
+    table.dashtable tbody tr:hover { background: #fdf1e8; }
+    table.dashtable tbody tr.total-row {
+        background: #cfe8fb; font-weight: 800; color:#12314f;
+    }
+    table.dashtable tbody tr.total-row:hover { background: #cfe8fb; }
+
+    div[data-testid="stDownloadButton"] button {
+        background: #ffffff; color: #ff5a1f; border: 1.5px solid #ff5a1f;
+        border-radius: 8px; font-size: 12.5px; font-weight: 700; padding: 4px 14px;
+    }
+    div[data-testid="stDownloadButton"] button:hover {
+        background: #ff5a1f; color: #ffffff; border-color: #ff5a1f;
+    }
+"""
+
+st.markdown(f"<style>{APP_CSS}</style>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -102,8 +135,15 @@ def strip_sucursal(v):
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
+def fold_tienda_key(s):
+    """Clave sin acentos/mayúsculas para agrupar nombres de tienda equivalentes
+    aunque vengan escritos distinto entre hojas (ej. 'Cordoba Oeste' vs 'Córdoba Oeste')."""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower()
+
 def build_tienda_canon_map(dfs):
-    """Unifica nombres de tienda entre hojas (mayúsculas/minúsculas, prefijo
+    """Unifica nombres de tienda entre hojas (mayúsculas/minúsculas, acentos, prefijo
     'Sucursal', espacios) usando la ortografía más frecuente como canónica."""
     from collections import Counter
     counts = {}
@@ -114,7 +154,7 @@ def build_tienda_canon_map(dfs):
             s = strip_sucursal(v)
             if not s:
                 continue
-            key = s.lower()
+            key = fold_tienda_key(s)
             counts.setdefault(key, Counter())[s] += 1
     return {key: c.most_common(1)[0][0] for key, c in counts.items()}
 
@@ -123,7 +163,7 @@ def apply_tienda_canon(d, canon_map):
         return d
     d = d.copy()
     d["Tienda"] = d["Tienda"].apply(strip_sucursal).apply(
-        lambda s: canon_map.get(s.lower(), s)
+        lambda s: canon_map.get(fold_tienda_key(s), s)
     )
     return d
 
@@ -201,6 +241,74 @@ def pct1(v):
 def badge(level, label):
     icons = {"good": "●", "warning": "▲", "serious": "▲", "critical": "✕", "neutral": "●"}
     return f'<span class="badge {level}">{icons.get(level,"●")} {label}</span>'
+
+def table_html(df):
+    """Tabla de detalle, con el estilo .dashtable en vez del default de pandas."""
+    return df.to_html(escape=False, index=False, classes="dashtable", border=0)
+
+def resumen_table_html(agg, label_col, col_formatters, total_label="Total general"):
+    """Tabla resumen tipo tabla dinámica de Excel: una fila por tienda + una fila
+    de 'Total general' resaltada al pie. col_formatters: {columna: función de formato}."""
+    cols = list(col_formatters.keys())
+    thead = "".join(f"<th>{c}</th>" for c in [label_col] + cols)
+    body_rows = []
+    for _, r in agg.iterrows():
+        tds = f"<td>{r[label_col]}</td>" + "".join(
+            f"<td>{col_formatters[c](r[c])}</td>" for c in cols
+        )
+        body_rows.append(f"<tr>{tds}</tr>")
+    total_tds = f"<td>{total_label}</td>" + "".join(
+        f"<td>{col_formatters[c](agg[c].sum())}</td>" for c in cols
+    )
+    body_rows.append(f'<tr class="total-row">{total_tds}</tr>')
+    return (
+        '<table class="dashtable"><thead><tr>' + thead + '</tr></thead>'
+        '<tbody>' + "".join(body_rows) + '</tbody></table>'
+    )
+
+def export_section_html(section_title, section_desc, body_html):
+    """Arma un HTML standalone (con el mismo look del panel) para descargar una sección sola."""
+    corte_html = ""
+    if now_ref is not None:
+        corte_html = (
+            '<div class="hero-date">Corte del reporte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y %H:%M")}</small></div>'
+        )
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MásOnline · {section_title}</title>
+<style>
+{APP_CSS}
+body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }}
+.wrap {{ max-width: 1400px; margin: 0 auto; padding: 0 20px 28px; }}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div>
+    {brand_html}
+    <div class="hero-sub">ALERTAS OPERATIVAS</div>
+  </div>
+  {corte_html}
+</div>
+<div class="wrap">
+<div class="section">{section_title}</div>
+<div class="section-desc">{section_desc}</div>
+{body_html}
+</div>
+</body>
+</html>"""
+
+def section_download_button(html_doc, filename, key):
+    st.download_button(
+        "⬇️ Descargar esta sección (HTML)",
+        data=html_doc.encode("utf-8"),
+        file_name=filename,
+        mime="text/html",
+        key=key,
+    )
 
 # ---- severity rules (same thresholds as el Pulso Operativo VMont) ----
 
@@ -572,12 +680,33 @@ if any_data_loaded:
             show["Días"] = show["Dias"].round(1)
             show["Monto"] = show["MontoNum"].apply(money)
             show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-            with st.container(height=380):
-                st.write(
-                    show[["Pedido", "Tienda", "Estado", "Fecha", "Días", "Monto", "Urgencia"]]
-                    .to_html(escape=False, index=False),
-                    unsafe_allow_html=True
-                )
+            detail_cols = ["Pedido", "Tienda", "Estado", "Fecha", "Días", "Monto", "Urgencia"]
+
+            agg = pedidos_f.groupby("Tienda").agg(
+                Cantidad=("Pedido", "count"), Monto=("MontoNum", "sum")
+            ).reset_index().sort_values("Cantidad", ascending=False)
+
+            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            resumen_html = resumen_table_html(
+                agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}", "Monto": money}
+            )
+            st.write(resumen_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de pedidos ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
+            export_body = (
+                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+                + table_html(show[detail_cols])
+            )
+            html_doc = export_section_html(
+                "📦 Pedidos sin movimiento &gt; 72hs",
+                "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.",
+                export_body
+            )
+            section_download_button(html_doc, "operativo_pedidos_72h.html", "dl_72h")
         else:
             st.markdown('<div class="empty-box">Sin pedidos estancados para esta selección 🎉</div>', unsafe_allow_html=True)
     else:
@@ -599,12 +728,39 @@ if any_data_loaded:
             show = show.sort_values("Horas", ascending=False)
             show["Horas"] = show["Horas"].round(1)
             show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-            with st.container(height=380):
-                st.write(
-                    show[["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]]
-                    .to_html(escape=False, index=False),
-                    unsafe_allow_html=True
-                )
+            detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
+
+            base = reclamos_f.copy()
+            if solo_abiertos:
+                base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
+            agg = base.groupby("Tienda").apply(lambda g: pd.Series({
+                "Cantidad": len(g),
+                ">72h": int((g["Horas"] > 72).sum()),
+                "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
+            })).reset_index().sort_values("Cantidad", ascending=False)
+
+            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            resumen_html = resumen_table_html(
+                agg, "Tienda",
+                {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
+            )
+            st.write(resumen_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de reclamos ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
+            export_body = (
+                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+                + table_html(show[detail_cols])
+            )
+            html_doc = export_section_html(
+                "🗣️ Reclamos operativos",
+                "Franjas de alerta: 24hs y 72hs sin acción.",
+                export_body
+            )
+            section_download_button(html_doc, "operativo_reclamos.html", "dl_reclamos")
         else:
             st.markdown('<div class="empty-box">Sin reclamos para esta selección 🎉</div>', unsafe_allow_html=True)
     else:
@@ -623,12 +779,15 @@ if any_data_loaded:
         show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
         show["Pedidos"] = show["Pedidos"].astype(int)
         show["Fuera de horario"] = show["Fuera"].astype(int)
+        detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera de horario", "Ontime %", "Estado"]
         with st.container(height=380):
-            st.write(
-                show[["Tienda", "Formato", "Pedidos", "Fuera de horario", "Ontime %", "Estado"]]
-                .to_html(escape=False, index=False),
-                unsafe_allow_html=True
-            )
+            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+        html_doc = export_section_html(
+            "⏱️ On Time Preparación",
+            "Porcentaje de pedidos preparados en horario, por tienda.",
+            table_html(show[detail_cols])
+        )
+        section_download_button(html_doc, "operativo_ontime_preparacion.html", "dl_prepa")
     else:
         st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
 
@@ -659,12 +818,15 @@ if any_data_loaded:
         show["% Retiro"] = show["% Retiro"].apply(pct1)
         show["% Pickup"] = show["% Pickup"].apply(pct1)
         show["% Delivery"] = show["% Delivery"].apply(pct1)
+        detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera", "Retiro", "% Retiro", "Pickup", "% Pickup", "Delivery", "% Delivery"]
         with st.container(height=380):
-            st.write(
-                show[["Tienda", "Formato", "Pedidos", "Fuera", "Retiro", "% Retiro", "Pickup", "% Pickup", "Delivery", "% Delivery"]]
-                .to_html(escape=False, index=False),
-                unsafe_allow_html=True
-            )
+            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+        html_doc = export_section_html(
+            "🚚 On Time Delivery — por método",
+            "De los pedidos fuera de horario, cuántos correspondieron a cada método de entrega.",
+            table_html(show[detail_cols])
+        )
+        section_download_button(html_doc, "operativo_ontime_delivery.html", "dl_delivery")
     else:
         st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
 
@@ -683,12 +845,15 @@ if any_data_loaded:
         show["Monto faltante"] = show["MontoFaltante"].apply(money)
         show["FR %"] = show["FRPct"].apply(pct1)
         show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+        detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
         with st.container(height=380):
-            st.write(
-                show[["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]]
-                .to_html(escape=False, index=False),
-                unsafe_allow_html=True
-            )
+            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+        html_doc = export_section_html(
+            "🧩 Fill Rate — con y sin sustituto",
+            "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.",
+            table_html(show[detail_cols])
+        )
+        section_download_button(html_doc, "operativo_fill_rate.html", "dl_fr")
     else:
         st.markdown('<div class="empty-box">Subí el archivo de Fill Rate para ver esta sección.</div>', unsafe_allow_html=True)
 
@@ -703,13 +868,31 @@ if any_data_loaded:
         if len(can_f):
             agg = can_f.groupby("Tienda").agg(Cancelados=("Pedido", "count"), Monto=("Total $", "sum")).reset_index()
             agg = agg.sort_values("Cancelados", ascending=False)
-            agg["Monto"] = agg["Monto"].apply(money)
-            st.write(agg.to_html(index=False), unsafe_allow_html=True)
-            with st.expander("Ver detalle de pedidos cancelados"):
-                det = can_f.copy().sort_values("Fecha", ascending=False)
-                det["Total $"] = det["Total $"].apply(money)
+
+            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            resumen_html = resumen_table_html(
+                agg, "Tienda", {"Cancelados": lambda v: f"{int(v)}", "Monto": money}
+            )
+            st.write(resumen_html, unsafe_allow_html=True)
+
+            det = can_f.copy().sort_values("Fecha", ascending=False)
+            det["Total $"] = det["Total $"].apply(money)
+            detail_cols = ["Pedido", "Tienda", "Fecha", "Total $"]
+            with st.expander(f"Ver detalle de pedidos cancelados ({len(det)})"):
                 with st.container(height=380):
-                    st.write(det[["Pedido", "Tienda", "Fecha", "Total $"]].to_html(index=False), unsafe_allow_html=True)
+                    st.write(table_html(det[detail_cols]), unsafe_allow_html=True)
+
+            export_body = (
+                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+                + table_html(det[detail_cols])
+            )
+            html_doc = export_section_html(
+                "🚫 Pedidos cancelados",
+                "Cancelaciones por tienda en el período del reporte.",
+                export_body
+            )
+            section_download_button(html_doc, "operativo_cancelados.html", "dl_cancelados")
         else:
             st.markdown('<div class="empty-box">Sin cancelaciones para esta selección 🎉</div>', unsafe_allow_html=True)
     else:
@@ -728,12 +911,35 @@ if any_data_loaded:
             show["Días sin venta"] = show["DiasSinVenta"]
             show["Venta prom. semanal"] = show["VentaProm"].round(1)
             show["Prioridad"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-            with st.container(height=380):
-                st.write(
-                    show[["Tienda", "Producto", "Categoria", "Días sin venta", "Venta prom. semanal", "Prioridad"]]
-                    .to_html(escape=False, index=False),
-                    unsafe_allow_html=True
-                )
+            detail_cols = ["Tienda", "Producto", "Categoria", "Días sin venta", "Venta prom. semanal", "Prioridad"]
+
+            agg = falt_f.groupby("Tienda").agg(
+                Cantidad=("Producto", "count"), AltaRotacion=("AltaRotacion", "sum")
+            ).reset_index().rename(columns={"AltaRotacion": "Alta rotación"})
+            agg = agg.sort_values("Cantidad", ascending=False)
+
+            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            resumen_html = resumen_table_html(
+                agg, "Tienda",
+                {"Cantidad": lambda v: f"{int(v)}", "Alta rotación": lambda v: f"{int(v)}"}
+            )
+            st.write(resumen_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de faltantes ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
+            export_body = (
+                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+                + table_html(show[detail_cols])
+            )
+            html_doc = export_section_html(
+                "📉 Faltantes ECOM",
+                "SKUs marcados como faltante para e-commerce, por tienda.",
+                export_body
+            )
+            section_download_button(html_doc, "operativo_faltantes.html", "dl_faltantes")
         else:
             st.markdown('<div class="empty-box">Sin faltantes para esta selección 🎉</div>', unsafe_allow_html=True)
     else:
