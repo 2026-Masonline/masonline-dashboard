@@ -1,4 +1,6 @@
 import re
+import base64
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -247,11 +249,22 @@ def sev_faltante(alta_rotacion):
 # Header + uploaders
 # ---------------------------------------------------------------------
 
-st.markdown("""
+# El logo vive en la raíz del repo; esta página está un nivel adentro (pages/).
+LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
+if LOGO_FILE.exists():
+    logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
+    brand_html = (
+        f'<img src="data:image/png;base64,{logo_b64}" '
+        'style="height:48px;max-width:280px;object-fit:contain;">'
+    )
+else:
+    brand_html = '<div class="hero-brand">🚨 Operativo</div>'
+
+st.markdown(f"""
 <div class="hero">
   <div>
-    <div class="hero-brand">🚨 Operativo</div>
-    <div class="hero-sub">MÁSONLINE · ALERTAS</div>
+    {brand_html}
+    <div class="hero-sub">ALERTAS OPERATIVAS</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
