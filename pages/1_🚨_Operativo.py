@@ -431,7 +431,7 @@ def sev_faltante(alta_rotacion):
 # linkearlas directo (clickear la tarjeta baja el HTML de esa sección).
 # ---------------------------------------------------------------------
 
-def html_doc_pedidos(pedidos_f):
+def _body_pedidos(pedidos_f):
     if pedidos_f is None or not len(pedidos_f):
         return None
     show = pedidos_f.copy().sort_values("Dias", ascending=False)
@@ -443,18 +443,23 @@ def html_doc_pedidos(pedidos_f):
         Cantidad=("Pedido", "count")
     ).reset_index().sort_values("Cantidad", ascending=False)
     resumen_html = resumen_table_html(agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
-    body = (
+    return (
         '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
         '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
+
+def html_doc_pedidos(pedidos_f):
+    body = _body_pedidos(pedidos_f)
+    if body is None:
+        return None
     return export_section_html(
         "📦 Pedidos sin movimiento +72hs",
         "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.",
         body
     )
 
-def html_doc_reclamos(reclamos_f):
+def _body_reclamos(reclamos_f):
     if reclamos_f is None or not len(reclamos_f):
         return None
     abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
@@ -477,7 +482,7 @@ def html_doc_reclamos(reclamos_f):
         Cantidad=("Pedido", "count")
     ).reset_index().sort_values("Cantidad", ascending=False)
     resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
-    body = (
+    return (
         '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
         '<div style="flex:1;min-width:260px;">'
         '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html + '</div>'
@@ -487,6 +492,11 @@ def html_doc_reclamos(reclamos_f):
         '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
+
+def html_doc_reclamos(reclamos_f):
+    body = _body_reclamos(reclamos_f)
+    if body is None:
+        return None
     return export_section_html(
         "🗣️ Reclamos operativos",
         "Franjas de alerta: 24hs y 72hs sin acción.",
@@ -530,14 +540,14 @@ def prepa_bundle(prepa_f):
     )
     return {
         "show": show, "detail_cols": detail_cols, "ped_tot": ped_tot, "fuera_tot": fuera_tot,
-        "ot_pct_tot": ot_pct_tot, "top5_html": top5_html, "html_doc": html_doc,
+        "ot_pct_tot": ot_pct_tot, "top5_html": top5_html, "html_doc": html_doc, "body": body,
     }
 
 def html_doc_prepa(prepa_f):
     b = prepa_bundle(prepa_f)
     return b["html_doc"] if b else None
 
-def html_doc_fr(fr_f):
+def _body_fr(fr_f):
     if fr_f is None or not len(fr_f):
         return None
     show = fr_f.copy().sort_values("FRPct")
@@ -548,11 +558,37 @@ def html_doc_fr(fr_f):
     show["FR %"] = show["FRPct"].apply(pct1)
     show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
     detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
+    return table_html(show[detail_cols])
+
+def html_doc_fr(fr_f):
+    body = _body_fr(fr_f)
+    if body is None:
+        return None
     return export_section_html(
         "🧩 Fill Rate — con y sin sustituto",
         "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.",
-        table_html(show[detail_cols])
+        body
     )
+
+def _body_delivery(deliv_f):
+    if deliv_f is None or not len(deliv_f):
+        return None
+    tot_retiro = deliv_f["Retiro"].sum()
+    tot_pickup = deliv_f["Pickup"].sum()
+    tot_delivery = deliv_f["Delivery"].sum()
+    tot_fuera = deliv_f["Fuera"].sum()
+    resumen = ""
+    for label, val in [("Retiro", tot_retiro), ("Pickup", tot_pickup), ("Delivery", tot_delivery)]:
+        share = (val / tot_fuera * 100) if tot_fuera else 0
+        resumen += f'<div class="resumen-title" style="margin-top:0;">{label}: {int(val)} ({pct1(share)} del total fuera)</div>'
+    show = deliv_f.copy().sort_values("Fuera", ascending=False)
+    for c in ["Pedidos", "Retiro", "Pickup", "Delivery", "Fuera"]:
+        show[c] = show[c].astype(int)
+    show["% Retiro"] = show["% Retiro"].apply(pct1)
+    show["% Pickup"] = show["% Pickup"].apply(pct1)
+    show["% Delivery"] = show["% Delivery"].apply(pct1)
+    detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera", "Retiro", "% Retiro", "Pickup", "% Pickup", "Delivery", "% Delivery"]
+    return resumen + table_html(show[detail_cols])
 
 def cancelados_bundle(can_f):
     """Arma el Top 10 de tiendas con más cancelados, el resumen completo por
@@ -587,14 +623,14 @@ def cancelados_bundle(can_f):
     )
     return {
         "agg": agg, "top10_html": top10_html, "resumen_html": resumen_html,
-        "det": det, "detail_cols": detail_cols, "html_doc": html_doc,
+        "det": det, "detail_cols": detail_cols, "html_doc": html_doc, "body": body,
     }
 
 def html_doc_cancelados(can_f):
     b = cancelados_bundle(can_f)
     return b["html_doc"] if b else None
 
-def html_doc_faltantes(falt_f):
+def _body_faltantes(falt_f):
     if falt_f is None or not len(falt_f):
         return None
     show = falt_f.copy().sort_values(["AltaRotacion", "VentaProm"], ascending=[False, False])
@@ -608,16 +644,73 @@ def html_doc_faltantes(falt_f):
     resumen_html = resumen_table_html(
         agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}", "Alta rotación": lambda v: f"{int(v)}"}
     )
-    body = (
+    return (
         '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
         '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
+
+def html_doc_faltantes(falt_f):
+    body = _body_faltantes(falt_f)
+    if body is None:
+        return None
     return export_section_html(
         "📉 Faltantes ECOM",
         "SKUs marcados como faltante para e-commerce, por tienda.",
         body
     )
+
+def export_full_report_html(pedidos_f, reclamos_f, prepa_b, deliv_f, fr_f, can_b, falt_f):
+    """Arma un único HTML con todas las secciones que tengan datos cargados,
+    para bajar de un solo golpe y mandarlo (ej. por WhatsApp/mail al jefe)."""
+    sections = [
+        ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
+        ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
+        ("⏱️ On Time Preparación", "Porcentaje de pedidos preparados en horario, por tienda.", prepa_b["body"] if prepa_b else None),
+        ("🚚 On Time Delivery — por método", "De los pedidos fuera de horario, cuántos correspondieron a cada método de entrega.", _body_delivery(deliv_f)),
+        ("🧩 Fill Rate — con y sin sustituto", "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.", _body_fr(fr_f)),
+        ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
+        ("📉 Faltantes ECOM", "SKUs marcados como faltante para e-commerce, por tienda.", _body_faltantes(falt_f)),
+    ]
+    sections = [(title, desc, body) for title, desc, body in sections if body]
+    if not sections:
+        return None
+
+    corte_html = ""
+    if now_ref is not None:
+        corte_html = (
+            '<div class="hero-date">Corte del reporte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y %H:%M")}</small></div>'
+        )
+    blocks_html = "".join(
+        f'<div class="section">{title}</div><div class="section-desc">{desc}</div>{body}'
+        f'<div style="height:26px;"></div>'
+        for title, desc, body in sections
+    )
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MásOnline · Reporte Operativo Completo</title>
+<style>
+{APP_CSS}
+body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }}
+.wrap {{ max-width: 1400px; margin: 0 auto; padding: 0 20px 28px; }}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div>
+    {brand_html}
+    <div class="hero-sub">ALERTAS OPERATIVAS — REPORTE COMPLETO</div>
+  </div>
+  {corte_html}
+</div>
+<div class="wrap">
+{blocks_html}
+</div>
+</body>
+</html>"""
 
 def kpi_link_wrap(inner_html, html_doc, filename):
     """Envuelve una tarjeta KPI en un link que descarga el HTML de esa sección al clickearla."""
@@ -988,6 +1081,20 @@ if any_data_loaded:
 
     if kpis:
         st.markdown(f'<div class="kpi-row">{"".join(kpis)}</div>', unsafe_allow_html=True)
+
+    # ---- Descargar todo junto (para mandar al jefe) ----
+    _full_report_html = export_full_report_html(
+        pedidos_f, reclamos_f, prepa_bundle(prepa_f), deliv_f, fr_f, cancelados_bundle(can_f), falt_f
+    )
+    if _full_report_html:
+        st.download_button(
+            "📋 Descargar TODO en un solo HTML (para mandar/capturar)",
+            data=_full_report_html.encode("utf-8"),
+            file_name="operativo_reporte_completo.html",
+            mime="text/html",
+            key="dl_full_report",
+            use_container_width=True,
+        )
 
     # ---- Pedidos +72h ----
     st.markdown(
