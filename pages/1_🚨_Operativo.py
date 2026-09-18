@@ -205,6 +205,24 @@ def ar_number(v):
     except ValueError:
         return 0.0
 
+def ar_pct(v):
+    """Parsea un porcentaje que puede venir como número (0.977 o 97.7) o como
+    texto con '%' en notación estándar (punto decimal, ej. '97.7%', '50.0%').
+    A diferencia de ar_number, acá el '.' siempre es punto decimal y nunca
+    separador de miles (los porcentajes no lo necesitan)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return float(v)
+    s = norm_txt(v)
+    if not s:
+        return None
+    token = s.split(" ")[0].replace("%", "").strip()
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
 def find_sheet(xl, required_cols):
     """Return the (sheet_name, df) whose normalized columns cover required_cols."""
     required = {c.lower() for c in required_cols}
@@ -744,14 +762,24 @@ ontime_prepa = None
 ontime_delivery = None
 if df_ontime_raw is not None:
     d = df_ontime_raw.copy()
-    for c in ["Pedifod", "Retiro", "Pickup", "Delivery", "Fuera", "ONTIME"]:
+    for c in ["Pedifod", "Retiro", "Pickup", "Delivery", "Fuera"]:
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
         else:
             d[c] = 0
     d["Tienda"] = d["Tienda"].apply(norm_txt)
     d = d.rename(columns={"Pedifod": "Pedidos"})
-    d["OntimePct"] = d["ONTIME"] * 100 if d["ONTIME"].max() <= 1.5 else d["ONTIME"]
+
+    # ONTIME puede venir como número (fracción 0-1 o ya en %) o como texto con
+    # '%' en notación estándar (ej. "50.0%") — algunos días el export cambia
+    # el formato, así que probamos ambas lecturas con ar_pct.
+    if "ONTIME" in d.columns:
+        ontime_parsed = d["ONTIME"].apply(ar_pct)
+    else:
+        ontime_parsed = pd.Series([None] * len(d), index=d.index)
+    ontime_raw = ontime_parsed.astype(float).fillna(0.0)
+    valid_max = ontime_parsed.dropna().max() if ontime_parsed.notna().any() else 0
+    d["OntimePct"] = ontime_raw * 100 if (pd.notna(valid_max) and valid_max <= 1.5) else ontime_raw
 
     # Preparación: % on time directo, por tienda
     prepa = d[["Tienda", "Formato", "Pedidos", "Fuera", "OntimePct"]].copy()
@@ -798,7 +826,8 @@ if df_fr_raw is not None:
             sin_sustituto = ar_number(vals.iloc[2])
             con_sustituto = ar_number(vals.iloc[3])
             monto_faltante = ar_number(vals.iloc[4])
-            fr_pct = ar_number(vals.iloc[5])
+            fr_pct = ar_pct(vals.iloc[5])
+            fr_pct = fr_pct if fr_pct is not None else 0.0
         else:
             tienda = norm_txt(r.get("Tienda"))
             if tienda.strip().upper() in ("TOTAL", "TOTA"):
@@ -812,7 +841,8 @@ if df_fr_raw is not None:
             if pd.notna(limpio):
                 fr_pct = float(limpio) * 100
             else:
-                fr_pct = ar_number(r.get("FR"))
+                fr_pct = ar_pct(r.get("FR"))
+                fr_pct = fr_pct if fr_pct is not None else 0.0
         rows.append({
             "Tienda": tienda, "Unidades": unidades, "SinSustituto": sin_sustituto,
             "ConSustituto": con_sustituto, "MontoFaltante": monto_faltante, "FRPct": fr_pct
