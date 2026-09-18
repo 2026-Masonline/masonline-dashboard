@@ -237,15 +237,21 @@ def find_sheet(xl, required_cols):
             return name, df
     return None, None
 
-def load_section(uploaded_file, required_cols):
-    """Load an uploaded file (single-sheet export OR the full Reporte diario.xlsx)
-    and return the dataframe matching required_cols, or None."""
+def safe_open_excel(uploaded_file):
+    """Abre un archivo subido como pd.ExcelFile, mostrando un error prolijo si falla."""
     if uploaded_file is None:
         return None
     try:
-        xl = pd.ExcelFile(uploaded_file)
+        return pd.ExcelFile(uploaded_file)
     except Exception as e:
         st.error(f"No pude leer el archivo: {e}")
+        return None
+
+def load_section_from_xl(xl, required_cols):
+    """Busca, dentro de un pd.ExcelFile ya abierto, la hoja cuyas columnas
+    cubren required_cols. Permite reusar el mismo Excel para varias secciones
+    sin tener que volver a leerlo del disco."""
+    if xl is None:
         return None
     name, df = find_sheet(xl, required_cols)
     if df is None:
@@ -256,18 +262,18 @@ def load_section(uploaded_file, required_cols):
         return None
     return df
 
-def load_reclamos(uploaded_file):
+def load_section(uploaded_file, required_cols):
+    """Load an uploaded file (single-sheet export OR the full Reporte diario.xlsx)
+    and return the dataframe matching required_cols, or None."""
+    return load_section_from_xl(safe_open_excel(uploaded_file), required_cols)
+
+def load_reclamos_from_xl(xl):
     """Carga Reclamos desde la hoja ya traducida ('Data Reclamos': Reclamo/Pedido/
     Tienda/Tipo/Estado/Fecha) o desde el export crudo del sistema de reclamos
     (ej. 'claim-page-1.xlsx': displayId/typeName/orderCommerceSequentialId/
     storeName/statusName/dateCreated). En el export crudo, sólo se toman las
     filas cuyo typeName contiene la palabra 'reclamo'."""
-    if uploaded_file is None:
-        return None
-    try:
-        xl = pd.ExcelFile(uploaded_file)
-    except Exception as e:
-        st.error(f"No pude leer el archivo: {e}")
+    if xl is None:
         return None
 
     # Formato ya traducido (hoja "Data Reclamos" del Reporte diario)
@@ -299,6 +305,9 @@ def load_reclamos(uploaded_file):
         "Fecha": pd.to_datetime(raw["dateCreated"], format="%d/%m/%Y %H:%M:%S", errors="coerce"),
     })
 
+def load_reclamos(uploaded_file):
+    return load_reclamos_from_xl(safe_open_excel(uploaded_file))
+
 def money(v):
     try:
         v = float(v)
@@ -318,6 +327,15 @@ def badge(level, label):
 def table_html(df):
     """Tabla de detalle, con el estilo .dashtable en vez del default de pandas."""
     return df.to_html(escape=False, index=False, classes="dashtable", border=0)
+
+def kpi_card(label, value, sub, cls=""):
+    return f"""
+    <div class="kpi {cls}">
+      <div class="label">{label}</div>
+      <div class="value">{value}</div>
+      <div class="sub">{sub}</div>
+    </div>
+    """
 
 def resumen_table_html(agg, label_col, col_formatters, total_label="Total general"):
     """Tabla resumen tipo tabla dinámica de Excel: una fila por tienda + una fila
@@ -660,9 +678,12 @@ def html_doc_faltantes(falt_f):
         body
     )
 
-def export_full_report_html(pedidos_f, reclamos_f, prepa_b, deliv_f, fr_f, can_b, falt_f):
-    """Arma un único HTML con todas las secciones que tengan datos cargados,
-    para bajar de un solo golpe y mandarlo (ej. por WhatsApp/mail al jefe)."""
+def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f):
+    """Arma un único HTML con las tarjetas KPI de arriba + todas las secciones
+    que tengan datos cargados, para bajar de un solo golpe y mandarlo
+    (ej. por WhatsApp/mail al jefe)."""
+    prepa_b = prepa_bundle(prepa_f)
+    can_b = cancelados_bundle(can_f)
     sections = [
         ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
         ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
@@ -675,6 +696,9 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_b, deliv_f, fr_f, can_b
     sections = [(title, desc, body) for title, desc, body in sections if body]
     if not sections:
         return None
+
+    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f)
+    kpi_row_html = f'<div class="kpi-row">{"".join(kpis)}</div>' if kpis else ""
 
     corte_html = ""
     if now_ref is not None:
@@ -707,6 +731,7 @@ body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Ro
   {corte_html}
 </div>
 <div class="wrap">
+{kpi_row_html}
 {blocks_html}
 </div>
 </body>
@@ -721,6 +746,65 @@ def kpi_link_wrap(inner_html, html_doc, filename):
         f'<a class="kpi-link" href="data:text/html;base64,{b64}" download="{filename}" '
         'title="Descargar esta sección como HTML">' + inner_html + '</a>'
     )
+
+def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f):
+    """Arma las tarjetas KPI de arriba de todo (clickeables para bajar el HTML
+    de esa sección). Se usa tanto para la fila en pantalla como para incluirlas
+    arriba del HTML combinado."""
+    kpis = []
+    if pedidos_f is not None:
+        card = kpi_card(
+            "Pedidos +72h sin mover", f"{len(pedidos_f)}",
+            f"{money(pedidos_f['MontoNum'].sum())} en pedidos",
+            "crit" if len(pedidos_f) > 0 else "good"
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
+    if reclamos_f is not None:
+        abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+        r72 = (abiertos["Horas"] > 72).sum()
+        r24 = ((abiertos["Horas"] >= 24) & (abiertos["Horas"] <= 72)).sum()
+        card = kpi_card(
+            "Reclamos abiertos", f"{len(abiertos)}",
+            f"{r72} &gt;72h · {r24} 24–72h",
+            "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_reclamos(reclamos_f), "operativo_reclamos.html"))
+    if prepa_f is not None and len(prepa_f):
+        ped_tot = prepa_f["Pedidos"].sum()
+        fuera_tot = prepa_f["Fuera"].sum()
+        ot_pct = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
+        card = kpi_card(
+            "On time preparación", pct1(ot_pct),
+            f"Total: {int(ped_tot)} pedidos · {int(fuera_tot)} fuera de horario",
+            "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
+    if fr_f is not None and len(fr_f):
+        unid_tot = fr_f["Unidades"].sum()
+        sin_tot = fr_f["SinSustituto"].sum()
+        con_tot = fr_f["ConSustituto"].sum()
+        fr_pct_tot = 100 * (1 - (sin_tot + con_tot) / unid_tot) if unid_tot else 0
+        card = kpi_card(
+            "Fill rate (con+sin sust.)", pct1(fr_pct_tot),
+            f"{int(sin_tot)} unid. sin sustituto",
+            "good" if fr_pct_tot >= 97 else ("warn" if fr_pct_tot >= 93 else "crit")
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_fr(fr_f), "operativo_fill_rate.html"))
+    if can_f is not None:
+        card = kpi_card(
+            "Pedidos cancelados", f"{len(can_f)}",
+            f"{money(can_f['Total $'].sum())} totales"
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_cancelados(can_f), "operativo_cancelados.html"))
+    if falt_f is not None:
+        alta = falt_f["AltaRotacion"].sum()
+        card = kpi_card(
+            "SKUs faltantes ECOM", f"{len(falt_f)}",
+            f"{alta} de alta rotación",
+            "crit" if alta > 0 else "warn"
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_faltantes(falt_f), "operativo_faltantes.html"))
+    return kpis
 
 # ---------------------------------------------------------------------
 # Header + uploaders
@@ -753,9 +837,9 @@ padding:12px 16px;margin-bottom:14px;">
     CARGAR REPORTES
   </div>
   <div style="font-size:12px;color:#6b7280;">
-    Subí el archivo de cada sección (podés subir la hoja individual o el "Reporte diario.xlsx" completo —
-    lo detecto solo por sus columnas). On Time Preparación y On Time Delivery salen del mismo archivo
-    ("Data Ontime Prepa"), así que comparten un único uploader.
+    Subí el "Reporte diario.xlsx" completo una sola vez: detecto solas todas las hojas
+    (Pedidos +72h, Reclamos, On Time, Fill Rate, Cancelados) por sus columnas y armo
+    todas las secciones de abajo. Faltantes viene siempre en un archivo aparte.
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -770,15 +854,13 @@ def upload_box(col, title, help_text, key):
         """, unsafe_allow_html=True)
         return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
 
-u1, u2, u3, u4 = st.columns(4)
-f_72h = upload_box(u1, "PEDIDOS +72HS", "Pedidos sin movimiento hace más de 72hs.", "f_72h")
-f_reclamos = upload_box(u2, "RECLAMOS OPERATIVOS", "Reclamos abiertos por tienda (o el export crudo de reclamos).", "f_reclamos")
-f_ontime = upload_box(u3, "ON TIME (PREPARACIÓN + DELIVERY)", "Data Ontime Prepa: alimenta las dos secciones.", "f_ontime")
-f_fr = upload_box(u4, "FILL RATE", "Unidades no entregadas, con y sin sustituto.", "f_fr")
-
-u5, u6, u7, _ = st.columns(4)
-f_cancelados = upload_box(u5, "CANCELADOS", "Pedidos cancelados del período.", "f_cancelados")
-f_faltantes = upload_box(u6, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+u1, u2 = st.columns([3, 1])
+f_reporte = upload_box(
+    u1, "REPORTE DIARIO COMPLETO",
+    "El Reporte diario.xlsx de siempre, con todas las hojas: Pedidos +72h, Reclamos, On Time y Fill Rate.",
+    "f_reporte"
+)
+f_faltantes = upload_box(u2, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
 
 st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
@@ -788,11 +870,12 @@ st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 now_ref = None  # se calcula como el máximo timestamp visto en los archivos cargados
 
-df_72h_raw = load_section(f_72h, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"])
-df_reclamos_raw = load_reclamos(f_reclamos)
-df_ontime_raw = load_section(f_ontime, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
-df_fr_raw = load_section(f_fr, ["Tienda", "FR", "Limpio"])
-df_cancelados_raw = load_section(f_cancelados, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
+xl_reporte = safe_open_excel(f_reporte)
+df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"])
+df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
+df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
+df_fr_raw = load_section_from_xl(xl_reporte, ["Tienda", "FR", "Limpio"])
+df_cancelados_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
 df_faltantes_raw = load_section(
     f_faltantes,
     ["Tienda@DESC", "SKU@DESC", "Etiqueta_Stock", "Dias sin venta"]
@@ -1016,75 +1099,14 @@ if any_data_loaded:
     falt_f = ftr(faltantes)
 
     # ---- KPI row ----
-    def kpi_card(label, value, sub, cls=""):
-        return f"""
-        <div class="kpi {cls}">
-          <div class="label">{label}</div>
-          <div class="value">{value}</div>
-          <div class="sub">{sub}</div>
-        </div>
-        """
-
-    kpis = []
-    if pedidos_f is not None:
-        card = kpi_card(
-            "Pedidos +72h sin mover", f"{len(pedidos_f)}",
-            f"{money(pedidos_f['MontoNum'].sum())} en pedidos",
-            "crit" if len(pedidos_f) > 0 else "good"
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
-    if reclamos_f is not None:
-        abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
-        r72 = (abiertos["Horas"] > 72).sum()
-        r24 = ((abiertos["Horas"] >= 24) & (abiertos["Horas"] <= 72)).sum()
-        card = kpi_card(
-            "Reclamos abiertos", f"{len(abiertos)}",
-            f"{r72} &gt;72h · {r24} 24–72h",
-            "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_reclamos(reclamos_f), "operativo_reclamos.html"))
-    if prepa_f is not None and len(prepa_f):
-        ped_tot = prepa_f["Pedidos"].sum()
-        fuera_tot = prepa_f["Fuera"].sum()
-        ot_pct = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
-        card = kpi_card(
-            "On time preparación", pct1(ot_pct),
-            f"Total: {int(ped_tot)} pedidos · {int(fuera_tot)} fuera de horario",
-            "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
-    if fr_f is not None and len(fr_f):
-        unid_tot = fr_f["Unidades"].sum()
-        sin_tot = fr_f["SinSustituto"].sum()
-        con_tot = fr_f["ConSustituto"].sum()
-        fr_pct_tot = 100 * (1 - (sin_tot + con_tot) / unid_tot) if unid_tot else 0
-        card = kpi_card(
-            "Fill rate (con+sin sust.)", pct1(fr_pct_tot),
-            f"{int(sin_tot)} unid. sin sustituto",
-            "good" if fr_pct_tot >= 97 else ("warn" if fr_pct_tot >= 93 else "crit")
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_fr(fr_f), "operativo_fill_rate.html"))
-    if can_f is not None:
-        card = kpi_card(
-            "Pedidos cancelados", f"{len(can_f)}",
-            f"{money(can_f['Total $'].sum())} totales"
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_cancelados(can_f), "operativo_cancelados.html"))
-    if falt_f is not None:
-        alta = falt_f["AltaRotacion"].sum()
-        card = kpi_card(
-            "SKUs faltantes ECOM", f"{len(falt_f)}",
-            f"{alta} de alta rotación",
-            "crit" if alta > 0 else "warn"
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_faltantes(falt_f), "operativo_faltantes.html"))
+    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f)
 
     if kpis:
         st.markdown(f'<div class="kpi-row">{"".join(kpis)}</div>', unsafe_allow_html=True)
 
     # ---- Descargar todo junto (para mandar al jefe) ----
     _full_report_html = export_full_report_html(
-        pedidos_f, reclamos_f, prepa_bundle(prepa_f), deliv_f, fr_f, cancelados_bundle(can_f), falt_f
+        pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f
     )
     if _full_report_html:
         st.download_button(
