@@ -432,7 +432,9 @@ def html_doc_reclamos(reclamos_f):
         body
     )
 
-def html_doc_prepa(prepa_f):
+def prepa_bundle(prepa_f):
+    """Arma todo lo que necesita On Time Preparación: detalle, totales y el
+    Top 5 de tiendas con peor % on time (por debajo del 95%)."""
     if prepa_f is None or not len(prepa_f):
         return None
     show = prepa_f.copy().sort_values("OntimePct")
@@ -441,11 +443,38 @@ def html_doc_prepa(prepa_f):
     show["Pedidos"] = show["Pedidos"].astype(int)
     show["Fuera de horario"] = show["Fuera"].astype(int)
     detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera de horario", "Ontime %", "Estado"]
-    return export_section_html(
+
+    ped_tot = int(prepa_f["Pedidos"].sum())
+    fuera_tot = int(prepa_f["Fuera"].sum())
+    ot_pct_tot = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
+
+    peores = show[show["OntimePct"] < 95].head(5)
+    if len(peores):
+        top5_html = table_html(peores[detail_cols])
+    else:
+        top5_html = '<div class="empty-box">Ninguna tienda por debajo del 95% 🎉</div>'
+
+    body = (
+        f'<div class="resumen-title">Total — {ped_tot} pedidos · {fuera_tot} fuera de horario · '
+        f'{pct1(ot_pct_tot)} on time</div>'
+        '<div class="resumen-title" style="margin-top:18px;">Top 5 tiendas con % on time &lt; 95%</div>'
+        + top5_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(show[detail_cols])
+    )
+    html_doc = export_section_html(
         "⏱️ On Time Preparación",
         "Porcentaje de pedidos preparados en horario, por tienda.",
-        table_html(show[detail_cols])
+        body
     )
+    return {
+        "show": show, "detail_cols": detail_cols, "ped_tot": ped_tot, "fuera_tot": fuera_tot,
+        "ot_pct_tot": ot_pct_tot, "top5_html": top5_html, "html_doc": html_doc,
+    }
+
+def html_doc_prepa(prepa_f):
+    b = prepa_bundle(prepa_f)
+    return b["html_doc"] if b else None
 
 def html_doc_fr(fr_f):
     if fr_f is None or not len(fr_f):
@@ -808,7 +837,7 @@ if any_data_loaded:
         ot_pct = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
         card = kpi_card(
             "On time preparación", pct1(ot_pct),
-            f"{int(fuera_tot)} de {int(ped_tot)} fuera de horario",
+            f"{int(ped_tot)} pedidos totales · {int(fuera_tot)} fuera de horario",
             "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
         )
         kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
@@ -978,19 +1007,30 @@ if any_data_loaded:
         unsafe_allow_html=True
     )
     if prepa_f is not None and len(prepa_f):
-        show = prepa_f.copy().sort_values("OntimePct")
-        show["Ontime %"] = show["OntimePct"].apply(pct1)
-        show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-        show["Pedidos"] = show["Pedidos"].astype(int)
-        show["Fuera de horario"] = show["Fuera"].astype(int)
-        detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera de horario", "Ontime %", "Estado"]
+        b = prepa_bundle(prepa_f)
+        show, detail_cols, html_doc = b["show"], b["detail_cols"], b["html_doc"]
+
+        mini_card = kpi_card(
+            "On time preparación", pct1(b["ot_pct_tot"]),
+            f"{b['ped_tot']} pedidos totales · {b['fuera_tot']} fuera de horario — clickeá para bajar el HTML",
+            "good" if b["ot_pct_tot"] >= 95 else ("warn" if b["ot_pct_tot"] >= 90 else "crit")
+        )
+        st.markdown(
+            f'<div class="kpi-row" style="margin:4px 0 14px; grid-template-columns: minmax(230px, 340px);">'
+            f'{kpi_link_wrap(mini_card, html_doc, "operativo_ontime_preparacion.html")}</div>',
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            '<div class="resumen-title">Top 5 tiendas con % on time &lt; 95%</div>',
+            unsafe_allow_html=True
+        )
+        st.write(b["top5_html"], unsafe_allow_html=True)
+
+        st.markdown('<div class="resumen-title" style="margin-top:14px;">Detalle completo</div>', unsafe_allow_html=True)
         with st.container(height=380):
             st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
-        html_doc = export_section_html(
-            "⏱️ On Time Preparación",
-            "Porcentaje de pedidos preparados en horario, por tienda.",
-            table_html(show[detail_cols])
-        )
+
         section_download_button(html_doc, "operativo_ontime_preparacion.html", "dl_prepa")
     else:
         st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
