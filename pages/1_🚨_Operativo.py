@@ -769,23 +769,50 @@ if df_ontime_raw is not None:
 fill_rate = None
 if df_fr_raw is not None:
     d = df_fr_raw.copy()
+    fr_cols = list(d.columns)
     unidades_plus_col = "Unidades +" if "Unidades +" in d.columns else None
     no_entregado_plus_col = "No entregado +" if "No entregado +" in d.columns else None
     reemplazo_plus_col = "Reemplazo +" if "Reemplazo +" in d.columns else None
 
+    # Algunos exports del día vienen "compactados": las columnas limpias
+    # (Reemplazo/Monto/FR/Limpio) llegan vacías y los datos reales quedan
+    # corridos hacia las primeras 6 columnas del archivo (Tienda+, Unidades+,
+    # No entregado+, Reemplazo+, Monto N/E+, FR+), aunque el encabezado siga
+    # teniendo las 13 columnas de siempre. Si detectamos eso, leemos por
+    # posición en vez de por nombre de columna para no mezclar los valores.
+    tail_cols = fr_cols[6:]
+    fr_compacted = len(fr_cols) >= 6 and (not tail_cols or d[tail_cols].isna().all().all())
+
+    def _clean_tienda_plus(v):
+        s = norm_txt(v)
+        return re.sub(r"[▾▼▲]+\s*$", "", s).strip()
+
     rows = []
     for _, r in d.iterrows():
-        tienda = norm_txt(r.get("Tienda"))
-        unidades = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
-        sin_sustituto = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
-        con_sustituto = ar_number(r.get(reemplazo_plus_col)) if reemplazo_plus_col else ar_number(r.get("Reemplazo"))
-        monto_faltante = r.get("Monto")
-        monto_faltante = float(monto_faltante) if pd.notna(monto_faltante) and isinstance(monto_faltante, (int, float, np.integer, np.floating)) else ar_number(r.get("Monto N/E +"))
-        limpio = r.get("Limpio")
-        if pd.notna(limpio):
-            fr_pct = float(limpio) * 100
+        if fr_compacted:
+            vals = r.iloc[:6]
+            tienda = _clean_tienda_plus(vals.iloc[0])
+            if tienda.strip().upper() in ("TOTAL", "TOTA"):
+                continue
+            unidades = ar_number(vals.iloc[1])
+            sin_sustituto = ar_number(vals.iloc[2])
+            con_sustituto = ar_number(vals.iloc[3])
+            monto_faltante = ar_number(vals.iloc[4])
+            fr_pct = ar_number(vals.iloc[5])
         else:
-            fr_pct = ar_number(r.get("FR"))
+            tienda = norm_txt(r.get("Tienda"))
+            if tienda.strip().upper() in ("TOTAL", "TOTA"):
+                continue
+            unidades = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
+            sin_sustituto = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
+            con_sustituto = ar_number(r.get(reemplazo_plus_col)) if reemplazo_plus_col else ar_number(r.get("Reemplazo"))
+            monto_faltante = r.get("Monto")
+            monto_faltante = float(monto_faltante) if pd.notna(monto_faltante) and isinstance(monto_faltante, (int, float, np.integer, np.floating)) else ar_number(r.get("Monto N/E +"))
+            limpio = r.get("Limpio")
+            if pd.notna(limpio):
+                fr_pct = float(limpio) * 100
+            else:
+                fr_pct = ar_number(r.get("FR"))
         rows.append({
             "Tienda": tienda, "Unidades": unidades, "SinSustituto": sin_sustituto,
             "ConSustituto": con_sustituto, "MontoFaltante": monto_faltante, "FRPct": fr_pct
