@@ -238,6 +238,49 @@ def load_section(uploaded_file, required_cols):
         return None
     return df
 
+def load_reclamos(uploaded_file):
+    """Carga Reclamos desde la hoja ya traducida ('Data Reclamos': Reclamo/Pedido/
+    Tienda/Tipo/Estado/Fecha) o desde el export crudo del sistema de reclamos
+    (ej. 'claim-page-1.xlsx': displayId/typeName/orderCommerceSequentialId/
+    storeName/statusName/dateCreated). En el export crudo, sólo se toman las
+    filas cuyo typeName contiene la palabra 'reclamo'."""
+    if uploaded_file is None:
+        return None
+    try:
+        xl = pd.ExcelFile(uploaded_file)
+    except Exception as e:
+        st.error(f"No pude leer el archivo: {e}")
+        return None
+
+    # Formato ya traducido (hoja "Data Reclamos" del Reporte diario)
+    name, df = find_sheet(xl, ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha"])
+    if df is not None:
+        return df
+
+    # Formato crudo del sistema de reclamos
+    raw_cols = ["displayId", "typeName", "orderCommerceSequentialId", "storeName", "statusName", "dateCreated"]
+    name, raw = find_sheet(xl, raw_cols)
+    if raw is None:
+        st.error(
+            "No encontré una hoja con las columnas esperadas de Reclamos "
+            "(Reclamo/Pedido/Tienda/Tipo/Estado/Fecha, o el export crudo con "
+            "displayId/typeName/orderCommerceSequentialId/storeName/statusName/dateCreated) "
+            "en el archivo subido."
+        )
+        return None
+
+    raw = raw[raw["typeName"].apply(norm_txt).str.lower().str.contains("reclamo", na=False)].copy()
+    return pd.DataFrame({
+        "Reclamo": raw["displayId"].apply(norm_txt),
+        "Pedido": raw["orderCommerceSequentialId"].apply(
+            lambda v: "" if pd.isna(v) else str(int(v))
+        ),
+        "Tienda": raw["storeName"].apply(norm_txt),
+        "Tipo": raw["typeName"].apply(norm_txt),
+        "Estado": raw["statusName"].apply(norm_txt),
+        "Fecha": pd.to_datetime(raw["dateCreated"], format="%d/%m/%Y %H:%M:%S", errors="coerce"),
+    })
+
 def money(v):
     try:
         v = float(v)
@@ -618,7 +661,7 @@ def upload_box(col, title, help_text, key):
 
 u1, u2, u3, u4 = st.columns(4)
 f_72h = upload_box(u1, "PEDIDOS +72HS", "Pedidos sin movimiento hace más de 72hs.", "f_72h")
-f_reclamos = upload_box(u2, "RECLAMOS OPERATIVOS", "Reclamos abiertos por tienda.", "f_reclamos")
+f_reclamos = upload_box(u2, "RECLAMOS OPERATIVOS", "Reclamos abiertos por tienda (o el export crudo de reclamos).", "f_reclamos")
 f_ontime = upload_box(u3, "ON TIME (PREPARACIÓN + DELIVERY)", "Data Ontime Prepa: alimenta las dos secciones.", "f_ontime")
 f_fr = upload_box(u4, "FILL RATE", "Unidades no entregadas, con y sin sustituto.", "f_fr")
 
@@ -635,7 +678,7 @@ st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 now_ref = None  # se calcula como el máximo timestamp visto en los archivos cargados
 
 df_72h_raw = load_section(f_72h, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"])
-df_reclamos_raw = load_section(f_reclamos, ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha"])
+df_reclamos_raw = load_reclamos(f_reclamos)
 df_ontime_raw = load_section(f_ontime, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_section(f_fr, ["Tienda", "FR", "Limpio"])
 df_cancelados_raw = load_section(f_cancelados, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
