@@ -493,26 +493,45 @@ def html_doc_fr(fr_f):
         table_html(show[detail_cols])
     )
 
-def html_doc_cancelados(can_f):
+def cancelados_bundle(can_f):
+    """Arma el Top 10 de tiendas con más cancelados, el resumen completo por
+    tienda y el detalle pedido a pedido, para la sección y para el HTML."""
     if can_f is None or not len(can_f):
         return None
     agg = can_f.groupby("Tienda").agg(
         Cancelados=("Pedido", "count"), Monto=("Total $", "sum")
     ).reset_index().sort_values("Cancelados", ascending=False)
+
+    top10 = agg.head(10)[["Tienda", "Cancelados"]]
+    top10_html = resumen_table_html(
+        top10, "Tienda", {"Cancelados": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
+    )
+
     resumen_html = resumen_table_html(agg, "Tienda", {"Cancelados": lambda v: f"{int(v)}", "Monto": money})
+
     det = can_f.copy().sort_values("Fecha", ascending=False)
     det["Total $"] = det["Total $"].apply(money)
     detail_cols = ["Pedido", "Tienda", "Fecha", "Total $"]
+
     body = (
-        '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+        '<div class="resumen-title">Top 10 tiendas con más cancelados</div>' + top10_html +
+        '<div class="resumen-title" style="margin-top:18px;">Resumen completo por tienda</div>' + resumen_html +
         '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(det[detail_cols])
     )
-    return export_section_html(
+    html_doc = export_section_html(
         "🚫 Pedidos cancelados",
         "Cancelaciones por tienda en el período del reporte.",
         body
     )
+    return {
+        "agg": agg, "top10_html": top10_html, "resumen_html": resumen_html,
+        "det": det, "detail_cols": detail_cols, "html_doc": html_doc,
+    }
+
+def html_doc_cancelados(can_f):
+    b = cancelados_bundle(can_f)
+    return b["html_doc"] if b else None
 
 def html_doc_faltantes(falt_f):
     if falt_f is None or not len(falt_f):
@@ -1110,33 +1129,19 @@ if any_data_loaded:
     )
     if can_f is not None:
         if len(can_f):
-            agg = can_f.groupby("Tienda").agg(Cancelados=("Pedido", "count"), Monto=("Total $", "sum")).reset_index()
-            agg = agg.sort_values("Cancelados", ascending=False)
+            b = cancelados_bundle(can_f)
 
-            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
-            resumen_html = resumen_table_html(
-                agg, "Tienda", {"Cancelados": lambda v: f"{int(v)}", "Monto": money}
-            )
-            st.write(resumen_html, unsafe_allow_html=True)
+            st.markdown('<div class="resumen-title">Top 10 tiendas con más cancelados</div>', unsafe_allow_html=True)
+            st.write(b["top10_html"], unsafe_allow_html=True)
 
-            det = can_f.copy().sort_values("Fecha", ascending=False)
-            det["Total $"] = det["Total $"].apply(money)
-            detail_cols = ["Pedido", "Tienda", "Fecha", "Total $"]
-            with st.expander(f"Ver detalle de pedidos cancelados ({len(det)})"):
+            with st.expander(f"Ver resumen completo por tienda ({len(b['agg'])} tiendas)"):
+                st.write(b["resumen_html"], unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de pedidos cancelados ({len(b['det'])})"):
                 with st.container(height=380):
-                    st.write(table_html(det[detail_cols]), unsafe_allow_html=True)
+                    st.write(table_html(b["det"][b["detail_cols"]]), unsafe_allow_html=True)
 
-            export_body = (
-                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
-                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
-                + table_html(det[detail_cols])
-            )
-            html_doc = export_section_html(
-                "🚫 Pedidos cancelados",
-                "Cancelaciones por tienda en el período del reporte.",
-                export_body
-            )
-            section_download_button(html_doc, "operativo_cancelados.html", "dl_cancelados")
+            section_download_button(b["html_doc"], "operativo_cancelados.html", "dl_cancelados")
         else:
             st.markdown('<div class="empty-box">Sin cancelaciones para esta selección 🎉</div>', unsafe_allow_html=True)
     else:
