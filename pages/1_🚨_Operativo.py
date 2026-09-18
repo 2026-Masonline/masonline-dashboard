@@ -836,8 +836,8 @@ if any_data_loaded:
         fuera_tot = prepa_f["Fuera"].sum()
         ot_pct = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
         card = kpi_card(
-            "Pedidos totales (preparación)", f"{int(ped_tot)}",
-            f"{pct1(ot_pct)} on time · {int(fuera_tot)} fuera de horario",
+            "On time preparación", pct1(ot_pct),
+            f"Total: {int(ped_tot)} pedidos · {int(fuera_tot)} fuera de horario",
             "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
         )
         kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
@@ -1011,8 +1011,8 @@ if any_data_loaded:
         show, detail_cols, html_doc = b["show"], b["detail_cols"], b["html_doc"]
 
         mini_card = kpi_card(
-            "Pedidos totales (preparación)", f"{b['ped_tot']}",
-            f"{pct1(b['ot_pct_tot'])} on time · {b['fuera_tot']} fuera de horario — clickeá para bajar el HTML",
+            "On time preparación", pct1(b["ot_pct_tot"]),
+            f"Total: {b['ped_tot']} pedidos · {b['fuera_tot']} fuera de horario — clickeá para bajar el HTML",
             "good" if b["ot_pct_tot"] >= 95 else ("warn" if b["ot_pct_tot"] >= 90 else "crit")
         )
         st.markdown(
