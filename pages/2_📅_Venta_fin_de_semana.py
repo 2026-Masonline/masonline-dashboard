@@ -38,6 +38,15 @@ st.markdown("""
         margin: 26px 0 12px;
     }
 
+    .card {
+        background: white; border-radius: 14px; padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        min-height: 125px; border: 1px solid #e8ebef;
+    }
+    .label { color: #6b7280; font-size: 14px; font-weight: 700; }
+    .value { color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }
+    .small { color: #20252b; font-size: 13px; font-weight: 700; margin-top: 7px; }
+
     .upload-box {
         background: white; border-radius: 14px; padding: 16px 18px 8px;
         border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.05);
@@ -188,79 +197,43 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.markdown(f"""
-<div style="display:flex;gap:16px;">
-  <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
-    <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
-      FIN DE SEMANA &nbsp;|&nbsp; {weekend_full_label}
-    </div>
-    <div style="padding:18px 16px;">
-      <div style="display:flex;">
-        <div style="flex:1;">
-          <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
-          <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
-          <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(weekend_full_company)}</div>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
-          <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
-          <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(weekend_full_ecom)}</div>
-        </div>
-      </div>
-      <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-      <div style="display:flex;">
-        <div style="flex:1;">
-          <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-          <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(weekend_full_orders)}</div>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
-          <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(weekend_full_units)}</div>
-        </div>
-      </div>
-    </div>
-    <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
-      <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE FIN DE SEMANA</span>
-      <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(weekend_full_share)}</span>
-    </div>
-  </div>
+c1, c2, c3, c4 = st.columns(4)
 
-  <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
-    <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
-      MENSUAL &nbsp;SEPTIEMBRE 2026
+with c1:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">VENTA FIN DE SEMANA</div>
+      <div class="value">{money(weekend_full_ecom)}</div>
+      <div class="small">{weekend_full_label} · Cía: {money(weekend_full_company)}</div>
     </div>
-    <div style="padding:18px 16px;">
-      <div style="display:flex;">
-        <div style="flex:1;">
-          <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
-          <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
-          <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(acc_company)}</div>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
-          <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
-          <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(acc_ecom)}</div>
-        </div>
-      </div>
-      <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-      <div style="display:flex;">
-        <div style="flex:1;">
-          <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-          <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
-          <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_units)}</div>
-        </div>
-      </div>
+    """, unsafe_allow_html=True)
+
+with c2:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">SHARE ECOMMERCE FIN DE SEMANA</div>
+      <div class="value">{pct(weekend_full_share)}</div>
+      <div class="small">Mensual: {pct(share)}</div>
     </div>
-    <div style="background:#fef6e7;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
-      <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE MENSUAL</span>
-      <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share)}</span>
+    """, unsafe_allow_html=True)
+
+with c3:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">PEDIDOS</div>
+      <div class="value">{intfmt(weekend_full_orders)}</div>
+      <div class="small">Fin de semana</div>
     </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+with c4:
+    st.markdown(f"""
+    <div class="card">
+      <div class="label">UNIDADES</div>
+      <div class="value">{intfmt(weekend_full_units)}</div>
+      <div class="small">Fin de semana</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown('<div class="section">Venta por fin de semana del mes</div>', unsafe_allow_html=True)
 
