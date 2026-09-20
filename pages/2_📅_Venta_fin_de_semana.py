@@ -115,11 +115,13 @@ if current.empty:
 
 latest = current.iloc[-1]
 days_month = calendar.monthrange(2026, 9)[1]
+days_elapsed = len(current)
 
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
 acc_orders = current["orders"].sum()
 acc_units = current["units"].sum()
+projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
 share = acc_ecom / acc_company if acc_company else 0
 
 # Buscamos el Sábado más reciente con datos cargados (y el Viernes/Domingo
@@ -243,18 +245,18 @@ with c2:
 with c3:
     st.markdown(f"""
     <div class="card">
-      <div class="label">PEDIDOS</div>
-      <div class="value">{intfmt(weekend_full_orders)}</div>
-      <div class="small">Fin de semana</div>
+      <div class="label">PROYECCIÓN DE CIERRE</div>
+      <div class="value">{money(projection)}</div>
+      <div class="small">Promedio diario × {days_month} días</div>
     </div>
     """, unsafe_allow_html=True)
 
 with c4:
     st.markdown(f"""
     <div class="card">
-      <div class="label">UNIDADES</div>
-      <div class="value">{intfmt(weekend_full_units)}</div>
-      <div class="small">Fin de semana</div>
+      <div class="label">ACUMULADO</div>
+      <div class="value">{money(acc_ecom)}</div>
+      <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
     </div>
     """, unsafe_allow_html=True)
 
