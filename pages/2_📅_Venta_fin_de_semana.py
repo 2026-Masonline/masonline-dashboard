@@ -358,13 +358,13 @@ body {{
 
 <div class="kpis">
 
-<div class="card">
-  <div class="label">VENTA FIN DE SEMANA</div>
-  <div class="value">{html.escape(money(weekend_full_ecom))}</div>
+<div class="card" style="border-top:4px solid #e8432c;">
+  <div class="label" style="color:#e8432c;">VENTA FIN DE SEMANA</div>
+  <div class="value" style="color:#e8432c;">{html.escape(money(weekend_full_ecom))}</div>
   <div class="small">{html.escape(weekend_full_label)} · Cía: {html.escape(money(weekend_full_company))}</div>
 </div>
 
-<div class="card">
+<div class="card" style="border-top:4px solid #f5a623;">
   <div class="label">SHARE ECOMMERCE</div>
   <div style="display:flex;gap:16px;margin-top:7px;">
     <div style="flex:1;">
@@ -378,13 +378,13 @@ body {{
   </div>
 </div>
 
-<div class="card">
-  <div class="label">PROYECCIÓN DE CIERRE</div>
-  <div class="value">{html.escape(money(projection))}</div>
+<div class="card" style="border-top:4px solid #2f9e66;">
+  <div class="label" style="color:#208653;">PROYECCIÓN DE CIERRE</div>
+  <div class="value" style="color:#208653;">{html.escape(money(projection))}</div>
   <div class="small">Promedio diario × {days_month} días</div>
 </div>
 
-<div class="card">
+<div class="card" style="border-top:4px solid #59636e;">
   <div class="label">ACUMULADO</div>
   <div class="value">{html.escape(money(acc_ecom))}</div>
   <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
@@ -446,16 +446,16 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown(f"""
-    <div class="card">
-      <div class="label">VENTA FIN DE SEMANA</div>
-      <div class="value">{money(weekend_full_ecom)}</div>
+    <div class="card" style="border-top:4px solid #e8432c;">
+      <div class="label" style="color:#e8432c;">VENTA FIN DE SEMANA</div>
+      <div class="value" style="color:#e8432c;">{money(weekend_full_ecom)}</div>
       <div class="small">{weekend_full_label} · Cía: {money(weekend_full_company)}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with c2:
     st.markdown(f"""
-    <div class="card">
+    <div class="card" style="border-top:4px solid #f5a623;">
       <div class="label">SHARE ECOMMERCE</div>
       <div style="display:flex;gap:16px;margin-top:7px;">
         <div style="flex:1;">
@@ -472,16 +472,16 @@ with c2:
 
 with c3:
     st.markdown(f"""
-    <div class="card">
-      <div class="label">PROYECCIÓN DE CIERRE</div>
-      <div class="value">{money(projection)}</div>
+    <div class="card" style="border-top:4px solid #2f9e66;">
+      <div class="label" style="color:#208653;">PROYECCIÓN DE CIERRE</div>
+      <div class="value" style="color:#208653;">{money(projection)}</div>
       <div class="small">Promedio diario × {days_month} días</div>
     </div>
     """, unsafe_allow_html=True)
 
 with c4:
     st.markdown(f"""
-    <div class="card">
+    <div class="card" style="border-top:4px solid #59636e;">
       <div class="label">ACUMULADO</div>
       <div class="value">{money(acc_ecom)}</div>
       <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
