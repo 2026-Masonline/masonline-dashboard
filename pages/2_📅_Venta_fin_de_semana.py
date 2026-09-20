@@ -368,11 +368,11 @@ body {{
   <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
   <div style="display:flex;gap:16px;margin-top:7px;">
     <div style="flex:1;">
-      <div style="font-size:11px;font-weight:700;color:#9ca3af;">FIN DE SEMANA</div>
+      <div style="font-size:11px;font-weight:800;color:#6b7280;">FIN DE SEMANA</div>
       <div style="font-size:26px;font-weight:800;color:#20252b;">{html.escape(pct(weekend_full_share))}</div>
     </div>
     <div style="flex:1;">
-      <div style="font-size:11px;font-weight:700;color:#9ca3af;">MENSUAL</div>
+      <div style="font-size:11px;font-weight:800;color:#6b7280;">MENSUAL</div>
       <div style="font-size:26px;font-weight:800;color:#20252b;">{html.escape(pct(share))}</div>
     </div>
   </div>
@@ -459,11 +459,11 @@ with c2:
       <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
       <div style="display:flex;gap:16px;margin-top:7px;">
         <div style="flex:1;">
-          <div style="font-size:11px;font-weight:700;color:#9ca3af;">FIN DE SEMANA</div>
+          <div style="font-size:11px;font-weight:800;color:#6b7280;">FIN DE SEMANA</div>
           <div style="font-size:26px;font-weight:800;color:#20252b;">{pct(weekend_full_share)}</div>
         </div>
         <div style="flex:1;">
-          <div style="font-size:11px;font-weight:700;color:#9ca3af;">MENSUAL</div>
+          <div style="font-size:11px;font-weight:800;color:#6b7280;">MENSUAL</div>
           <div style="font-size:26px;font-weight:800;color:#20252b;">{pct(share)}</div>
         </div>
       </div>
