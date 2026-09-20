@@ -404,10 +404,29 @@ sunday_sales = current[current["date"] == last_sunday]["ecommerce_tax"].sum()
 
 friday_units = current[current["date"] == last_friday]["units"].sum()
 saturday_units = current[current["date"] == last_saturday]["units"].sum()
+sunday_units = current[current["date"] == last_sunday]["units"].sum()
 
-# Fin de semana = Viernes + Sábado (no se suma el Domingo)
+friday_orders = current[current["date"] == last_friday]["orders"].sum()
+saturday_orders = current[current["date"] == last_saturday]["orders"].sum()
+sunday_orders = current[current["date"] == last_sunday]["orders"].sum()
+
+friday_company = current[current["date"] == last_friday]["company_tax"].sum()
+saturday_company = current[current["date"] == last_saturday]["company_tax"].sum()
+sunday_company = current[current["date"] == last_sunday]["company_tax"].sum()
+
+# Fin de semana = Viernes + Sábado (no se suma el Domingo) — se usa en la card
+# "VENTA DÍA ANTERIOR" de los lunes.
 weekend = friday_sales + saturday_sales
 weekend_units = friday_units + saturday_units
+
+# Fin de semana completo (Viernes + Sábado + Domingo), para la pestaña
+# "Venta fin de semana".
+weekend_full_ecom = friday_sales + saturday_sales + sunday_sales
+weekend_full_units = friday_units + saturday_units + sunday_units
+weekend_full_orders = friday_orders + saturday_orders + sunday_orders
+weekend_full_company = friday_company + saturday_company + sunday_company
+weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_company else 0
+weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_sunday.strftime('%d-%m')}"
 
 sales_label = "VENTA DÍA ANTERIOR"
 if is_monday:
@@ -456,9 +475,9 @@ vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
 vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 
 # ---- Venta por fin de semana del mes en curso ----
-# Mismo criterio que ya usa el dashboard más arriba: Fin de semana = Viernes +
-# Sábado (no se suma el Domingo).
-finde_rows = current[current["date"].dt.weekday.isin([4, 5])].copy()
+# Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
+# Domingo (los tres días).
+finde_rows = current[current["date"].dt.weekday.isin([4, 5, 6])].copy()
 finde_rows["finde_inicio"] = finde_rows["date"] - pd.to_timedelta(
     (finde_rows["date"].dt.weekday - 4) % 7, unit="D"
 )
@@ -473,7 +492,7 @@ finde_tabla = (
     .reset_index(drop=True)
 )
 finde_tabla["rango"] = finde_tabla["finde_inicio"].apply(
-    lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
+    lambda d: f"Vie {d.strftime('%d/%m')} – Dom {(d + pd.Timedelta(days=2)).strftime('%d/%m')}"
 )
 finde_tabla["participacion"] = (
     finde_tabla["venta"] / acc_ecom if acc_ecom else 0
@@ -1211,45 +1230,93 @@ with tab2:
     </div>
     """, unsafe_allow_html=True)
 
+
 with tab3:
-    st.markdown('<div class="section">Venta acumulada del mes</div>', unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.markdown(f"""
-        <div class="card">
-          <div class="label">VENTA ACUMULADA</div>
-          <div class="value">{money(acc_ecom)}</div>
-          <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with c2:
-        st.markdown(f"""
-        <div class="card">
-          <div class="label">PARTICIPACIÓN E-COMMERCE</div>
-          <div class="value">{pct(share)}</div>
-          <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with c3:
-        st.markdown(f"""
-        <div class="card">
-          <div class="label">PROYECCIÓN DE CIERRE</div>
-          <div class="value">{money(projection)}</div>
-          <div class="small">Promedio diario × {days_month} días</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown('<div class="section">Venta por fin de semana</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section">Fin de semana vs. acumulado</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Fin de semana = Viernes + Sábado (no se suma el Domingo).'
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
+        'Fin de semana = Viernes + Sábado + Domingo.'
         '</div>',
         unsafe_allow_html=True
     )
+
+    share_weekend_daily_style = weekend_full_share
+
+    st.markdown(f"""
+    <div style="display:flex;gap:16px;">
+      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+        <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
+          FIN DE SEMANA &nbsp;|&nbsp; {weekend_full_label}
+        </div>
+        <div style="padding:18px 16px;">
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
+              <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(weekend_full_company)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(weekend_full_ecom)}</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(weekend_full_orders)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(weekend_full_units)}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE FIN DE SEMANA</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_weekend_daily_style)}</span>
+        </div>
+      </div>
+
+      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+        <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
+          MENSUAL &nbsp;SEPTIEMBRE 2026
+        </div>
+        <div style="padding:18px 16px;">
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
+              <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(acc_company)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+              <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(acc_ecom)}</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+          <div style="display:flex;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_units)}</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#fef6e7;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE MENSUAL</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share)}</span>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section">Venta por fin de semana del mes</div>', unsafe_allow_html=True)
 
     if len(finde_tabla):
         finde_rows_html = ""
@@ -1285,7 +1352,7 @@ with tab3:
     else:
         st.markdown(
             '<div class="upload-box"><div class="upload-text">'
-            'Todavía no hay ningún fin de semana (viernes + sábado) cargado este mes.'
+            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
             '</div></div>',
             unsafe_allow_html=True
         )
