@@ -365,14 +365,14 @@ body {{
 </div>
 
 <div class="card" style="border-top:4px solid #f5a623;">
-  <div class="label">SHARE ECOMMERCE</div>
+  <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
   <div style="display:flex;gap:16px;margin-top:7px;">
     <div style="flex:1;">
-      <div style="font-size:11px;color:#9ca3af;">FIN DE SEMANA</div>
+      <div style="font-size:11px;font-weight:700;color:#9ca3af;">FIN DE SEMANA</div>
       <div style="font-size:26px;font-weight:800;color:#20252b;">{html.escape(pct(weekend_full_share))}</div>
     </div>
     <div style="flex:1;">
-      <div style="font-size:11px;color:#9ca3af;">MENSUAL</div>
+      <div style="font-size:11px;font-weight:700;color:#9ca3af;">MENSUAL</div>
       <div style="font-size:26px;font-weight:800;color:#20252b;">{html.escape(pct(share))}</div>
     </div>
   </div>
@@ -456,14 +456,14 @@ with c1:
 with c2:
     st.markdown(f"""
     <div class="card" style="border-top:4px solid #f5a623;">
-      <div class="label">SHARE ECOMMERCE</div>
+      <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
       <div style="display:flex;gap:16px;margin-top:7px;">
         <div style="flex:1;">
-          <div style="font-size:11px;color:#9ca3af;">FIN DE SEMANA</div>
+          <div style="font-size:11px;font-weight:700;color:#9ca3af;">FIN DE SEMANA</div>
           <div style="font-size:26px;font-weight:800;color:#20252b;">{pct(weekend_full_share)}</div>
         </div>
         <div style="flex:1;">
-          <div style="font-size:11px;color:#9ca3af;">MENSUAL</div>
+          <div style="font-size:11px;font-weight:700;color:#9ca3af;">MENSUAL</div>
           <div style="font-size:26px;font-weight:800;color:#20252b;">{pct(share)}</div>
         </div>
       </div>
