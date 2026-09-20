@@ -47,6 +47,29 @@ st.markdown("""
     .value { color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }
     .small { color: #20252b; font-size: 13px; font-weight: 700; margin-top: 7px; }
 
+    .progress-wrap {
+        background: white; border-radius: 14px; padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        border: 1px solid #e8ebef; margin-top: 16px;
+    }
+    .progress-track {
+        height: 16px; background: #e6e9ed; border-radius: 20px;
+        overflow: hidden; margin: 10px 0 8px;
+    }
+    .progress-fill { height: 100%; background: #2f9e66; border-radius: 20px; }
+    .progress-row {
+        display: flex; justify-content: space-between; color: #6b7280;
+        font-size: 13px;
+    }
+    .progress-target {
+        color: #208653; font-size: 30px; font-weight: 800;
+        text-align: right; line-height: 1;
+    }
+    .progress-target small {
+        display: block; color: #6b7280; font-size: 12px;
+        font-weight: 400; margin-top: 5px;
+    }
+
     .upload-box {
         background: white; border-radius: 14px; padding: 16px 18px 8px;
         border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.05);
@@ -234,6 +257,31 @@ with c4:
       <div class="small">Fin de semana</div>
     </div>
     """, unsafe_allow_html=True)
+
+target = 0.03
+progress = min(weekend_full_share / target, 1.0) * 100 if target else 0
+
+st.markdown(f"""
+<div class="progress-wrap">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="flex:1;">
+      <div class="progress-track">
+        <div class="progress-fill" style="width:{progress:.1f}%;"></div>
+      </div>
+      <div class="progress-row">
+        <span>Participación fin de semana: {pct(weekend_full_share)}</span>
+        <span>Objetivo: {pct(target)}</span>
+      </div>
+    </div>
+    <div style="width:150px;">
+      <div class="progress-target">
+        {weekend_full_share/target:.0%}
+        <small>del objetivo</small>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 st.markdown('<div class="section">Venta por fin de semana del mes</div>', unsafe_allow_html=True)
 
