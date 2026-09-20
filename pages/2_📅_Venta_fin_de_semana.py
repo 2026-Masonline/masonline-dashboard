@@ -259,7 +259,7 @@ with c4:
     """, unsafe_allow_html=True)
 
 target = 0.03
-progress = min(weekend_full_share / target, 1.0) * 100 if target else 0
+progress = min(share / target, 1.0) * 100 if target else 0
 
 st.markdown(f"""
 <div class="progress-wrap">
@@ -269,13 +269,13 @@ st.markdown(f"""
         <div class="progress-fill" style="width:{progress:.1f}%;"></div>
       </div>
       <div class="progress-row">
-        <span>Participación fin de semana: {pct(weekend_full_share)}</span>
+        <span>Participación actual: {pct(share)}</span>
         <span>Objetivo: {pct(target)}</span>
       </div>
     </div>
     <div style="width:150px;">
       <div class="progress-target">
-        {weekend_full_share/target:.0%}
+        {share/target:.0%}
         <small>del objetivo</small>
       </div>
     </div>
