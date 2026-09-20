@@ -267,15 +267,15 @@ st.markdown('<div class="section">Venta por fin de semana del mes</div>', unsafe
 if len(finde_tabla):
     finde_rows_html = ""
     for _, r in finde_tabla.iterrows():
-        finde_rows_html += f"""
-        <tr style="border-top:1px solid #eee;">
-          <td style="padding:10px 14px;color:#20252b;">{r['rango']}</td>
-          <td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r['venta'])}</td>
-          <td style="padding:10px 14px;color:#20252b;">{intfmt(r['pedidos'])}</td>
-          <td style="padding:10px 14px;color:#20252b;">{intfmt(r['unidades'])}</td>
-          <td style="padding:10px 14px;color:#20252b;">{pct(r['participacion'])}</td>
-        </tr>
-        """
+        finde_rows_html += (
+            '<tr style="border-top:1px solid #eee;">'
+            f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
+            f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
+            f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
+            f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
+            f'<td style="padding:10px 14px;color:#20252b;">{pct(r["participacion"])}</td>'
+            '</tr>'
+        )
 
     st.markdown(f"""
     <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
