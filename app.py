@@ -498,6 +498,48 @@ finde_tabla["participacion"] = (
     finde_tabla["venta"] / acc_ecom if acc_ecom else 0
 )
 
+# ---- Comparación entre findes (pestaña "findesema") ----
+# Usamos TODO el historial cargado (no solo el mes en curso) para poder
+# comparar el finde más reciente contra el anterior aunque estemos al
+# principio del mes y todavía no haya un segundo finde en septiembre.
+findesema_rows = df[df["date"].dt.weekday.isin([4, 5, 6])].copy()
+findesema_rows["finde_inicio"] = findesema_rows["date"] - pd.to_timedelta(
+    (findesema_rows["date"].dt.weekday - 4) % 7, unit="D"
+)
+findesema_tabla = (
+    findesema_rows.groupby("finde_inicio", as_index=False)
+    .agg(
+        venta=("ecommerce_tax", "sum"),
+        company=("company_tax", "sum"),
+        pedidos=("orders", "sum"),
+        unidades=("units", "sum"),
+    )
+    .sort_values("finde_inicio")
+    .reset_index(drop=True)
+)
+
+def _finde_rango(inicio):
+    return f"{inicio.strftime('%d-%m')} al {(inicio + pd.Timedelta(days=2)).strftime('%d-%m')}"
+
+if len(findesema_tabla) >= 1:
+    finde_actual = findesema_tabla.iloc[-1]
+    finde_actual_rango = _finde_rango(finde_actual["finde_inicio"])
+else:
+    finde_actual = None
+    finde_actual_rango = ""
+
+if len(findesema_tabla) >= 2:
+    finde_anterior = findesema_tabla.iloc[-2]
+    finde_anterior_rango = _finde_rango(finde_anterior["finde_inicio"])
+    finde_vs_anterior = (
+        (finde_actual["venta"] / finde_anterior["venta"]) - 1
+        if finde_anterior["venta"] else None
+    )
+else:
+    finde_anterior = None
+    finde_anterior_rango = ""
+    finde_vs_anterior = None
+
 def money(v):
     return (
        f"${v/1_000_000:,.2f} M"
@@ -919,7 +961,12 @@ st.download_button(
 # Dashboard principal
 # ---------------------------------------------------------------------
 
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard completo", "📤 Resumen para GDN", "📅 Venta fin de semana"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Dashboard completo",
+    "📤 Resumen para GDN",
+    "📅 Venta fin de semana",
+    "findesema",
+])
 
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
@@ -1321,15 +1368,15 @@ with tab3:
     if len(finde_tabla):
         finde_rows_html = ""
         for _, r in finde_tabla.iterrows():
-            finde_rows_html += f"""
-            <tr style="border-top:1px solid #eee;">
-              <td style="padding:10px 14px;color:#20252b;">{r['rango']}</td>
-              <td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r['venta'])}</td>
-              <td style="padding:10px 14px;color:#20252b;">{intfmt(r['pedidos'])}</td>
-              <td style="padding:10px 14px;color:#20252b;">{intfmt(r['unidades'])}</td>
-              <td style="padding:10px 14px;color:#20252b;">{pct(r['participacion'])}</td>
-            </tr>
-            """
+            finde_rows_html += (
+                '<tr style="border-top:1px solid #eee;">'
+                f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
+                f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{pct(r["participacion"])}</td>'
+                '</tr>'
+            )
 
         st.markdown(f"""
         <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
@@ -1356,6 +1403,137 @@ with tab3:
             '</div></div>',
             unsafe_allow_html=True
         )
+
+    st.markdown(
+        '<div class="footer">'
+        '<span>Fuente: venta con impuesto de MicroStrategy.</span>'
+        '<span>MásOnline &nbsp;|&nbsp; E-commerce</span>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+with tab4:
+    st.markdown('<div class="section">Comparación entre fines de semana</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
+        'Fin de semana = Viernes + Sábado + Domingo. Se compara el finde más reciente '
+        'contra el finde anterior.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    if finde_actual is None:
+        st.markdown(
+            '<div class="upload-box"><div class="upload-text">'
+            'Todavía no hay ningún fin de semana cargado.'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+    else:
+        share_finde_actual = (
+            (finde_actual["venta"] / finde_actual["company"])
+            if finde_actual["company"] else 0
+        )
+
+        if finde_anterior is not None:
+            share_finde_anterior = (
+                (finde_anterior["venta"] / finde_anterior["company"])
+                if finde_anterior["company"] else 0
+            )
+            card_anterior_html = f"""
+              <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+                <div style="background:#59636e;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
+                  FIN DE SEMANA ANTERIOR &nbsp;|&nbsp; {finde_anterior_rango}
+                </div>
+                <div style="padding:18px 16px;">
+                  <div style="display:flex;">
+                    <div style="flex:1;">
+                      <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+                      <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
+                      <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(finde_anterior["company"])}</div>
+                    </div>
+                    <div style="flex:1;">
+                      <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+                      <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
+                      <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(finde_anterior["venta"])}</div>
+                    </div>
+                  </div>
+                  <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+                  <div style="display:flex;">
+                    <div style="flex:1;">
+                      <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+                      <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(finde_anterior["pedidos"])}</div>
+                    </div>
+                    <div style="flex:1;">
+                      <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+                      <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(finde_anterior["unidades"])}</div>
+                    </div>
+                  </div>
+                </div>
+                <div style="background:#eef0f2;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE</span>
+                  <span style="font-size:20px;font-weight:800;color:#59636e;">{pct(share_finde_anterior)}</span>
+                </div>
+              </div>
+            """
+        else:
+            card_anterior_html = """
+              <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center;padding:20px;">
+                <div style="color:#9ca3af;font-size:13px;text-align:center;">Sin fin de semana anterior cargado todavía.</div>
+              </div>
+            """
+
+        st.markdown(f"""
+        <div style="display:flex;gap:16px;">
+          <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+            <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
+              FIN DE SEMANA ACTUAL &nbsp;|&nbsp; {finde_actual_rango}
+            </div>
+            <div style="padding:18px 16px;">
+              <div style="display:flex;">
+                <div style="flex:1;">
+                  <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
+                  <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
+                  <div style="font-size:22px;font-weight:800;color:#20252b;margin-top:2px;">{money(finde_actual["company"])}</div>
+                </div>
+                <div style="flex:1;">
+                  <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
+                  <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
+                  <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(finde_actual["venta"])}</div>
+                </div>
+              </div>
+              <div style="border-top:1px solid #eee;margin:14px 0;"></div>
+              <div style="display:flex;">
+                <div style="flex:1;">
+                  <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+                  <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(finde_actual["pedidos"])}</div>
+                </div>
+                <div style="flex:1;">
+                  <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+                  <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(finde_actual["unidades"])}</div>
+                </div>
+              </div>
+            </div>
+            <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE</span>
+              <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_finde_actual)}</span>
+            </div>
+          </div>
+
+          {card_anterior_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+        if finde_vs_anterior is not None:
+            st.markdown('<div class="section">Variación vs. finde anterior</div>', unsafe_allow_html=True)
+            st.markdown(
+                compare_box(
+                    "VENTA ECOMMERCE FIN DE SEMANA",
+                    finde_vs_anterior,
+                    f"{finde_actual_rango} vs {finde_anterior_rango}"
+                ),
+                unsafe_allow_html=True
+            )
 
     st.markdown(
         '<div class="footer">'
