@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
+import html
 
 st.set_page_config(
     page_title="MásOnline | Venta fin de semana",
@@ -122,7 +123,10 @@ acc_company = current["company_tax"].sum()
 acc_orders = current["orders"].sum()
 acc_units = current["units"].sum()
 projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
+
+target = 0.03
 share = acc_ecom / acc_company if acc_company else 0
+progress = min(share / target, 1.0) * 100 if target else 0
 
 # Buscamos el Sábado más reciente con datos cargados (y el Viernes/Domingo
 # alrededor), sin asumir que "hoy" es un día en particular.
@@ -214,6 +218,214 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# ---------------------------------------------------------------------
+# HTML DESCARGABLE: copia independiente de esta página, sin Streamlit.
+# ---------------------------------------------------------------------
+
+def build_standalone_html():
+    if LOGO_FILE.exists():
+        html_logo = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            'style="height:58px;max-width:330px;object-fit:contain;">'
+        )
+    else:
+        html_logo = '<div class="brand">Más<span>Online</span></div>'
+
+    if len(finde_tabla):
+        finde_rows_html_static = ""
+        for _, r in finde_tabla.iterrows():
+            finde_rows_html_static += (
+                '<tr style="border-top:1px solid #eee;">'
+                f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
+                f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{pct(r["participacion"])}</td>'
+                '</tr>'
+            )
+        tabla_html = f"""
+        <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#20252b;color:white;text-align:left;">
+                <th style="padding:10px 14px;">FIN DE SEMANA</th>
+                <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
+                <th style="padding:10px 14px;">PEDIDOS</th>
+                <th style="padding:10px 14px;">UNIDADES</th>
+                <th style="padding:10px 14px;">% DEL MES</th>
+              </tr>
+            </thead>
+            <tbody>{finde_rows_html_static}</tbody>
+          </table>
+        </div>
+        """
+    else:
+        tabla_html = (
+            '<div class="upload-box"><div class="upload-text">'
+            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+            '</div></div>'
+        )
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MásOnline | Venta fin de semana</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{
+    margin: 0;
+    padding: 34px 42px 42px;
+    background: #ffffff;
+    color: #20252b;
+    font-family: Arial, Helvetica, sans-serif;
+}}
+.container {{ max-width: 1500px; margin: 0 auto; }}
+.hero {{
+    background: #ffffff;
+    color: #20252b;
+    padding: 22px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 112px;
+    border-bottom: 4px solid #ff5a1f;
+}}
+.hero-sub {{ font-size: 11px; letter-spacing: 3px; margin-top: 3px; opacity: .85; }}
+.hero-date {{ text-align: right; font-size: 19px; font-weight: 800; }}
+.hero-date small {{ display: block; font-size: 12px; font-weight: 400; margin-top: 4px; opacity: .8; }}
+.section {{ font-size: 20px; font-weight: 800; margin: 26px 0 12px; }}
+.kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 16px; }}
+.card, .progress-wrap {{
+    background: white; border: 1px solid #e8ebef; border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06);
+}}
+.card {{ padding: 20px 22px; min-height: 125px; }}
+.label {{ color: #6b7280; font-size: 14px; font-weight: 700; }}
+.value {{ color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }}
+.small {{ color: #20252b; font-size: 13px; font-weight: 700; margin-top: 7px; }}
+.progress-wrap {{ padding: 20px 22px; margin-top: 20px; }}
+.progress-layout {{ display: flex; align-items: center; gap: 28px; }}
+.progress-main {{ flex: 1; }}
+.progress-track {{
+    height: 16px; background: #e6e9ed; border-radius: 20px;
+    overflow: hidden; margin: 10px 0 8px;
+}}
+.progress-fill {{ height: 100%; width: {progress:.1f}%; background: #2f9e66; border-radius: 20px; }}
+.progress-row {{ display: flex; justify-content: space-between; color: #6b7280; font-size: 13px; }}
+.progress-target {{
+    width: 150px; color: #208653; font-size: 30px; font-weight: 800;
+    text-align: right; line-height: 1;
+}}
+.progress-target small {{
+    display: block; color: #6b7280; font-size: 12px; font-weight: 400; margin-top: 5px;
+}}
+.footer {{ display: flex; justify-content: space-between; color: #6b7280; font-size: 12px; margin-top: 14px; }}
+.upload-box {{
+    background: white; border-radius: 14px; padding: 16px 18px; border: 1px solid #e8ebef;
+}}
+.upload-text {{ color:#6b7280; font-size:12px; }}
+@media (max-width: 900px) {{
+    body {{ padding: 18px; }}
+    .kpis {{ grid-template-columns: repeat(2, 1fr); }}
+}}
+@media (max-width: 600px) {{
+    .hero {{ flex-direction: column; align-items: flex-start; gap: 15px; }}
+    .hero-date {{ text-align: left; }}
+    .kpis {{ grid-template-columns: 1fr; }}
+    .progress-layout {{ flex-direction: column; align-items: stretch; }}
+    .progress-target {{ width: auto; text-align: left; }}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="hero">
+  <div>
+    {html_logo}
+    <div class="hero-sub">VENTA FIN DE SEMANA</div>
+  </div>
+  <div class="hero-date">
+    Septiembre 2026
+    <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+  </div>
+</div>
+
+<div class="section">Fin de semana vs. acumulado</div>
+<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Fin de semana = Viernes + Sábado + Domingo.</div>
+
+<div class="kpis">
+
+<div class="card">
+  <div class="label">VENTA FIN DE SEMANA</div>
+  <div class="value">{html.escape(money(weekend_full_ecom))}</div>
+  <div class="small">{html.escape(weekend_full_label)} · Cía: {html.escape(money(weekend_full_company))}</div>
+</div>
+
+<div class="card">
+  <div class="label">SHARE ECOMMERCE FIN DE SEMANA</div>
+  <div class="value">{html.escape(pct(weekend_full_share))}</div>
+  <div class="small">Mensual: {html.escape(pct(share))}</div>
+</div>
+
+<div class="card">
+  <div class="label">PROYECCIÓN DE CIERRE</div>
+  <div class="value">{html.escape(money(projection))}</div>
+  <div class="small">Promedio diario × {days_month} días</div>
+</div>
+
+<div class="card">
+  <div class="label">ACUMULADO</div>
+  <div class="value">{html.escape(money(acc_ecom))}</div>
+  <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
+</div>
+
+</div>
+
+<div class="progress-wrap">
+  <div class="progress-layout">
+    <div class="progress-main">
+      <div class="progress-track">
+        <div class="progress-fill"></div>
+      </div>
+      <div class="progress-row">
+        <span>Participación actual: {html.escape(pct(share))}</span>
+        <span>Objetivo: {html.escape(pct(target))}</span>
+      </div>
+    </div>
+    <div class="progress-target">
+      {share/target:.0%}
+      <small>del objetivo</small>
+    </div>
+  </div>
+</div>
+
+<div class="section">Venta por fin de semana del mes</div>
+{tabla_html}
+
+<div class="footer">
+  <span>Fuente: venta con impuesto de MicroStrategy.</span>
+  <span>MásOnline | E-commerce</span>
+</div>
+
+</div>
+</body>
+</html>
+"""
+    return html_doc
+
+html_dashboard_finde = build_standalone_html()
+
+st.download_button(
+    "⬇️ Descargar esta página en HTML",
+    data=html_dashboard_finde,
+    file_name="venta_fin_de_semana.html",
+    mime="text/html",
+    use_container_width=True
+)
+
 st.markdown('<div class="section">Fin de semana vs. acumulado</div>', unsafe_allow_html=True)
 st.markdown(
     '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
@@ -259,9 +471,6 @@ with c4:
       <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
     </div>
     """, unsafe_allow_html=True)
-
-target = 0.03
-progress = min(share / target, 1.0) * 100 if target else 0
 
 st.markdown(f"""
 <div class="progress-wrap">
