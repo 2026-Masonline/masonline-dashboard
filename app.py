@@ -455,6 +455,30 @@ sep25_acc = sep25["ecommerce_tax"].sum()
 vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
 vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 
+# ---- Venta por fin de semana del mes en curso ----
+# Mismo criterio que ya usa el dashboard más arriba: Fin de semana = Viernes +
+# Sábado (no se suma el Domingo).
+finde_rows = current[current["date"].dt.weekday.isin([4, 5])].copy()
+finde_rows["finde_inicio"] = finde_rows["date"] - pd.to_timedelta(
+    (finde_rows["date"].dt.weekday - 4) % 7, unit="D"
+)
+finde_tabla = (
+    finde_rows.groupby("finde_inicio", as_index=False)
+    .agg(
+        venta=("ecommerce_tax", "sum"),
+        pedidos=("orders", "sum"),
+        unidades=("units", "sum"),
+    )
+    .sort_values("finde_inicio")
+    .reset_index(drop=True)
+)
+finde_tabla["rango"] = finde_tabla["finde_inicio"].apply(
+    lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
+)
+finde_tabla["participacion"] = (
+    finde_tabla["venta"] / acc_ecom if acc_ecom else 0
+)
+
 def money(v):
     return (
        f"${v/1_000_000:,.2f} M"
@@ -876,7 +900,7 @@ st.download_button(
 # Dashboard principal
 # ---------------------------------------------------------------------
 
-tab1, tab2 = st.tabs(["📊 Dashboard completo", "📤 Resumen para GDN"])
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard completo", "📤 Resumen para GDN", "📅 Venta fin de semana"])
 
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
@@ -1186,3 +1210,90 @@ with tab2:
       </div>
     </div>
     """, unsafe_allow_html=True)
+
+with tab3:
+    st.markdown('<div class="section">Venta acumulada del mes</div>', unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">VENTA ACUMULADA</div>
+          <div class="value">{money(acc_ecom)}</div>
+          <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c2:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">PARTICIPACIÓN E-COMMERCE</div>
+          <div class="value">{pct(share)}</div>
+          <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f"""
+        <div class="card">
+          <div class="label">PROYECCIÓN DE CIERRE</div>
+          <div class="value">{money(projection)}</div>
+          <div class="small">Promedio diario × {days_month} días</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section">Venta por fin de semana</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Fin de semana = Viernes + Sábado (no se suma el Domingo).'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    if len(finde_tabla):
+        finde_rows_html = ""
+        for _, r in finde_tabla.iterrows():
+            finde_rows_html += f"""
+            <tr style="border-top:1px solid #eee;">
+              <td style="padding:10px 14px;color:#20252b;">{r['rango']}</td>
+              <td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r['venta'])}</td>
+              <td style="padding:10px 14px;color:#20252b;">{intfmt(r['pedidos'])}</td>
+              <td style="padding:10px 14px;color:#20252b;">{intfmt(r['unidades'])}</td>
+              <td style="padding:10px 14px;color:#20252b;">{pct(r['participacion'])}</td>
+            </tr>
+            """
+
+        st.markdown(f"""
+        <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#20252b;color:white;text-align:left;">
+                <th style="padding:10px 14px;">FIN DE SEMANA</th>
+                <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
+                <th style="padding:10px 14px;">PEDIDOS</th>
+                <th style="padding:10px 14px;">UNIDADES</th>
+                <th style="padding:10px 14px;">% DEL MES</th>
+              </tr>
+            </thead>
+            <tbody>
+              {finde_rows_html}
+            </tbody>
+          </table>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div class="upload-box"><div class="upload-text">'
+            'Todavía no hay ningún fin de semana (viernes + sábado) cargado este mes.'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown(
+        '<div class="footer">'
+        '<span>Fuente: venta con impuesto de MicroStrategy.</span>'
+        '<span>MásOnline &nbsp;|&nbsp; E-commerce</span>'
+        '</div>',
+        unsafe_allow_html=True
+    )
