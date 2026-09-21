@@ -294,6 +294,59 @@ def load_section(uploaded_file, required_cols):
     and return the dataframe matching required_cols, or None."""
     return load_section_from_xl(safe_open_excel(uploaded_file), required_cols)
 
+def _fr_headerless_candidate(xl, sheet_name):
+    """Si esta hoja tiene pinta de ser el export de Fill Rate sin encabezado
+    (>=6 columnas, una fila 'TOTAL' en la primera columna y la última columna
+    con pinta de porcentaje), devuelve el DataFrame ya recortado a 6
+    columnas; si no, devuelve None."""
+    try:
+        raw = xl.parse(sheet_name, header=None)
+    except Exception:
+        return None
+    if raw.shape[1] < 6:
+        return None
+    raw = raw.iloc[:, :6].copy()
+    first_col = raw.iloc[:, 0].apply(norm_txt).apply(
+        lambda s: re.sub(r"[▾▼▲]+\s*$", "", s).strip()
+    )
+    if not first_col.str.upper().isin(["TOTAL", "TOTA"]).any():
+        return None
+    last_col = raw.iloc[:, 5].apply(norm_txt)
+    pct_like = last_col.str.contains("%", na=False)
+    if pct_like.mean() < 0.5:
+        return None
+    raw.columns = [f"col{i}" for i in range(raw.shape[1])]
+    return raw
+
+def load_fr_from_xl(xl):
+    """Carga Fill Rate ('Data Fr'), ya sea desde una hoja con encabezado normal
+    (Tienda/FR/Limpio) o desde el export sin encabezado en absoluto (la
+    primera fila ya es un dato, no un título de columna). Para ese segundo
+    caso, primero probamos la hoja cuyo nombre contiene 'fr' (ej. 'Data Fr'),
+    y si no, buscamos entre todas la que tenga pinta de Fill Rate (fila
+    'TOTAL' en la primera columna + última columna con '%')."""
+    if xl is None:
+        return None
+    name, df = find_sheet(xl, ["Tienda", "FR", "Limpio"])
+    if df is not None:
+        return df
+    named = [s for s in xl.sheet_names if "fr" in s.lower()]
+    for sheet_name in named:
+        raw = _fr_headerless_candidate(xl, sheet_name)
+        if raw is not None:
+            return raw
+    for sheet_name in xl.sheet_names:
+        if sheet_name in named:
+            continue
+        raw = _fr_headerless_candidate(xl, sheet_name)
+        if raw is not None:
+            return raw
+    st.error(
+        "No encontré una hoja con las columnas esperadas (Tienda, FR, Limpio) "
+        "en el archivo subido."
+    )
+    return None
+
 def load_reclamos_from_xl(xl):
     """Carga Reclamos desde la hoja ya traducida ('Data Reclamos': Reclamo/Pedido/
     Tienda/Tipo/Estado/Fecha) o desde el export crudo del sistema de reclamos
@@ -810,10 +863,17 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f):
         )
         kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
     if fr_f is not None and len(fr_f):
-        unid_tot = fr_f["Unidades"].sum()
-        sin_tot = fr_f["SinSustituto"].sum()
-        con_tot = fr_f["ConSustituto"].sum()
-        fr_pct_tot = 100 * (1 - (sin_tot + con_tot) / unid_tot) if unid_tot else 0
+        if fr_total_declared is not None:
+            # Usamos el % de FR que ya viene calculado en la fila "TOTAL" de la
+            # planilla (coincide siempre con lo que ve Emi ahí), en vez de
+            # recalcularlo nosotros sumando tienda por tienda.
+            sin_tot = fr_total_declared["sin"]
+            fr_pct_tot = fr_total_declared["fr_pct"]
+        else:
+            unid_tot = fr_f["Unidades"].sum()
+            sin_tot = fr_f["SinSustituto"].sum()
+            con_tot = fr_f["ConSustituto"].sum()
+            fr_pct_tot = 100 * (1 - (sin_tot + con_tot) / unid_tot) if unid_tot else 0
         card = kpi_card(
             "Fill rate (con+sin sust.)", pct1(fr_pct_tot),
             f"{int(sin_tot)} unid. sin sustituto",
@@ -903,7 +963,7 @@ xl_reporte = safe_open_excel(f_reporte)
 df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"])
 df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
-df_fr_raw = load_section_from_xl(xl_reporte, ["Tienda", "FR", "Limpio"])
+df_fr_raw = load_fr_from_xl(xl_reporte)
 df_cancelados_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
 df_faltantes_raw = load_section(
     f_faltantes,
@@ -1000,6 +1060,7 @@ if df_ontime_raw is not None:
 
 # ---- Fill Rate ----
 fill_rate = None
+fr_total_declared = None
 if df_fr_raw is not None:
     d = df_fr_raw.copy()
     fr_cols = list(d.columns)
@@ -1026,6 +1087,14 @@ if df_fr_raw is not None:
             vals = r.iloc[:6]
             tienda = _clean_tienda_plus(vals.iloc[0])
             if tienda.strip().upper() in ("TOTAL", "TOTA"):
+                _fr_tot = ar_pct(vals.iloc[5])
+                if _fr_tot is not None:
+                    fr_total_declared = {
+                        "unidades": ar_number(vals.iloc[1]),
+                        "sin": ar_number(vals.iloc[2]),
+                        "con": ar_number(vals.iloc[3]),
+                        "fr_pct": _fr_tot,
+                    }
                 continue
             unidades = ar_number(vals.iloc[1])
             sin_sustituto = ar_number(vals.iloc[2])
@@ -1036,6 +1105,19 @@ if df_fr_raw is not None:
         else:
             tienda = norm_txt(r.get("Tienda"))
             if tienda.strip().upper() in ("TOTAL", "TOTA"):
+                _limpio_tot = r.get("Limpio")
+                if pd.notna(_limpio_tot):
+                    _fr_tot = float(_limpio_tot) * 100
+                else:
+                    _fr_tot = ar_pct(r.get("FR"))
+                if _fr_tot is not None:
+                    _unid_tot_row = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
+                    _sin_tot_row = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
+                    _con_tot_row = ar_number(r.get(reemplazo_plus_col)) if reemplazo_plus_col else ar_number(r.get("Reemplazo"))
+                    fr_total_declared = {
+                        "unidades": _unid_tot_row, "sin": _sin_tot_row,
+                        "con": _con_tot_row, "fr_pct": _fr_tot,
+                    }
                 continue
             unidades = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
             sin_sustituto = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
