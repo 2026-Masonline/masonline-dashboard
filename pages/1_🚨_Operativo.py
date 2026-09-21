@@ -651,16 +651,15 @@ def html_doc_cancelados(can_f):
 def _body_faltantes(falt_f):
     if falt_f is None or not len(falt_f):
         return None
-    show = falt_f.copy().sort_values(["AltaRotacion", "VentaProm"], ascending=[False, False])
-    show["Días sin venta"] = show["DiasSinVenta"]
-    show["Venta prom. semanal"] = show["VentaProm"].round(1)
-    show["Prioridad"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-    detail_cols = ["Tienda", "Producto", "Categoria", "Días sin venta", "Venta prom. semanal", "Prioridad"]
+    show = falt_f.copy().sort_values(["Tienda", "Producto"])
+    show["SKU"] = show["Producto"]
+    show["Código Principal"] = show["CodigoPrincipal"]
+    detail_cols = ["Tienda", "Departamento", "SKU", "Código Principal"]
     agg = falt_f.groupby("Tienda").agg(
-        Cantidad=("Producto", "count"), AltaRotacion=("AltaRotacion", "sum")
-    ).reset_index().rename(columns={"AltaRotacion": "Alta rotación"}).sort_values("Cantidad", ascending=False)
+        Cantidad=("Producto", "count")
+    ).reset_index().sort_values("Cantidad", ascending=False)
     resumen_html = resumen_table_html(
-        agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}", "Alta rotación": lambda v: f"{int(v)}"}
+        agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}
     )
     return (
         '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
@@ -797,11 +796,10 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f):
         )
         kpis.append(kpi_link_wrap(card, html_doc_cancelados(can_f), "operativo_cancelados.html"))
     if falt_f is not None:
-        alta = falt_f["AltaRotacion"].sum()
         card = kpi_card(
             "SKUs faltantes ECOM", f"{len(falt_f)}",
             "",
-            "crit" if alta > 0 else "warn"
+            "warn" if len(falt_f) > 0 else "good"
         )
         kpis.append(kpi_link_wrap(card, html_doc_faltantes(falt_f), "operativo_faltantes.html"))
     return kpis
@@ -1041,6 +1039,12 @@ if df_faltantes_raw is not None:
     d["Tienda"] = d["Tienda@DESC"].apply(norm_txt)
     d["Producto"] = d["SKU@DESC"].apply(norm_txt) if "SKU@DESC" in d.columns else ""
     d["Categoria"] = d["Clase@DESC"].apply(norm_txt) if "Clase@DESC" in d.columns else ""
+    d["Departamento"] = d["Departamento@DESC"].apply(norm_txt) if "Departamento@DESC" in d.columns else ""
+    _cod_col = next(
+        (c for c in ["Codigo Principal", "Código Principal", "CodigoPrincipal", "Codigo_Principal"] if c in d.columns),
+        None
+    )
+    d["CodigoPrincipal"] = d[_cod_col].apply(norm_txt) if _cod_col else ""
     d["DiasSinVenta"] = pd.to_numeric(d.get("Dias sin venta"), errors="coerce")
     d["VentaProm"] = pd.to_numeric(d.get("Venta Promedio Semanal"), errors="coerce").fillna(0)
     alta_col = "ALTA_ROTACION" if "ALTA_ROTACION" in d.columns else "Alerta_Alta_Rotacion"
@@ -1380,26 +1384,25 @@ if any_data_loaded:
     st.markdown(
         f'<div class="section">📉 Faltantes ECOM '
         f'<span class="count-pill">{len(falt_f) if falt_f is not None else 0}</span></div>'
-        '<div class="section-desc">SKUs marcados como faltante para e-commerce, por tienda. Los de alta rotación se priorizan primero.</div>',
+        '<div class="section-desc">SKUs marcados como faltante para e-commerce, por tienda.</div>',
         unsafe_allow_html=True
     )
     if falt_f is not None:
         if len(falt_f):
-            show = falt_f.copy().sort_values(["AltaRotacion", "VentaProm"], ascending=[False, False])
-            show["Días sin venta"] = show["DiasSinVenta"]
-            show["Venta prom. semanal"] = show["VentaProm"].round(1)
-            show["Prioridad"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-            detail_cols = ["Tienda", "Producto", "Categoria", "Días sin venta", "Venta prom. semanal", "Prioridad"]
+            show = falt_f.copy().sort_values(["Tienda", "Producto"])
+            show["SKU"] = show["Producto"]
+            show["Código Principal"] = show["CodigoPrincipal"]
+            detail_cols = ["Tienda", "Departamento", "SKU", "Código Principal"]
 
             agg = falt_f.groupby("Tienda").agg(
-                Cantidad=("Producto", "count"), AltaRotacion=("AltaRotacion", "sum")
-            ).reset_index().rename(columns={"AltaRotacion": "Alta rotación"})
+                Cantidad=("Producto", "count")
+            ).reset_index()
             agg = agg.sort_values("Cantidad", ascending=False)
 
             st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
             resumen_html = resumen_table_html(
                 agg, "Tienda",
-                {"Cantidad": lambda v: f"{int(v)}", "Alta rotación": lambda v: f"{int(v)}"}
+                {"Cantidad": lambda v: f"{int(v)}"}
             )
             st.write(resumen_html, unsafe_allow_html=True)
 
