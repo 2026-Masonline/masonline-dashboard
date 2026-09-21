@@ -364,10 +364,8 @@ body {{
 
 <div class="card" style="border-top:4px solid #f5a623;">
   <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
-  <div style="font-size:10px;font-weight:800;color:#6b7280;margin-top:6px;">MENSUAL</div>
-  <div style="font-size:22px;font-weight:800;color:#20252b;">{html.escape(pct(share))}</div>
-  <div style="font-size:10px;font-weight:800;color:#6b7280;margin-top:5px;">FIN DE SEMANA</div>
-  <div style="font-size:15px;font-weight:800;color:#20252b;">{html.escape(pct(weekend_full_share))}</div>
+  <div class="value">{html.escape(pct(share))}</div>
+  <div class="small">Objetivo: {html.escape(pct(target))}</div>
 </div>
 
 <div class="card" style="border-top:4px solid #2f9e66;">
@@ -449,10 +447,8 @@ with c2:
     st.markdown(f"""
     <div class="card" style="border-top:4px solid #f5a623;">
       <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
-      <div style="font-size:10px;font-weight:800;color:#6b7280;margin-top:6px;">MENSUAL</div>
-      <div style="font-size:22px;font-weight:800;color:#20252b;">{pct(share)}</div>
-      <div style="font-size:10px;font-weight:800;color:#6b7280;margin-top:5px;">FIN DE SEMANA</div>
-      <div style="font-size:15px;font-weight:800;color:#20252b;">{pct(weekend_full_share)}</div>
+      <div class="value">{pct(share)}</div>
+      <div class="small">Objetivo: {pct(target)}</div>
     </div>
     """, unsafe_allow_html=True)
 
