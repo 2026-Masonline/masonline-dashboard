@@ -800,7 +800,7 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f):
         alta = falt_f["AltaRotacion"].sum()
         card = kpi_card(
             "SKUs faltantes ECOM", f"{len(falt_f)}",
-            f"{alta} de alta rotación",
+            "",
             "crit" if alta > 0 else "warn"
         )
         kpis.append(kpi_link_wrap(card, html_doc_faltantes(falt_f), "operativo_faltantes.html"))
