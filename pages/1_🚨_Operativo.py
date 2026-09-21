@@ -121,6 +121,23 @@ APP_CSS = """
     div[data-testid="stDownloadButton"] button:hover {
         background: #ff5a1f; color: #ffffff; border-color: #ff5a1f;
     }
+
+    div[data-testid="stExpander"] {
+        border: 1px solid #e8ebef; border-radius: 10px; margin-top: 6px;
+    }
+    div[data-testid="stExpander"] summary {
+        background: #f4f5f4; border-radius: 10px; padding: 10px 14px;
+    }
+    div[data-testid="stExpander"] summary:hover {
+        background: #fdeee5;
+    }
+    div[data-testid="stExpander"] summary p,
+    div[data-testid="stExpander"] summary span {
+        color: #20252b !important; font-weight: 800 !important; font-size: 13.5px !important;
+    }
+    div[data-testid="stExpander"] summary svg {
+        fill: #ff5a1f !important;
+    }
 """
 
 st.markdown(f"<style>{APP_CSS}</style>", unsafe_allow_html=True)
