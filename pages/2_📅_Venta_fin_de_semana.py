@@ -240,7 +240,6 @@ def build_standalone_html():
                 f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
                 f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
                 f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
-                f'<td style="padding:10px 14px;color:#20252b;">{pct(r["participacion"])}</td>'
                 '</tr>'
             )
         tabla_html = f"""
@@ -252,7 +251,6 @@ def build_standalone_html():
                 <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
                 <th style="padding:10px 14px;">PEDIDOS</th>
                 <th style="padding:10px 14px;">UNIDADES</th>
-                <th style="padding:10px 14px;">% DEL MES</th>
               </tr>
             </thead>
             <tbody>{finde_rows_html_static}</tbody>
@@ -509,7 +507,6 @@ if len(finde_tabla):
             f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
             f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
             f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
-            f'<td style="padding:10px 14px;color:#20252b;">{pct(r["participacion"])}</td>'
             '</tr>'
         )
 
@@ -522,7 +519,6 @@ if len(finde_tabla):
             <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
             <th style="padding:10px 14px;">PEDIDOS</th>
             <th style="padding:10px 14px;">UNIDADES</th>
-            <th style="padding:10px 14px;">% DEL MES</th>
           </tr>
         </thead>
         <tbody>
