@@ -575,10 +575,14 @@ def html_doc_prepa(prepa_f):
     b = prepa_bundle(prepa_f)
     return b["html_doc"] if b else None
 
+FR_OBJETIVO = 98
+
 def _body_fr(fr_f):
     if fr_f is None or not len(fr_f):
         return None
-    show = fr_f.copy().sort_values("FRPct")
+    show = fr_f[(fr_f["Unidades"] > 0) & (fr_f["FRPct"] < FR_OBJETIVO)].copy().sort_values("FRPct")
+    if not len(show):
+        return '<div class="empty-box">Todas las tiendas con venta llegan al objetivo (98%) 🎉</div>'
     show["Unidades"] = show["Unidades"].astype(int)
     show["Sin sustituto"] = show["SinSustituto"].astype(int)
     show["Con sustituto"] = show["ConSustituto"].astype(int)
@@ -1337,29 +1341,34 @@ if any_data_loaded:
         st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
 
     # ---- Fill Rate ----
+    fr_below = fr_f[(fr_f["Unidades"] > 0) & (fr_f["FRPct"] < FR_OBJETIVO)] if fr_f is not None else None
     st.markdown(
         f'<div class="section">🧩 Fill Rate — con y sin sustituto '
-        f'<span class="count-pill">{len(fr_f) if fr_f is not None else 0}</span></div>'
-        '<div class="section-desc">Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.</div>',
+        f'<span class="count-pill">{len(fr_below) if fr_below is not None else 0}</span></div>'
+        f'<div class="section-desc">Tiendas con venta que no llegan al objetivo ({FR_OBJETIVO}%). '
+        'Unidades faltantes: cubiertas con reemplazo vs. no entregadas.</div>',
         unsafe_allow_html=True
     )
     if fr_f is not None and len(fr_f):
-        show = fr_f.copy().sort_values("FRPct")
-        show["Unidades"] = show["Unidades"].astype(int)
-        show["Sin sustituto"] = show["SinSustituto"].astype(int)
-        show["Con sustituto"] = show["ConSustituto"].astype(int)
-        show["Monto faltante"] = show["MontoFaltante"].apply(money)
-        show["FR %"] = show["FRPct"].apply(pct1)
-        show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-        detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
-        with st.container(height=380):
-            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
-        html_doc = export_section_html(
-            "🧩 Fill Rate — con y sin sustituto",
-            "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.",
-            table_html(show[detail_cols])
-        )
-        section_download_button(html_doc, "operativo_fill_rate.html", "dl_fr")
+        if len(fr_below):
+            show = fr_below.copy().sort_values("FRPct")
+            show["Unidades"] = show["Unidades"].astype(int)
+            show["Sin sustituto"] = show["SinSustituto"].astype(int)
+            show["Con sustituto"] = show["ConSustituto"].astype(int)
+            show["Monto faltante"] = show["MontoFaltante"].apply(money)
+            show["FR %"] = show["FRPct"].apply(pct1)
+            show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+            detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
+            with st.container(height=380):
+                st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+            html_doc = export_section_html(
+                "🧩 Fill Rate — con y sin sustituto",
+                f"Tiendas con venta que no llegan al objetivo ({FR_OBJETIVO}%).",
+                table_html(show[detail_cols])
+            )
+            section_download_button(html_doc, "operativo_fill_rate.html", "dl_fr")
+        else:
+            st.markdown('<div class="empty-box">Todas las tiendas con venta llegan al objetivo (98%) 🎉</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="empty-box">Subí el archivo de Fill Rate para ver esta sección.</div>', unsafe_allow_html=True)
 
