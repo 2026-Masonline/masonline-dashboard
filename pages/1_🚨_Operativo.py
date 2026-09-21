@@ -181,6 +181,112 @@ def fold_tienda_key(s):
     s = "".join(c for c in s if not unicodedata.combining(c))
     return s.lower()
 
+# Mapa Tienda -> Auditor, armado a partir de "tiendas por formato.xlsx". La
+# clave es fold_tienda_key(nombre de la tienda tal como aparece en los
+# reportes), para que funcione sin importar acentos/mayúsculas. Pendiente de
+# confirmar con Emi: "Comodoro Rivadavia" / "Comodoro Rivadavia Norte" (hay
+# más de una tienda "Comodoro" en los reportes y no se pudo saber cuál es
+# cuál) y "R.S. Peña, Chaco" (aparece con dos ortografías distintas en los
+# reportes: "Roque Saenz Peña" y "Sáenz Peña. Chaco"). Esas tiendas, hasta
+# aclararlo, no muestran auditor.
+AUDITOR_MAP = {
+    "3 de febrero": "Pedro",
+    "alte brown": "Nicolas",
+    "avellaneda": "Nicolas",
+    "bahia blanca": "Nicolas",
+    "bariloche": "Nicolas",
+    "campana": "Nicolas",
+    "caseros": "Nicolas",
+    "catamarca": "German",
+    "cipolletti": "Nicolas",
+    "claypole": "German",
+    "clorinda": "Pedro",
+    "constituyentes": "German",
+    "cordoba este": "German",
+    "cordoba oeste": "German",
+    "cordoba sur": "German",
+    "corrientes": "Pedro",
+    "corrientes av. maipu": "Pedro",
+    "donato alvarez": "German",
+    "formosa": "Pedro",
+    "formosa 2": "Pedro",
+    "fuerza aerea cba.": "German",
+    "fuerza aerea salta": "Pedro",
+    "general roca": "Nicolas",
+    "gonzalez catan": "Pedro",
+    "goya": "Pedro",
+    "gral pico": "Nicolas",
+    "guaymallen": "German",
+    "hc avellaneda 2": "German",
+    "hurlingham vergara": "Pedro",
+    "hurlingham villegas": "Pedro",
+    "jose c paz": "Pedro",
+    "jujuy": "Pedro",
+    "junin": "Nicolas",
+    "la pampa": "Nicolas",
+    "la plata": "Pedro",
+    "la rioja": "German",
+    "laferrere": "Pedro",
+    "lanus": "Nicolas",
+    "las heras": "German",
+    "lomas de zamora": "Nicolas",
+    "lujan": "Nicolas",
+    "maipu": "German",
+    "malvinas": "Nicolas",
+    "mataderos": "Pedro",
+    "moreno": "Pedro",
+    "moreno derqui": "Pedro",
+    "moreno shopping": "Pedro",
+    "moron": "Nicolas",
+    "neuquen": "Nicolas",
+    "neuquen 2": "Nicolas",
+    "olavarria": "Nicolas",
+    "oran": "Pedro",
+    "palmares": "German",
+    "parana": "German",
+    "parana 2": "German",
+    "pergamino": "Nicolas",
+    "pilar": "Pedro",
+    "posadas": "Pedro",
+    "posadas 2": "Pedro",
+    "puerto madryn": "Nicolas",
+    "quilmes": "Nicolas",
+    "rawson san juan": "German",
+    "resistencia": "Pedro",
+    "rio cuarto": "German",
+    "rio sali": "Pedro",
+    "salta": "Pedro",
+    "san fernando": "German",
+    "san juan": "German",
+    "san juan norte": "German",
+    "san justo": "Pedro",
+    "san luis": "German",
+    "san martin": "German",
+    "san martin mendoza": "German",
+    "san pedro jujuy": "Pedro",
+    "san vicente": "Nicolas",
+    "santa fe": "German",
+    "santa rosa": "Nicolas",
+    "santiago": "Pedro",
+    "santiago del estero sur": "Pedro",
+    "tablada": "Pedro",
+    "tartagal": "Pedro",
+    "tigre": "Nicolas",
+    "trelew": "Nicolas",
+    "tucuman": "Pedro",
+    "tucuman av. jujuy": "Pedro",
+    "tucuman concepcion": "Pedro",
+    "tucuman ejercito nor.": "Pedro",
+    "viedma": "Nicolas",
+    "villa mercedes": "German",
+    "villa nueva": "German",
+}
+
+def get_auditor(tienda):
+    """Devuelve el auditor/coordinador de una tienda ya canonicalizada, o
+    None si no lo tenemos mapeado."""
+    return AUDITOR_MAP.get(fold_tienda_key(norm_txt(tienda)))
+
 def build_tienda_canon_map(dfs):
     """Unifica nombres de tienda entre hojas (mayúsculas/minúsculas, acentos, prefijo
     'Sucursal', espacios) usando la ortografía más frecuente como canónica."""
@@ -761,7 +867,7 @@ def html_doc_faltantes(falt_f):
         body
     )
 
-def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f):
+def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f, filtro_activo=False):
     """Arma un único HTML con las tarjetas KPI de arriba + todas las secciones
     que tengan datos cargados, para bajar de un solo golpe y mandarlo
     (ej. por WhatsApp/mail al jefe)."""
@@ -780,7 +886,7 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f
     if not sections:
         return None
 
-    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f)
+    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo)
     kpi_row_html = f'<div class="kpi-row">{"".join(kpis)}</div>' if kpis else ""
 
     corte_html = ""
@@ -830,7 +936,7 @@ def kpi_link_wrap(inner_html, html_doc, filename):
         'title="Descargar esta sección como HTML">' + inner_html + '</a>'
     )
 
-def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f):
+def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=False):
     """Arma las tarjetas KPI de arriba de todo (clickeables para bajar el HTML
     de esa sección). Se usa tanto para la fila en pantalla como para incluirlas
     arriba del HTML combinado."""
@@ -863,13 +969,26 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f):
         )
         kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
     if fr_f is not None and len(fr_f):
-        if fr_total_declared is not None:
+        if fr_total_declared is not None and not filtro_activo:
             # Usamos el % de FR que ya viene calculado en la fila "TOTAL" de la
             # planilla (coincide siempre con lo que ve Emi ahí), en vez de
-            # recalcularlo nosotros sumando tienda por tienda.
+            # recalcularlo nosotros sumando tienda por tienda. Solo vale para
+            # el total SIN filtrar — con un filtro de Tienda/Auditor activo,
+            # ese "TOTAL" de la planilla ya no representa lo que se está
+            # mostrando.
             sin_tot = fr_total_declared["sin"]
             fr_pct_tot = fr_total_declared["fr_pct"]
+        elif len(fr_f) == 1:
+            # Una sola tienda: usamos el % que ya trae esa fila de la planilla
+            # (mismo criterio que para el TOTAL general), en vez de
+            # recalcularlo — así también coincide siempre con lo que ve Emi.
+            sin_tot = fr_f["SinSustituto"].iloc[0]
+            fr_pct_tot = fr_f["FRPct"].iloc[0]
         else:
+            # Varias tiendas juntas (ej. las de un auditor): no hay una fila
+            # de "TOTAL" de ese subconjunto en la planilla, así que estimamos
+            # ponderando por unidades. Puede no coincidir 100% con un cálculo
+            # manual de ese grupo en la planilla.
             unid_tot = fr_f["Unidades"].sum()
             sin_tot = fr_f["SinSustituto"].sum()
             con_tot = fr_f["ConSustituto"].sum()
@@ -1033,6 +1152,7 @@ if df_ontime_raw is not None:
         else:
             d[c] = 0
     d["Tienda"] = d["Tienda"].apply(norm_txt)
+    d = d[~d["Tienda"].str.upper().isin(["TOTAL", "TOTA"])]
     d = d.rename(columns={"Pedifod": "Pedidos"})
 
     # ONTIME puede venir como número (fracción 0-1 o ya en %) o como texto con
@@ -1199,13 +1319,29 @@ if any_data_loaded:
     </div>
     """, unsafe_allow_html=True)
 
-    tienda_sel = st.selectbox("Tienda", ["Todas las tiendas"] + sorted(all_stores), label_visibility="collapsed")
+    auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
+    col_aud, col_tda = st.columns([1, 2])
+    with col_aud:
+        auditor_sel = st.selectbox("Auditor", ["Todos los auditores"] + auditores)
+    filtro_auditor = None if auditor_sel == "Todos los auditores" else auditor_sel
+
+    # Si hay un auditor elegido, el desplegable de Tienda se acota a sus tiendas.
+    stores_disponibles = (
+        {s for s in all_stores if get_auditor(s) == filtro_auditor}
+        if filtro_auditor else all_stores
+    )
+    with col_tda:
+        tienda_sel = st.selectbox("Tienda", ["Todas las tiendas"] + sorted(stores_disponibles))
     filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
 
     def ftr(d):
-        if d is None or filtro_tienda is None:
+        if d is None:
             return d
-        return d[d["Tienda"] == filtro_tienda]
+        if filtro_tienda is not None:
+            return d[d["Tienda"] == filtro_tienda]
+        if filtro_auditor is not None:
+            return d[d["Tienda"].apply(get_auditor) == filtro_auditor]
+        return d
 
     pedidos_f = ftr(pedidos_72h)
     reclamos_f = ftr(reclamos)
@@ -1215,15 +1351,17 @@ if any_data_loaded:
     can_f = ftr(cancelados)
     falt_f = ftr(faltantes)
 
+    filtro_activo = filtro_tienda is not None or filtro_auditor is not None
+
     # ---- KPI row ----
-    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f)
+    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo)
 
     if kpis:
         st.markdown(f'<div class="kpi-row">{"".join(kpis)}</div>', unsafe_allow_html=True)
 
     # ---- Descargar todo junto (para mandar al jefe) ----
     _full_report_html = export_full_report_html(
-        pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f
+        pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo
     )
     if _full_report_html:
         st.download_button(
