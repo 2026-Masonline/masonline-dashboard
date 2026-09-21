@@ -139,12 +139,22 @@ def norm_txt(v):
         return ""
     return str(v).replace("\xa0", " ").strip()
 
+TIENDA_ALIASES = {
+    "grafa": "Constituyentes",
+}
+
 def strip_sucursal(v):
     """Quita el prefijo 'Sucursal ' y normaliza espacios, para poder unificar
-    nombres de tienda que vienen distinto de una hoja a otra."""
+    nombres de tienda que vienen distinto de una hoja a otra. También aplica
+    alias manuales para tiendas que figuran con un nombre distinto en una
+    planilla puntual (ej. 'Grafa' en Faltantes = 'Constituyentes' en el resto
+    de los reportes)."""
     s = norm_txt(v)
     s = re.sub(r"(?i)^sucursal\s+", "", s)
     s = re.sub(r"\s+", " ", s).strip()
+    alias = TIENDA_ALIASES.get(s.lower())
+    if alias:
+        return alias
     return s
 
 def fold_tienda_key(s):
