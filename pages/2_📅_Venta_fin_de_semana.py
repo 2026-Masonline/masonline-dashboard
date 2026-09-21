@@ -366,16 +366,10 @@ body {{
 
 <div class="card" style="border-top:4px solid #f5a623;">
   <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
-  <div style="display:flex;gap:16px;margin-top:7px;">
-    <div style="flex:1;">
-      <div style="font-size:11px;font-weight:800;color:#6b7280;">FIN DE SEMANA</div>
-      <div style="font-size:26px;font-weight:800;color:#20252b;">{html.escape(pct(weekend_full_share))}</div>
-    </div>
-    <div style="flex:1;">
-      <div style="font-size:11px;font-weight:800;color:#6b7280;">MENSUAL</div>
-      <div style="font-size:26px;font-weight:800;color:#20252b;">{html.escape(pct(share))}</div>
-    </div>
-  </div>
+  <div style="font-size:11px;font-weight:800;color:#6b7280;margin-top:7px;">MENSUAL</div>
+  <div style="font-size:30px;font-weight:800;color:#20252b;">{html.escape(pct(share))}</div>
+  <div style="font-size:11px;font-weight:800;color:#6b7280;margin-top:8px;">FIN DE SEMANA</div>
+  <div style="font-size:20px;font-weight:800;color:#20252b;">{html.escape(pct(weekend_full_share))}</div>
 </div>
 
 <div class="card" style="border-top:4px solid #2f9e66;">
@@ -457,16 +451,10 @@ with c2:
     st.markdown(f"""
     <div class="card" style="border-top:4px solid #f5a623;">
       <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
-      <div style="display:flex;gap:16px;margin-top:7px;">
-        <div style="flex:1;">
-          <div style="font-size:11px;font-weight:800;color:#6b7280;">FIN DE SEMANA</div>
-          <div style="font-size:26px;font-weight:800;color:#20252b;">{pct(weekend_full_share)}</div>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:11px;font-weight:800;color:#6b7280;">MENSUAL</div>
-          <div style="font-size:26px;font-weight:800;color:#20252b;">{pct(share)}</div>
-        </div>
-      </div>
+      <div style="font-size:11px;font-weight:800;color:#6b7280;margin-top:7px;">MENSUAL</div>
+      <div style="font-size:30px;font-weight:800;color:#20252b;">{pct(share)}</div>
+      <div style="font-size:11px;font-weight:800;color:#6b7280;margin-top:8px;">FIN DE SEMANA</div>
+      <div style="font-size:20px;font-weight:800;color:#20252b;">{pct(weekend_full_share)}</div>
     </div>
     """, unsafe_allow_html=True)
 
