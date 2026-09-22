@@ -54,6 +54,8 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,.06);
         border: 1px solid #e8ebef;
     }
+    .progress-layout { display: flex; align-items: center; gap: 28px; }
+    .progress-main { flex: 1; }
     .progress-track {
         height: 16px; background: #e6e9ed; border-radius: 20px;
         overflow: hidden; margin: 10px 0 8px;
@@ -64,12 +66,28 @@ st.markdown("""
         font-size: 13px;
     }
     .progress-target {
-        color: #208653; font-size: 30px; font-weight: 800;
+        width: 150px; color: #208653; font-size: 30px; font-weight: 800;
         text-align: right; line-height: 1;
     }
     .progress-target small {
         display: block; color: #6b7280; font-size: 12px;
         font-weight: 400; margin-top: 5px;
+    }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    @media (max-width: 600px) {
+        .block-container { padding: 0 0.6rem 1rem; }
+        .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
+        .hero img { max-width: 170px !important; height: 40px !important; }
+        .hero-brand { font-size: 22px; }
+        .hero-date { text-align: left; }
+        .section { font-size: 17px; margin: 20px 0 8px; }
+        .value { font-size: 24px; }
+        .compare-value { font-size: 24px; }
+        .progress-layout { flex-direction: column; align-items: stretch; gap: 14px; }
+        .progress-target { width: auto; text-align: left; }
+        table { font-size: 12px; }
     }
 
     .chart-card {
@@ -1011,8 +1029,8 @@ with tab1:
 
     st.markdown(f"""
     <div class="progress-wrap">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div style="flex:1;">
+      <div class="progress-layout">
+        <div class="progress-main">
           <div class="progress-track">
             <div class="progress-fill" style="width:{progress:.1f}%;"></div>
           </div>
@@ -1021,11 +1039,9 @@ with tab1:
             <span>Objetivo: {pct(target)}</span>
           </div>
         </div>
-        <div style="width:150px;">
-          <div class="progress-target">
-            {share/target:.0%}
-            <small>del objetivo</small>
-          </div>
+        <div class="progress-target">
+          {share/target:.0%}
+          <small>del objetivo</small>
         </div>
       </div>
     </div>
@@ -1035,7 +1051,7 @@ with tab1:
     share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
     st.markdown(f"""
-    <div style="display:flex;gap:16px;margin-top:20px;">
+    <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;">
       <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
           DIARIO &nbsp;|&nbsp; {latest["date"].strftime("%d-%m")}
@@ -1204,7 +1220,7 @@ with tab2:
     share_daily_gdn = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
     st.markdown(f"""
-    <div style="display:flex;gap:16px;">
+    <div style="display:flex;flex-wrap:wrap;gap:16px;">
       <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
           DIARIO &nbsp;|&nbsp; {latest["date"].strftime("%d-%m")}
@@ -1290,7 +1306,7 @@ with tab3:
     share_weekend_daily_style = weekend_full_share
 
     st.markdown(f"""
-    <div style="display:flex;gap:16px;">
+    <div style="display:flex;flex-wrap:wrap;gap:16px;">
       <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
           FIN DE SEMANA &nbsp;|&nbsp; {weekend_full_label}
@@ -1379,8 +1395,8 @@ with tab3:
             )
 
         st.markdown(f"""
-        <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
-          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <div class="table-scroll" style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow-x:auto;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px;">
             <thead>
               <tr style="background:#20252b;color:white;text-align:left;">
                 <th style="padding:10px 14px;">FIN DE SEMANA</th>
@@ -1484,7 +1500,7 @@ with tab4:
             """
 
         st.markdown(f"""
-        <div style="display:flex;gap:16px;">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;">
           <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
             <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
               FIN DE SEMANA ACTUAL &nbsp;|&nbsp; {finde_actual_rango}
