@@ -53,6 +53,8 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,.06);
         border: 1px solid #e8ebef; margin-top: 16px;
     }
+    .progress-layout { display: flex; align-items: center; gap: 28px; }
+    .progress-main { flex: 1; }
     .progress-track {
         height: 16px; background: #e6e9ed; border-radius: 20px;
         overflow: hidden; margin: 10px 0 8px;
@@ -63,7 +65,7 @@ st.markdown("""
         font-size: 13px;
     }
     .progress-target {
-        color: #208653; font-size: 30px; font-weight: 800;
+        width: 150px; color: #208653; font-size: 30px; font-weight: 800;
         text-align: right; line-height: 1;
     }
     .progress-target small {
@@ -81,6 +83,21 @@ st.markdown("""
     .footer {
         display: flex; justify-content: space-between; color: #6b7280;
         font-size: 12px; margin-top: 12px;
+    }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    @media (max-width: 600px) {
+        .block-container { padding: 0 0.6rem 1rem; }
+        .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
+        .hero img { max-width: 170px !important; height: 40px !important; }
+        .hero-brand { font-size: 22px; }
+        .hero-date { text-align: left; }
+        .section { font-size: 17px; margin: 20px 0 8px; }
+        .value { font-size: 24px; }
+        .progress-layout { flex-direction: column; align-items: stretch; gap: 14px; }
+        .progress-target { width: auto; text-align: left; }
+        table { font-size: 12px; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -472,8 +489,8 @@ with c4:
 
 st.markdown(f"""
 <div class="progress-wrap">
-  <div style="display:flex;justify-content:space-between;align-items:center;">
-    <div style="flex:1;">
+  <div class="progress-layout">
+    <div class="progress-main">
       <div class="progress-track">
         <div class="progress-fill" style="width:{progress:.1f}%;"></div>
       </div>
@@ -482,11 +499,9 @@ st.markdown(f"""
         <span>Objetivo: {pct(target)}</span>
       </div>
     </div>
-    <div style="width:150px;">
-      <div class="progress-target">
-        {share/target:.0%}
-        <small>del objetivo</small>
-      </div>
+    <div class="progress-target">
+      {share/target:.0%}
+      <small>del objetivo</small>
     </div>
   </div>
 </div>
@@ -507,8 +522,8 @@ if len(finde_tabla):
         )
 
     st.markdown(f"""
-    <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <div class="table-scroll" style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow-x:auto;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:420px;">
         <thead>
           <tr style="background:#20252b;color:white;text-align:left;">
             <th style="padding:10px 14px;">FIN DE SEMANA</th>
