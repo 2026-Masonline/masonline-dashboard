@@ -1052,12 +1052,12 @@ with tab1:
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;">
-      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
           DIARIO &nbsp;|&nbsp; {latest["date"].strftime("%d-%m")}
         </div>
         <div style="padding:18px 16px;">
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
@@ -1070,7 +1070,7 @@ with tab1:
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
               <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders"])}</div>
@@ -1087,12 +1087,12 @@ with tab1:
         </div>
       </div>
 
-      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
           MENSUAL &nbsp;SEPTIEMBRE 2026
         </div>
         <div style="padding:18px 16px;">
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
@@ -1105,7 +1105,7 @@ with tab1:
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
               <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
@@ -1221,12 +1221,12 @@ with tab2:
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;">
-      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
           DIARIO &nbsp;|&nbsp; {latest["date"].strftime("%d-%m")}
         </div>
         <div style="padding:18px 16px;">
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
@@ -1239,7 +1239,7 @@ with tab2:
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
               <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders"])}</div>
@@ -1256,12 +1256,12 @@ with tab2:
         </div>
       </div>
 
-      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
           MENSUAL &nbsp;SEPTIEMBRE 2026
         </div>
         <div style="padding:18px 16px;">
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
@@ -1274,7 +1274,7 @@ with tab2:
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
               <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
@@ -1307,12 +1307,12 @@ with tab3:
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;">
-      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
           FIN DE SEMANA &nbsp;|&nbsp; {weekend_full_label}
         </div>
         <div style="padding:18px 16px;">
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
@@ -1325,7 +1325,7 @@ with tab3:
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
               <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(weekend_full_orders)}</div>
@@ -1342,12 +1342,12 @@ with tab3:
         </div>
       </div>
 
-      <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
           MENSUAL &nbsp;SEPTIEMBRE 2026
         </div>
         <div style="padding:18px 16px;">
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA MENSUAL</div>
@@ -1360,7 +1360,7 @@ with tab3:
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-          <div style="display:flex;">
+          <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
               <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
@@ -1457,12 +1457,12 @@ with tab4:
                 if finde_anterior["company"] else 0
             )
             card_anterior_html = f"""
-              <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+              <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
                 <div style="background:#59636e;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
                   FIN DE SEMANA ANTERIOR &nbsp;|&nbsp; {finde_anterior_rango}
                 </div>
                 <div style="padding:18px 16px;">
-                  <div style="display:flex;">
+                  <div style="display:flex;gap:12px;">
                     <div style="flex:1;">
                       <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
                       <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
@@ -1475,7 +1475,7 @@ with tab4:
                     </div>
                   </div>
                   <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-                  <div style="display:flex;">
+                  <div style="display:flex;gap:12px;">
                     <div style="flex:1;">
                       <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
                       <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(finde_anterior["pedidos"])}</div>
@@ -1494,19 +1494,19 @@ with tab4:
             """
         else:
             card_anterior_html = """
-              <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center;padding:20px;">
+              <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center;padding:20px;">
                 <div style="color:#9ca3af;font-size:13px;text-align:center;">Sin fin de semana anterior cargado todavía.</div>
               </div>
             """
 
         st.markdown(f"""
         <div style="display:flex;flex-wrap:wrap;gap:16px;">
-          <div style="flex:1;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+          <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
             <div style="background:#e8432c;color:#fff;font-weight:800;font-size:15px;padding:12px 16px;">
               FIN DE SEMANA ACTUAL &nbsp;|&nbsp; {finde_actual_rango}
             </div>
             <div style="padding:18px 16px;">
-              <div style="display:flex;">
+              <div style="display:flex;gap:12px;">
                 <div style="flex:1;">
                   <div style="font-size:12px;font-weight:700;color:#6b7280;">COMPAÑÍA</div>
                   <div style="font-size:11px;color:#9ca3af;">VENTA FIN DE SEMANA</div>
@@ -1519,7 +1519,7 @@ with tab4:
                 </div>
               </div>
               <div style="border-top:1px solid #eee;margin:14px 0;"></div>
-              <div style="display:flex;">
+              <div style="display:flex;gap:12px;">
                 <div style="flex:1;">
                   <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
                   <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(finde_actual["pedidos"])}</div>
