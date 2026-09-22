@@ -107,6 +107,18 @@ APP_CSS = """
     div[data-testid="stExpander"] summary svg {
         fill: #ff5a1f !important;
     }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    @media (max-width: 600px) {
+        .block-container { padding: 0 0.6rem 1rem; }
+        .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
+        .hero img { max-width: 170px !important; height: 38px !important; }
+        .hero-brand { font-size: 20px; }
+        .section { font-size: 16px; margin: 20px 0 4px; }
+        table.dashtable { font-size: 12px; }
+        table.dashtable thead th, table.dashtable tbody td { padding: 7px 8px; }
+    }
 """
 
 st.markdown(f"<style>{APP_CSS}</style>", unsafe_allow_html=True)
@@ -494,7 +506,11 @@ def pct1(v):
     return f"{v:.1f}%".replace(".", ",")
 
 def table_html(df):
-    return df.to_html(escape=False, index=False, classes="dashtable", border=0)
+    """Va envuelta en un contenedor con scroll horizontal para que en el
+    celular, si la tabla no entra en el ancho de la pantalla, se pueda
+    desplazar en vez de romper el diseño de la página."""
+    inner = df.to_html(escape=False, index=False, classes="dashtable", border=0)
+    return f'<div class="table-scroll">{inner}</div>'
 
 def resumen_table_html(agg, label_col, col_formatters):
     """Tabla de ranking simple (sin fila de total — acá lo que importa es el
@@ -507,10 +523,11 @@ def resumen_table_html(agg, label_col, col_formatters):
             f"<td>{col_formatters[c](r[c])}</td>" for c in cols
         )
         body_rows.append(f"<tr>{tds}</tr>")
-    return (
+    inner = (
         '<table class="dashtable"><thead><tr>' + thead + '</tr></thead>'
         '<tbody>' + "".join(body_rows) + '</tbody></table>'
     )
+    return f'<div class="table-scroll">{inner}</div>'
 
 def section_block(title, desc, body_html):
     if not body_html:
