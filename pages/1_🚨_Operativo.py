@@ -400,18 +400,37 @@ def load_section(uploaded_file, required_cols):
     and return the dataframe matching required_cols, or None."""
     return load_section_from_xl(safe_open_excel(uploaded_file), required_cols)
 
-def _fr_headerless_candidate(xl, sheet_name):
-    """Si esta hoja tiene pinta de ser el export de Fill Rate sin encabezado
-    (>=6 columnas, una fila 'TOTAL' en la primera columna y la última columna
-    con pinta de porcentaje), devuelve el DataFrame ya recortado a 6
-    columnas; si no, devuelve None."""
+def _fr_read_positional(xl, sheet_name):
+    """Lee una hoja de Fill Rate por POSICIÓN (6 columnas: Tienda, Unidades,
+    No entregado, Reemplazo, Monto, FR%) en vez de por nombre de columna,
+    porque el nombre de esas columnas cambia de un día a otro en el export
+    (a veces 'Tienda/FR/Limpio', a veces 'Tienda/unidades pedidas/.../fill
+    rate', a veces directamente sin fila de encabezado). Si la primera fila
+    es un encabezado (columna 1 dice 'Tienda'), la descartamos; si no, ya es
+    un dato y la dejamos."""
     try:
         raw = xl.parse(sheet_name, header=None)
     except Exception:
         return None
-    if raw.shape[1] < 6:
+    if raw.shape[1] < 6 or not len(raw):
         return None
     raw = raw.iloc[:, :6].copy()
+    first_cell = re.sub(r"[▾▼▲]+\s*$", "", norm_txt(raw.iloc[0, 0])).strip()
+    if fold_tienda_key(first_cell) == "tienda":
+        raw = raw.iloc[1:].reset_index(drop=True)
+    if not len(raw):
+        return None
+    raw.columns = [f"col{i}" for i in range(raw.shape[1])]
+    return raw
+
+def _fr_headerless_candidate(xl, sheet_name):
+    """Último recurso cuando ninguna hoja se llama '...Fr...': hoja de 6+
+    columnas donde alguna fila arranca con 'TOTAL' y la última columna tiene
+    pinta de porcentaje (para no confundirla con otra hoja que también
+    tenga una fila de totales, ej. On Time)."""
+    raw = _fr_read_positional(xl, sheet_name)
+    if raw is None:
+        return None
     first_col = raw.iloc[:, 0].apply(norm_txt).apply(
         lambda s: re.sub(r"[▾▼▲]+\s*$", "", s).strip()
     )
@@ -421,16 +440,15 @@ def _fr_headerless_candidate(xl, sheet_name):
     pct_like = last_col.str.contains("%", na=False)
     if pct_like.mean() < 0.5:
         return None
-    raw.columns = [f"col{i}" for i in range(raw.shape[1])]
     return raw
 
 def load_fr_from_xl(xl):
-    """Carga Fill Rate ('Data Fr'), ya sea desde una hoja con encabezado normal
-    (Tienda/FR/Limpio) o desde el export sin encabezado en absoluto (la
-    primera fila ya es un dato, no un título de columna). Para ese segundo
-    caso, primero probamos la hoja cuyo nombre contiene 'fr' (ej. 'Data Fr'),
-    y si no, buscamos entre todas la que tenga pinta de Fill Rate (fila
-    'TOTAL' en la primera columna + última columna con '%')."""
+    """Carga Fill Rate. Primero probamos la hoja con encabezado 'de toda la
+    vida' (Tienda/FR/Limpio). Si no está, buscamos la hoja cuyo nombre
+    contiene 'fr' (ej. 'Data Fr') y la leemos por posición, sin importar
+    cómo se llamen sus columnas ese día. Como último recurso, entre todas
+    las hojas buscamos una con pinta de Fill Rate (fila 'TOTAL' + última
+    columna con '%')."""
     if xl is None:
         return None
     name, df = find_sheet(xl, ["Tienda", "FR", "Limpio"])
@@ -438,7 +456,7 @@ def load_fr_from_xl(xl):
         return df
     named = [s for s in xl.sheet_names if "fr" in s.lower()]
     for sheet_name in named:
-        raw = _fr_headerless_candidate(xl, sheet_name)
+        raw = _fr_read_positional(xl, sheet_name)
         if raw is not None:
             return raw
     for sheet_name in xl.sheet_names:
@@ -450,6 +468,33 @@ def load_fr_from_xl(xl):
     st.error(
         "No encontré una hoja con las columnas esperadas (Tienda, FR, Limpio) "
         "en el archivo subido."
+    )
+    return None
+
+def load_cancelados_from_xl(xl):
+    """Carga Pedidos cancelados. Cuando la hoja no trae la columna 'Total $'
+    (pasa algunos días), tiene exactamente las mismas columnas base que
+    'Data +72hs' (Pedido/Tienda/Fecha/Estado/Monto) — así que primero
+    probamos identificarla por el NOMBRE de la hoja (contiene 'cancel') para
+    no terminar leyendo por error los datos de +72hs."""
+    if xl is None:
+        return None
+    named = [s for s in xl.sheet_names if "cancel" in s.lower()]
+    for sheet_name in named:
+        try:
+            df = xl.parse(sheet_name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if {"pedido", "tienda", "fecha", "estado"}.issubset(cols):
+            return df
+    name, df = find_sheet(xl, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
+    if df is not None:
+        return df
+    st.error(
+        "No encontré una hoja con las columnas esperadas "
+        "(Pedido, Tienda, Fecha, Estado, Total $) en el archivo subido."
     )
     return None
 
@@ -1083,7 +1128,7 @@ df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Est
 df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_fr_from_xl(xl_reporte)
-df_cancelados_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
+df_cancelados_raw = load_cancelados_from_xl(xl_reporte)
 df_faltantes_raw = load_section(
     f_faltantes,
     ["Tienda@DESC", "SKU@DESC", "Etiqueta_Stock", "Dias sin venta"]
@@ -1263,7 +1308,15 @@ if df_fr_raw is not None:
 # ---- Cancelados ----
 if cancelados is not None:
     cancelados["Tienda"] = cancelados["Tienda"].apply(norm_txt)
-    cancelados["Total $"] = pd.to_numeric(cancelados["Total $"], errors="coerce").fillna(0)
+    # "Total $" no siempre viene en el export (algunos días la hoja no trae esa
+    # columna, o la trae vacía) — en ese caso usamos "Monto" (ej. "$330K"),
+    # que es la que sí viene siempre con el importe.
+    if "Total $" in cancelados.columns:
+        _total_num = pd.to_numeric(cancelados["Total $"], errors="coerce")
+    else:
+        _total_num = pd.Series([np.nan] * len(cancelados), index=cancelados.index)
+    _monto_num = cancelados.get("Monto", pd.Series([np.nan] * len(cancelados), index=cancelados.index)).apply(ar_number)
+    cancelados["Total $"] = _total_num.fillna(_monto_num).fillna(0)
 
 # ---- Faltantes ----
 faltantes = None
