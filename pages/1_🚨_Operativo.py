@@ -140,6 +140,20 @@ APP_CSS = """
     div[data-testid="stExpander"] summary svg {
         fill: #ff5a1f !important;
     }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    @media (max-width: 600px) {
+        .block-container { padding: 0 0.6rem 1rem; }
+        .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
+        .hero img { max-width: 170px !important; height: 38px !important; }
+        .hero-brand { font-size: 20px; }
+        .section { font-size: 16px; margin: 20px 0 4px; }
+        .kpi-row { grid-template-columns: 1fr; gap: 8px; }
+        .kpi .value { font-size: 22px; }
+        table.dashtable { font-size: 12px; }
+        table.dashtable thead th, table.dashtable tbody td { padding: 7px 8px; }
+    }
 """
 
 st.markdown(f"<style>{APP_CSS}</style>", unsafe_allow_html=True)
@@ -592,8 +606,12 @@ def badge(level, label):
     return f'<span class="badge {level}">{icons.get(level,"●")} {label}</span>'
 
 def table_html(df):
-    """Tabla de detalle, con el estilo .dashtable en vez del default de pandas."""
-    return df.to_html(escape=False, index=False, classes="dashtable", border=0)
+    """Tabla de detalle, con el estilo .dashtable en vez del default de pandas.
+    Va envuelta en un contenedor con scroll horizontal para que en el celular,
+    si la tabla no entra en el ancho de la pantalla, se pueda desplazar en vez
+    de romper el diseño de la página."""
+    inner = df.to_html(escape=False, index=False, classes="dashtable", border=0)
+    return f'<div class="table-scroll">{inner}</div>'
 
 def kpi_card(label, value, sub, cls=""):
     return f"""
@@ -619,10 +637,11 @@ def resumen_table_html(agg, label_col, col_formatters, total_label="Total genera
         f"<td>{col_formatters[c](agg[c].sum())}</td>" for c in cols
     )
     body_rows.append(f'<tr class="total-row">{total_tds}</tr>')
-    return (
+    inner = (
         '<table class="dashtable"><thead><tr>' + thead + '</tr></thead>'
         '<tbody>' + "".join(body_rows) + '</tbody></table>'
     )
+    return f'<div class="table-scroll">{inner}</div>'
 
 def export_section_html(section_title, section_desc, body_html):
     """Arma un HTML standalone (con el mismo look del panel) para descargar una sección sola."""
