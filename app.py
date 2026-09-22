@@ -54,6 +54,8 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,.06);
         border: 1px solid #e8ebef;
     }
+    .progress-layout { display: flex; align-items: center; gap: 28px; }
+    .progress-main { flex: 1; }
     .progress-track {
         height: 16px; background: #e6e9ed; border-radius: 20px;
         overflow: hidden; margin: 10px 0 8px;
@@ -64,12 +66,29 @@ st.markdown("""
         font-size: 13px;
     }
     .progress-target {
-        color: #208653; font-size: 30px; font-weight: 800;
+        width: 150px; color: #208653; font-size: 30px; font-weight: 800;
         text-align: right; line-height: 1;
     }
     .progress-target small {
         display: block; color: #6b7280; font-size: 12px;
         font-weight: 400; margin-top: 5px;
+    }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    @media (max-width: 600px) {
+        .block-container { padding: 0 0.6rem 1rem; }
+        .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
+        .hero img { max-width: 170px !important; height: 40px !important; }
+        .hero-brand { font-size: 22px; }
+        .hero-date { text-align: left; }
+        .section { font-size: 17px; margin: 20px 0 8px; }
+        .value { font-size: 24px; }
+        .compare-value { font-size: 24px; }
+        .progress-layout { flex-direction: column; align-items: stretch; gap: 14px; }
+        .progress-target { width: auto; text-align: left; }
+        table { font-size: 12px; }
+        div[data-baseweb="tab-list"] { flex-wrap: wrap; }
     }
 
     .chart-card {
