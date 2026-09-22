@@ -144,6 +144,107 @@ def fold_tienda_key(s):
     s = "".join(c for c in s if not unicodedata.combining(c))
     return s.lower()
 
+# Mapa Tienda -> Auditor (el mismo que en Operativo). Pendiente de confirmar
+# con Emi: "Comodoro Rivadavia" / "Comodoro Rivadavia Norte" y "R.S. Peña,
+# Chaco" — hasta aclararlo, esas tiendas no muestran auditor.
+AUDITOR_MAP = {
+    "3 de febrero": "Pedro",
+    "alte brown": "Nicolas",
+    "avellaneda": "Nicolas",
+    "bahia blanca": "Nicolas",
+    "bariloche": "Nicolas",
+    "campana": "Nicolas",
+    "caseros": "Nicolas",
+    "catamarca": "German",
+    "cipolletti": "Nicolas",
+    "claypole": "German",
+    "clorinda": "Pedro",
+    "constituyentes": "German",
+    "cordoba este": "German",
+    "cordoba oeste": "German",
+    "cordoba sur": "German",
+    "corrientes": "Pedro",
+    "corrientes av. maipu": "Pedro",
+    "donato alvarez": "German",
+    "formosa": "Pedro",
+    "formosa 2": "Pedro",
+    "fuerza aerea cba.": "German",
+    "fuerza aerea salta": "Pedro",
+    "general roca": "Nicolas",
+    "gonzalez catan": "Pedro",
+    "goya": "Pedro",
+    "gral pico": "Nicolas",
+    "guaymallen": "German",
+    "hc avellaneda 2": "German",
+    "hurlingham vergara": "Pedro",
+    "hurlingham villegas": "Pedro",
+    "jose c paz": "Pedro",
+    "jujuy": "Pedro",
+    "junin": "Nicolas",
+    "la pampa": "Nicolas",
+    "la plata": "Pedro",
+    "la rioja": "German",
+    "laferrere": "Pedro",
+    "lanus": "Nicolas",
+    "las heras": "German",
+    "lomas de zamora": "Nicolas",
+    "lujan": "Nicolas",
+    "maipu": "German",
+    "malvinas": "Nicolas",
+    "mataderos": "Pedro",
+    "moreno": "Pedro",
+    "moreno derqui": "Pedro",
+    "moreno shopping": "Pedro",
+    "moron": "Nicolas",
+    "neuquen": "Nicolas",
+    "neuquen 2": "Nicolas",
+    "olavarria": "Nicolas",
+    "oran": "Pedro",
+    "palmares": "German",
+    "parana": "German",
+    "parana 2": "German",
+    "pergamino": "Nicolas",
+    "pilar": "Pedro",
+    "posadas": "Pedro",
+    "posadas 2": "Pedro",
+    "puerto madryn": "Nicolas",
+    "quilmes": "Nicolas",
+    "rawson san juan": "German",
+    "resistencia": "Pedro",
+    "rio cuarto": "German",
+    "rio sali": "Pedro",
+    "salta": "Pedro",
+    "san fernando": "German",
+    "san juan": "German",
+    "san juan norte": "German",
+    "san justo": "Pedro",
+    "san luis": "German",
+    "san martin": "German",
+    "san martin mendoza": "German",
+    "san pedro jujuy": "Pedro",
+    "san vicente": "Nicolas",
+    "santa fe": "German",
+    "santa rosa": "Nicolas",
+    "santiago": "Pedro",
+    "santiago del estero sur": "Pedro",
+    "tablada": "Pedro",
+    "tartagal": "Pedro",
+    "tigre": "Nicolas",
+    "trelew": "Nicolas",
+    "tucuman": "Pedro",
+    "tucuman av. jujuy": "Pedro",
+    "tucuman concepcion": "Pedro",
+    "tucuman ejercito nor.": "Pedro",
+    "viedma": "Nicolas",
+    "villa mercedes": "German",
+    "villa nueva": "German",
+}
+
+def get_auditor(tienda):
+    """Devuelve el auditor/coordinador de una tienda ya canonicalizada, o
+    None si no lo tenemos mapeado."""
+    return AUDITOR_MAP.get(fold_tienda_key(norm_txt(tienda)))
+
 def build_tienda_canon_map(dfs):
     from collections import Counter
     counts = {}
@@ -700,6 +801,42 @@ else:
       Corte del reporte: <b style="color:#20252b;">{now_ref.strftime('%d/%m/%Y %H:%M')}</b>
     </div>
     """, unsafe_allow_html=True)
+
+    all_stores = set()
+    for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]:
+        if d is not None and "Tienda" in d.columns:
+            all_stores.update([s for s in d["Tienda"].unique() if s])
+
+    auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
+    col_aud, col_tda = st.columns([1, 2])
+    with col_aud:
+        auditor_sel = st.selectbox("Auditor", ["Todos los auditores"] + auditores, key="resumen_auditor")
+    filtro_auditor = None if auditor_sel == "Todos los auditores" else auditor_sel
+
+    # Si hay un auditor elegido, el desplegable de Tienda se acota a sus tiendas.
+    stores_disponibles = (
+        {s for s in all_stores if get_auditor(s) == filtro_auditor}
+        if filtro_auditor else all_stores
+    )
+    with col_tda:
+        tienda_sel = st.selectbox("Tienda", ["Todas las tiendas"] + sorted(stores_disponibles), key="resumen_tienda")
+    filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
+
+    def ftr(d):
+        if d is None:
+            return d
+        if filtro_tienda is not None:
+            return d[d["Tienda"] == filtro_tienda]
+        if filtro_auditor is not None:
+            return d[d["Tienda"].apply(get_auditor) == filtro_auditor]
+        return d
+
+    pedidos_72h = ftr(pedidos_72h)
+    reclamos = ftr(reclamos)
+    ontime_prepa = ftr(ontime_prepa)
+    fill_rate = ftr(fill_rate)
+    cancelados = ftr(cancelados)
+    faltantes = ftr(faltantes)
 
     FR_OBJETIVO = 98
     sections = []  # (title, desc, body_html) para el HTML combinado
