@@ -1,5 +1,8 @@
 import re
+import io
+import tempfile
 import unicodedata
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -223,6 +226,40 @@ def safe_open_excel(uploaded_file):
     except Exception as e:
         st.error(f"No pude leer el archivo: {e}")
         return None
+
+# ---------------------------------------------------------------------
+# Guardado compartido: usa el mismo archivo que se sube en la pestaña
+# Operativo (y viceversa), para que cualquiera que entre con el link vea
+# el último reporte subido sin tener que subir nada. Mientras la app siga
+# "despierta" todos ven la misma copia; si Streamlit la reinicia por
+# inactividad, o subís un cambio nuevo a GitHub, esa copia se borra y hace
+# falta volver a subir el reporte una vez para que se comparta de nuevo.
+# ---------------------------------------------------------------------
+
+SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
+SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
+SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
+
+def get_shared_bytes(uploaded_file, shared_path):
+    """Si en ESTA sesión alguien subió un archivo, lo usa y lo guarda para
+    compartirlo con quien entre después. Si nadie subió nada en esta
+    sesión, usa el último que haya quedado guardado (subido antes por
+    cualquier otra persona, incluso desde la pestaña Operativo). Devuelve
+    (bytes o None, es_subida_nueva)."""
+    if uploaded_file is not None:
+        data = uploaded_file.getvalue()
+        try:
+            shared_path.write_bytes(data)
+        except Exception:
+            pass
+        return data, True
+    if shared_path.exists():
+        try:
+            return shared_path.read_bytes(), False
+        except Exception:
+            return None, False
+    return None, False
 
 def load_section_from_xl(xl, required_cols):
     if xl is None:
@@ -463,6 +500,16 @@ f_reporte = upload_box(
 )
 f_faltantes = upload_box(u2, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "resumen_f_faltantes")
 
+reporte_bytes, reporte_es_nuevo = get_shared_bytes(f_reporte, SHARED_REPORTE_PATH)
+faltantes_bytes, faltantes_es_nuevo = get_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
+
+if (reporte_bytes is not None and not reporte_es_nuevo) or (faltantes_bytes is not None and not faltantes_es_nuevo):
+    st.markdown(
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
+        '● Mostrando el último reporte que subieron — no hace falta que subas nada para verlo actualizado.</div>',
+        unsafe_allow_html=True
+    )
+
 st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
@@ -471,14 +518,15 @@ st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 now_ref = None
 
-xl_reporte = safe_open_excel(f_reporte)
+xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes)) if reporte_bytes is not None else None
 df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"])
 df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_fr_from_xl(xl_reporte)
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte)
-df_faltantes_raw = load_section(
-    f_faltantes,
+xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
+df_faltantes_raw = load_section_from_xl(
+    xl_faltantes,
     ["Tienda@DESC", "SKU@DESC", "Etiqueta_Stock", "Dias sin venta"]
 )
 
