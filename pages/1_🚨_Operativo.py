@@ -1,14 +1,29 @@
 import re
 import io
+import json
 import base64
 import tempfile
 import unicodedata
+import hashlib
 from pathlib import Path
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+# Historial mensual de Faltantes: se guarda en un Google Sheet aparte (no en
+# esta app) para que sobreviva a los reinicios/actualizaciones de Streamlit
+# Cloud. Si todavía no se configuraron las credenciales en Secrets (ver guía),
+# la librería puede ni siquiera estar instalada — por eso el import va
+# "blindado": si falla, el resto de la página funciona igual y el ranking
+# mensual simplemente muestra un aviso de "todavía no conectado".
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials as _GCreds
+    _GSHEETS_LIB_OK = True
+except Exception:
+    _GSHEETS_LIB_OK = False
 
 st.set_page_config(
     page_title="MásOnline | Operativo",
@@ -429,6 +444,100 @@ def get_shared_bytes(uploaded_file, shared_path):
         except Exception:
             return None, False
     return None, False
+
+# ---------------------------------------------------------------------
+# Historial mensual de Faltantes: cada vez que subís un archivo de Faltantes
+# nuevo, se agregan sus filas (con la fecha de hoy) a un Google Sheet, para
+# poder armar un ranking de qué SKUs fueron faltante más veces en el mes. A
+# diferencia del guardado compartido de arriba (que solo se acuerda del
+# último archivo), esto SÍ sobrevive a que la app se reinicie o se actualice,
+# porque vive afuera, en Google Sheets.
+# ---------------------------------------------------------------------
+
+FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]
+
+@st.cache_resource(show_spinner=False)
+def _gsheets_client():
+    """Cliente autenticado contra Google Sheets, o None si todavía no se
+    cargaron las credenciales en Secrets (la app sigue funcionando igual,
+    solo que sin el ranking mensual acumulado)."""
+    if not _GSHEETS_LIB_OK:
+        return None
+    try:
+        # Forma simple: pegaste el .json de la cuenta de servicio entero en
+        # Secrets, en GCP_SERVICE_ACCOUNT_JSON. Si no está, probamos también
+        # la forma "a mano" con una tabla [gcp_service_account], por si en
+        # algún momento se cargó así.
+        raw_json = st.secrets.get("GCP_SERVICE_ACCOUNT_JSON")
+        if raw_json:
+            creds_dict = json.loads(raw_json)
+        else:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = _GCreds.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception:
+        return None
+
+def _faltantes_log_ws():
+    """Abre (o crea si no existe) la hoja 'HistorialFaltantes' dentro del
+    Google Sheet configurado en Secrets. None si no está conectado."""
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        try:
+            ws = sh.worksheet("HistorialFaltantes")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="HistorialFaltantes", rows=2000, cols=len(FALTANTES_LOG_HEADERS))
+            ws.append_row(FALTANTES_LOG_HEADERS)
+        return ws
+    except Exception:
+        return None
+
+def log_faltantes_to_sheet(faltantes_df, fecha_str):
+    """Agrega al historial las filas de Faltantes de hoy. Devuelve True si
+    pudo escribir (o si no había nada para escribir), False si falló la
+    conexión con Google Sheets."""
+    ws = _faltantes_log_ws()
+    if ws is None:
+        return False
+    if faltantes_df is None or not len(faltantes_df):
+        return True
+    rows = [
+        [fecha_str, r.get("Tienda", ""), r.get("Departamento", ""), r.get("Producto", ""),
+         r.get("CodigoPrincipal", ""), r.get("Etiqueta", "")]
+        for _, r in faltantes_df.iterrows()
+    ]
+    try:
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
+
+@st.cache_data(ttl=180, show_spinner=False)
+def load_faltantes_log():
+    """Lee todo el historial acumulado (cacheado 3 minutos para no golpear la
+    API de Google en cada click). None = todavía no conectado. DataFrame
+    vacío = conectado pero sin filas cargadas aún."""
+    ws = _faltantes_log_ws()
+    if ws is None:
+        return None
+    try:
+        records = ws.get_all_records()
+    except Exception:
+        return None
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=FALTANTES_LOG_HEADERS)
+    if "Fecha" in df.columns:
+        df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+    return df
 
 def load_section_from_xl(xl, required_cols):
     """Busca, dentro de un pd.ExcelFile ya abierto, la hoja cuyas columnas
@@ -942,9 +1051,10 @@ def _body_faltantes(falt_f):
     if falt_f is None or not len(falt_f):
         return None
     show = falt_f.copy().sort_values(["Tienda", "Producto"])
+    show["Fecha"] = fecha_hoy_str
     show["SKU"] = show["Producto"]
     show["Código Principal"] = show["CodigoPrincipal"]
-    detail_cols = ["Tienda", "Departamento", "SKU", "Código Principal"]
+    detail_cols = ["Fecha", "Tienda", "Departamento", "SKU", "Código Principal"]
     agg = falt_f.groupby("Tienda").agg(
         Cantidad=("Producto", "count")
     ).reset_index().sort_values("Cantidad", ascending=False)
@@ -1232,6 +1342,12 @@ if candidate_times:
 else:
     now_ref = pd.Timestamp(datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).replace(tzinfo=None))
 
+# Fecha "de hoy" (Argentina) — se usa para estampar cada fila de Faltantes en
+# el historial mensual. Va aparte de now_ref porque Faltantes no trae su
+# propia fecha en el archivo: lo que importa es el día en que se subió.
+fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+fecha_hoy_str = fecha_hoy.strftime("%d/%m/%Y")
+
 # ---- Pedidos +72h ----
 if pedidos_72h is not None:
     pedidos_72h["Dias"] = (now_ref - pedidos_72h["Fecha"]).dt.total_seconds() / 86400
@@ -1421,6 +1537,17 @@ ontime_delivery = apply_tienda_canon(ontime_delivery, _canon_map)
 fill_rate = apply_tienda_canon(fill_rate, _canon_map)
 cancelados = apply_tienda_canon(cancelados, _canon_map)
 faltantes = apply_tienda_canon(faltantes, _canon_map)
+
+# ---- Acumular Faltantes de hoy en el historial mensual (Google Sheets) ----
+# Se agrega una sola vez por archivo realmente subido (se controla con un
+# hash guardado en session_state), no en cada re-render de la página — si no,
+# cada vez que tocás el filtro de Auditor/Tienda se duplicarían las filas.
+if faltantes is not None and faltantes_es_nuevo and len(faltantes):
+    _falt_hash = hashlib.md5(faltantes_bytes).hexdigest()
+    if st.session_state.get("_faltantes_logged_hash") != _falt_hash:
+        if log_faltantes_to_sheet(faltantes, fecha_hoy_str):
+            st.session_state["_faltantes_logged_hash"] = _falt_hash
+            load_faltantes_log.clear()
 
 all_stores = set()
 for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]:
@@ -1765,9 +1892,10 @@ if any_data_loaded:
     if falt_f is not None:
         if len(falt_f):
             show = falt_f.copy().sort_values(["Tienda", "Producto"])
+            show["Fecha"] = fecha_hoy_str
             show["SKU"] = show["Producto"]
             show["Código Principal"] = show["CodigoPrincipal"]
-            detail_cols = ["Tienda", "Departamento", "SKU", "Código Principal"]
+            detail_cols = ["Fecha", "Tienda", "Departamento", "SKU", "Código Principal"]
 
             agg = falt_f.groupby("Tienda").agg(
                 Cantidad=("Producto", "count")
@@ -1801,10 +1929,82 @@ if any_data_loaded:
     else:
         st.markdown('<div class="empty-box">Subí el archivo de Faltantes para ver esta sección.</div>', unsafe_allow_html=True)
 
+    # ---- Ranking del mes — SKUs con más faltantes (histórico acumulado) ----
+    st.markdown(
+        '<div class="section">📈 Ranking del mes — SKUs con más faltantes</div>'
+        '<div class="section-desc">Acumulado de todos los reportes de Faltantes subidos este mes: '
+        'cuántas veces apareció cada SKU en total.</div>',
+        unsafe_allow_html=True
+    )
+    log_df = load_faltantes_log()
+    if log_df is None:
+        st.markdown(
+            '<div class="empty-box">Este ranking todavía no está conectado — hace falta activar '
+            'el historial en Google Sheets (una configuración única) para que empiece a acumular '
+            'mes a mes.</div>',
+            unsafe_allow_html=True
+        )
+    elif not len(log_df):
+        st.markdown(
+            '<div class="empty-box">Todavía no hay historial acumulado. Se va a empezar a llenar '
+            'con cada archivo de Faltantes que subas de acá en adelante.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        mes_inicio = pd.Timestamp(fecha_hoy.replace(day=1))
+        log_mes = log_df[log_df["FechaDt"] >= mes_inicio].copy()
+        if filtro_tienda is not None:
+            log_mes = log_mes[log_mes["Tienda"] == filtro_tienda]
+        elif filtro_auditor is not None:
+            log_mes = log_mes[log_mes["Tienda"].apply(get_auditor) == filtro_auditor]
+
+        if not len(log_mes):
+            st.markdown(
+                '<div class="empty-box">Sin faltantes acumulados este mes para esta selección.</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            rank = log_mes.groupby(["SKU", "CodigoPrincipal"], as_index=False).agg(
+                Apariciones=("SKU", "count"),
+                Tiendas=("Tienda", "nunique"),
+            ).sort_values("Apariciones", ascending=False).head(20)
+            rank = rank.rename(columns={
+                "CodigoPrincipal": "Código Principal", "Tiendas": "Tiendas afectadas"
+            })
+            st.write(
+                table_html(rank[["SKU", "Código Principal", "Apariciones", "Tiendas afectadas"]]),
+                unsafe_allow_html=True
+            )
+
+            with st.expander(f"Ver historial completo del mes ({len(log_mes)} filas)"):
+                with st.container(height=380):
+                    st.write(
+                        table_html(
+                            log_mes.sort_values("FechaDt", ascending=False)
+                            [["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]]
+                            .rename(columns={"CodigoPrincipal": "Código Principal"})
+                        ),
+                        unsafe_allow_html=True
+                    )
+
+            csv_bytes = (
+                log_mes.sort_values("FechaDt")
+                [["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]]
+                .to_csv(index=False).encode("utf-8-sig")
+            )
+            st.download_button(
+                "⬇️ Descargar historial completo del mes (CSV)",
+                data=csv_bytes,
+                file_name=f"faltantes_historial_{fecha_hoy.strftime('%Y-%m')}.csv",
+                mime="text/csv",
+                key="dl_faltantes_historial",
+            )
+
     st.markdown(
         '<div style="color:#6b7280;font-size:11.5px;text-align:center;margin-top:18px;">'
-        'Operativo · datos del Reporte diario · esta página no guarda historial: volvé a subir los archivos '
-        'actualizados para regenerar el panel.</div>',
+        'Operativo · datos del Reporte diario · la mayoría de las secciones no guardan historial: volvé a subir '
+        'los archivos actualizados para regenerar el panel. Faltantes es la excepción: se va acumulando '
+        'mes a mes en el ranking de arriba.</div>',
         unsafe_allow_html=True
     )
 
