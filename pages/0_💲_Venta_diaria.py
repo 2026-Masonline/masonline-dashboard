@@ -168,17 +168,14 @@ padding:12px 16px;margin-bottom:14px;">
 df = base_df.copy()
 df_tiendas = base_df_tiendas.copy()
 
-# Siempre mostramos el último día cerrado en Argentina.
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"]).copy()
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df = df[df["date"].dt.date < arg_today].copy()
 
 if len(df_tiendas):
     df_tiendas["date"] = pd.to_datetime(df_tiendas["date"], errors="coerce")
     df_tiendas = df_tiendas.dropna(subset=["date"]).copy()
-    df_tiendas = df_tiendas[df_tiendas["date"].dt.date < arg_today].copy()
 
 current = df[
     (df["date"].dt.year == 2026) &
