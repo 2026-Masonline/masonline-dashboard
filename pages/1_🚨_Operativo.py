@@ -456,6 +456,14 @@ def get_shared_bytes(uploaded_file, shared_path):
 
 FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]
 
+# Historial diario de Productividad Pickers: mismo mecanismo y misma planilla
+# de Google Sheets que Faltantes (una hoja aparte, "HistorialPickers"), para
+# poder armar la evolución día a día en la pestaña "Productividad Pickers".
+PICKER_LOG_HEADERS = [
+    "Fecha", "Picker", "Deposito", "Pedidos", "Unidades",
+    "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"
+]
+
 # Guarda el motivo puntual por el que no se pudo conectar (para mostrarlo en
 # pantalla mientras estamos activando esto por primera vez). No es sensible
 # — solo dice qué falló, nunca la clave en sí. Va detrás de cache_resource
@@ -533,6 +541,50 @@ def log_faltantes_to_sheet(faltantes_df, fecha_str):
         [fecha_str, r.get("Tienda", ""), r.get("Departamento", ""), r.get("Producto", ""),
          r.get("CodigoPrincipal", ""), r.get("Etiqueta", "")]
         for _, r in faltantes_df.iterrows()
+    ]
+    try:
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
+
+def _pickers_log_ws():
+    """Abre (o crea si no existe) la hoja 'HistorialPickers' dentro del mismo
+    Google Sheet que Faltantes. None si no está conectado."""
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        _gsheets_debug_box()["msg"] = "Falta FALTANTES_SHEET_ID en Secrets."
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        try:
+            ws = sh.worksheet("HistorialPickers")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="HistorialPickers", rows=2000, cols=len(PICKER_LOG_HEADERS))
+            ws.append_row(PICKER_LOG_HEADERS)
+        _gsheets_debug_box()["msg"] = None
+        return ws
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
+        return None
+
+def log_pickers_to_sheet(pickers_df, fecha_str):
+    """Agrega al historial la productividad de hoy de cada picker. Devuelve
+    True si pudo escribir (o si no había nada para escribir), False si falló
+    la conexión con Google Sheets."""
+    ws = _pickers_log_ws()
+    if ws is None:
+        return False
+    if pickers_df is None or not len(pickers_df):
+        return True
+    rows = [
+        [fecha_str, r.get("Picker", ""), r.get("Deposito", ""),
+         r.get("Pedidos", ""), r.get("Unidades", ""), r.get("Rendimiento", ""),
+         r.get("RendimientoPicking", ""), r.get("FoundRate", ""), r.get("FillRate", "")]
+        for _, r in pickers_df.iterrows()
     ]
     try:
         ws.append_rows(rows, value_input_option="USER_ENTERED")
@@ -1327,6 +1379,10 @@ df_faltantes_raw = load_section_from_xl(
     xl_faltantes,
     ["Tienda@DESC", "SKU@DESC", "Etiqueta_Stock", "Dias sin venta"]
 )
+df_picker_raw = load_section_from_xl(
+    xl_reporte,
+    ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
+)
 
 candidate_times = []
 
@@ -1540,6 +1596,28 @@ if df_faltantes_raw is not None:
     d[["Sev", "SevLabel"]] = d["AltaRotacion"].apply(lambda a: pd.Series(sev_faltante(a)))
     faltantes = d
 
+# ---- Productividad de Pickers ----
+# Viene de la hoja "Data Picker" del mismo Reporte diario.xlsx (no tiene
+# uploader propio, es parte de este mismo archivo). Se usa acá para armar
+# el historial día a día; la tabla en sí se muestra en la pestaña aparte
+# "Productividad Pickers".
+pickers = None
+if df_picker_raw is not None:
+    d = df_picker_raw.copy()
+    d["Picker"] = (d["firstName"].apply(norm_txt) + " " + d["lastName"].apply(norm_txt)).str.strip()
+    d["Deposito"] = d["warehouseRefId"].apply(norm_txt)
+    d["Pedidos"] = pd.to_numeric(d["orders"], errors="coerce").fillna(0)
+    d["Unidades"] = pd.to_numeric(d["items"], errors="coerce").fillna(0)
+    d["Rendimiento"] = pd.to_numeric(d["performance"], errors="coerce")
+    d["RendimientoPicking"] = pd.to_numeric(d.get("pickingPerformance"), errors="coerce")
+    d["FoundRate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
+    d["FillRate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
+    d = d[d["Picker"] != ""]
+    pickers = d[[
+        "Picker", "Deposito", "Pedidos", "Unidades",
+        "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"
+    ]]
+
 # ---------------------------------------------------------------------
 # Unificar nombres de tienda entre hojas (mayúsc/minúsc, prefijo "Sucursal")
 # y armar el filtro de tienda
@@ -1566,6 +1644,15 @@ if faltantes is not None and faltantes_es_nuevo and len(faltantes):
         if log_faltantes_to_sheet(faltantes, fecha_hoy_str):
             st.session_state["_faltantes_logged_hash"] = _falt_hash
             load_faltantes_log.clear()
+
+# ---- Acumular Productividad de Pickers de hoy en el historial (Google Sheets) ----
+# Mismo criterio que Faltantes: se agrega una sola vez por archivo realmente
+# subido (hash del Reporte diario en session_state), no en cada re-render.
+if pickers is not None and reporte_es_nuevo and len(pickers):
+    _pickers_hash = hashlib.md5(reporte_bytes).hexdigest()
+    if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
+        if log_pickers_to_sheet(pickers, fecha_hoy_str):
+            st.session_state["_pickers_logged_hash"] = _pickers_hash
 
 all_stores = set()
 for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]:
