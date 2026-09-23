@@ -127,6 +127,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 DATA_FILE = Path(__file__).resolve().parent / "data.csv"
+DATA_TIENDAS_FILE = Path(__file__).resolve().parent / "data_tiendas.csv"
 LOGO_FILE = Path(__file__).resolve().parent / "masonline_logo.png"
 
 try:
@@ -138,6 +139,21 @@ try:
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
+
+TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
+
+try:
+    if DATA_TIENDAS_FILE.exists():
+        base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
+        base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
+        base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
+        for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
+            base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
+        base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
+    else:
+        base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+except Exception:
+    base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
 
 st.markdown("""
 <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
@@ -213,6 +229,7 @@ def normalize_uploaded_excel(file):
             "No encontré las columnas Fecha, Facturacion y Venta - Ecommerce en el archivo."
         )
 
+    file.seek(0)
     d = pd.read_excel(file, sheet_name=0, header=header_row)
 
     required = [
@@ -243,18 +260,83 @@ def normalize_uploaded_excel(file):
 
     out = out.rename(columns={"Fecha": "date"})
     out["source"] = "Reporte subido"
-    return out
+
+    # Desglose por tienda, si el archivo trae esas columnas (Tienda + Nombre).
+    tiendas_out = None
+    if "Tienda" in d.columns and "Nombre" in d.columns:
+        t = d.copy()
+        t["Tienda"] = pd.to_numeric(t["Tienda"], errors="coerce")
+        t = t.dropna(subset=["Tienda"])
+        t["Tienda"] = t["Tienda"].astype(int).astype(str)
+        t["Nombre"] = t["Nombre"].astype(str).str.strip()
+
+        tiendas_out = t.groupby(["Fecha", "Tienda", "Nombre"], as_index=False).agg(
+            company_tax=("Facturacion", "sum"),
+            ecommerce_tax=("Venta - Ecommerce", "sum"),
+            orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
+            units=("Cantidad Venta Operativa - Ecommerce", "sum")
+        )
+        tiendas_out = tiendas_out.rename(columns={"Fecha": "date"})
+
+    return out, tiendas_out
+
+def _save_csv_to_github(csv_text, path, message, token):
+    import urllib.request
+    import urllib.error
+    import json as _json
+
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard"
+    }
+
+    sha = None
+    request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request_get, timeout=30) as response:
+            github_file = _json.loads(response.read().decode("utf-8"))
+        sha = github_file["sha"]
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+
+    content_b64 = base64.b64encode(csv_text.encode("utf-8")).decode("utf-8")
+
+    payload = {
+        "message": message,
+        "content": content_b64,
+        "branch": branch
+    }
+    if sha:
+        payload["sha"] = sha
+
+    request_put = urllib.request.Request(
+        url,
+        data=_json.dumps(payload).encode("utf-8"),
+        headers={**headers, "Content-Type": "application/json"},
+        method="PUT"
+    )
+
+    with urllib.request.urlopen(request_put, timeout=30) as response:
+        response.read()
 
 df = base_df.copy()
+df_tiendas = base_df_tiendas.copy()
 
 def replace_period(uploaded_file, year, month, label):
-    global df
+    global df, df_tiendas
 
     if uploaded_file is None:
         return
 
     try:
-        incoming = normalize_uploaded_excel(uploaded_file)
+        incoming, incoming_tiendas = normalize_uploaded_excel(uploaded_file)
 
         incoming = incoming[
             (incoming["date"].dt.year == year) &
@@ -280,85 +362,63 @@ def replace_period(uploaded_file, year, month, label):
             .reset_index(drop=True)
         )
 
+        if incoming_tiendas is not None and len(incoming_tiendas):
+            incoming_tiendas = incoming_tiendas[
+                (incoming_tiendas["date"].dt.year == year) &
+                (incoming_tiendas["date"].dt.month == month)
+            ].copy()
+
+            df_tiendas = df_tiendas[
+                ~(
+                    (df_tiendas["date"].dt.year == year) &
+                    (df_tiendas["date"].dt.month == month)
+                )
+            ].copy()
+
+            df_tiendas = pd.concat([df_tiendas, incoming_tiendas], ignore_index=True)
+
+            df_tiendas = (
+                df_tiendas.sort_values("date")
+                .drop_duplicates(subset=["date", "Tienda"], keep="last")
+                .reset_index(drop=True)
+            )
+
         # GUARDAR LOS DATOS EN GITHUB
         try:
-            import urllib.request
-            import urllib.error
-            import json
-            import base64
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-
             token = st.secrets.get("GITHUB_TOKEN")
 
             if token:
-                repo = "2026-Masonline/masonline-dashboard"
-                path = "data.csv"
-                branch = "main"
-
-                url = f"https://api.github.com/repos/{repo}/contents/{path}"
-
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                    "User-Agent": "Masonline-Dashboard"
-                }
-
-                # Obtener SHA actual de data.csv
-                request_get = urllib.request.Request(
-                    f"{url}?ref={branch}",
-                    headers=headers,
-                    method="GET"
-                )
-
-                with urllib.request.urlopen(request_get, timeout=30) as response:
-                    github_file = json.loads(response.read().decode("utf-8"))
-
-                sha = github_file["sha"]
-
                 # No guardar el día actual si todavía está en curso
                 arg_today = datetime.now(
                     ZoneInfo("America/Argentina/Buenos_Aires")
                 ).date()
 
-                save_df = df[
-                    df["date"].dt.date < arg_today
-                ].copy()
-
+                save_df = df[df["date"].dt.date < arg_today].copy()
                 save_df = save_df.sort_values("date")
 
-                csv_text = save_df.to_csv(
-                    index=False,
-                    date_format="%Y-%m-%d"
+                csv_text = save_df.to_csv(index=False, date_format="%Y-%m-%d")
+
+                _save_csv_to_github(
+                    csv_text,
+                    "data.csv",
+                    f"Actualizar datos ecommerce - {label}",
+                    token
                 )
 
-                content_b64 = base64.b64encode(
-                    csv_text.encode("utf-8")
-                ).decode("utf-8")
+                if len(df_tiendas):
+                    save_df_tiendas = df_tiendas[
+                        df_tiendas["date"].dt.date < arg_today
+                    ].copy()
+                    save_df_tiendas = save_df_tiendas.sort_values(["date", "Tienda"])
 
-                payload = {
-                    "message": f"Actualizar datos ecommerce - {label}",
-                    "content": content_b64,
-                    "sha": sha,
-                    "branch": branch
-                }
+                    csv_text_tiendas = save_df_tiendas.to_csv(index=False, date_format="%Y-%m-%d")
 
-                request_put = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={
-                        **headers,
-                        "Content-Type": "application/json"
-                    },
-                    method="PUT"
-                )
-
-                with urllib.request.urlopen(
-                    request_put,
-                    timeout=30
-                ) as response:
-                    response.read()
+                    _save_csv_to_github(
+                        csv_text_tiendas,
+                        "data_tiendas.csv",
+                        f"Actualizar datos por tienda - {label}",
+                        token
+                    )
 
                 st.success(
                     f"{label}: datos cargados y guardados correctamente."
@@ -379,11 +439,6 @@ def replace_period(uploaded_file, year, month, label):
     except Exception as e:
         st.error(f"{label}: error al procesar el archivo: {e}")
 
-        st.success(f"{label}: {len(incoming)} días cargados correctamente.")
-
-    except Exception as e:
-        st.error(f"{label}: no pude procesar el Excel: {e}")
-
 replace_period(upload_current, 2026, 9, "Mes en curso")
 replace_period(upload_prev, 2026, 8, "Mes anterior")
 replace_period(upload_ly, 2025, 9, "Mismo período año pasado")
@@ -394,6 +449,11 @@ df = df.dropna(subset=["date"]).copy()
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df = df[df["date"].dt.date < arg_today].copy()
+
+if len(df_tiendas):
+    df_tiendas["date"] = pd.to_datetime(df_tiendas["date"], errors="coerce")
+    df_tiendas = df_tiendas.dropna(subset=["date"]).copy()
+    df_tiendas = df_tiendas[df_tiendas["date"].dt.date < arg_today].copy()
 
 current = df[
     (df["date"].dt.year == 2026) &
@@ -491,6 +551,24 @@ sep25_acc = sep25["ecommerce_tax"].sum()
 
 vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
 vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
+
+# ---- Top 10 tiendas con más ventas (mes en curso) ----
+current_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+if len(df_tiendas):
+    current_tiendas = df_tiendas[
+        (df_tiendas["date"].dt.year == 2026) &
+        (df_tiendas["date"].dt.month == 9)
+    ].copy()
+
+top_tiendas = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax"])
+if len(current_tiendas):
+    top_tiendas = (
+        current_tiendas.groupby(["Tienda", "Nombre"], as_index=False)
+        .agg(ecommerce_tax=("ecommerce_tax", "sum"))
+        .sort_values("ecommerce_tax", ascending=False)
+        .head(10)
+        .reset_index(drop=True)
+    )
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -1178,26 +1256,49 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section">Top 10 tiendas con más ventas</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Venta ecommerce acumulada del mes en curso, por tienda'
+        '</div>',
+        unsafe_allow_html=True
+    )
     st.markdown('<div class="chart-card">', unsafe_allow_html=True)
 
-    chart = px.line(
-        current,
-        x="date",
-        y="ecommerce_tax",
-        markers=True,
-        labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
-    )
+    if len(top_tiendas):
+        ranking_chart = top_tiendas.copy()
+        ranking_chart["etiqueta"] = ranking_chart["Tienda"] + " - " + ranking_chart["Nombre"]
+        ranking_chart = ranking_chart.sort_values("ecommerce_tax")
 
-    chart.update_layout(
-        height=430,
-        margin=dict(l=10, r=10, t=20, b=10),
-        yaxis_tickprefix="$",
-        yaxis_tickformat=",.0f",
-        hovermode="x unified"
-    )
+        chart_tiendas = px.bar(
+            ranking_chart,
+            x="ecommerce_tax",
+            y="etiqueta",
+            orientation="h",
+            labels={"ecommerce_tax": "Venta ecommerce", "etiqueta": "Tienda"},
+            text="ecommerce_tax"
+        )
+        chart_tiendas.update_traces(
+            texttemplate="$%{text:,.0f}",
+            textposition="outside",
+            marker_color="#2f9e66"
+        )
+        chart_tiendas.update_layout(
+            height=430,
+            margin=dict(l=10, r=10, t=20, b=10),
+            xaxis_tickprefix="$",
+            xaxis_tickformat=",.0f",
+        )
+        st.plotly_chart(chart_tiendas, use_container_width=True)
+    else:
+        st.markdown(
+            '<div class="upload-text" style="padding-bottom:14px;">'
+            'Todavía no hay datos por tienda para este mes. Se completa automáticamente '
+            'la próxima vez que subas el Excel (si trae las columnas Tienda y Nombre).'
+            '</div>',
+            unsafe_allow_html=True
+        )
 
-    st.plotly_chart(chart, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown(
