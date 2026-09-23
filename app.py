@@ -261,6 +261,8 @@ def normalize_uploaded_excel(file):
     out = out.rename(columns={"Fecha": "date"})
     out["source"] = "Reporte subido"
 
+    columnas_encontradas = d.columns.tolist()
+
     # Desglose por tienda, si el archivo trae esas columnas (Tienda + Nombre).
     tiendas_out = None
     if "Tienda" in d.columns and "Nombre" in d.columns:
@@ -278,7 +280,7 @@ def normalize_uploaded_excel(file):
         )
         tiendas_out = tiendas_out.rename(columns={"Fecha": "date"})
 
-    return out, tiendas_out
+    return out, tiendas_out, columnas_encontradas
 
 def _save_csv_to_github(csv_text, path, message, token):
     import urllib.request
@@ -336,7 +338,14 @@ def replace_period(uploaded_file, year, month, label):
         return
 
     try:
-        incoming, incoming_tiendas = normalize_uploaded_excel(uploaded_file)
+        incoming, incoming_tiendas, columnas_encontradas = normalize_uploaded_excel(uploaded_file)
+
+        if incoming_tiendas is None:
+            st.info(
+                f"{label}: no encontré las columnas \"Tienda\" y \"Nombre\" en este archivo, "
+                "así que no se pudo armar el desglose por tienda. Columnas detectadas: "
+                + ", ".join(str(c) for c in columnas_encontradas)
+            )
 
         incoming = incoming[
             (incoming["date"].dt.year == year) &
