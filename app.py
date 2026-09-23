@@ -594,7 +594,9 @@ st.markdown(f"""
   <div class="hero-date">
     Septiembre 2026
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
-    <small>Participación del día: {pct(share_daily)}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
