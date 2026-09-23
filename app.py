@@ -382,11 +382,14 @@ replace_period(upload_ly, 2025, 9, "Mismo período año pasado")
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"]).copy()
 
+# Siempre mostramos el último día cerrado en Argentina (no el día en curso,
+# que todavía puede estar sumando ventas).
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+df_mostrar = df[df["date"].dt.date < arg_today].copy()
 
-current = df[
-    (df["date"].dt.year == 2026) &
-    (df["date"].dt.month == 9)
+current = df_mostrar[
+    (df_mostrar["date"].dt.year == 2026) &
+    (df_mostrar["date"].dt.month == 9)
 ].copy().sort_values("date")
 
 if current.empty:
@@ -464,16 +467,16 @@ day_change = (
 
 n = days_elapsed
 
-aug = df[
-    (df["date"].dt.year == 2026) &
-    (df["date"].dt.month == 8) &
-    (df["date"].dt.day <= n)
+aug = df_mostrar[
+    (df_mostrar["date"].dt.year == 2026) &
+    (df_mostrar["date"].dt.month == 8) &
+    (df_mostrar["date"].dt.day <= n)
 ].sort_values("date")
 
-sep25 = df[
-    (df["date"].dt.year == 2025) &
-    (df["date"].dt.month == 9) &
-    (df["date"].dt.day <= n)
+sep25 = df_mostrar[
+    (df_mostrar["date"].dt.year == 2025) &
+    (df_mostrar["date"].dt.month == 9) &
+    (df_mostrar["date"].dt.day <= n)
 ].sort_values("date")
 
 aug_acc = aug["ecommerce_tax"].sum()
@@ -510,7 +513,7 @@ finde_tabla["participacion"] = (
 # Usamos TODO el historial cargado (no solo el mes en curso) para poder
 # comparar el finde más reciente contra el anterior aunque estemos al
 # principio del mes y todavía no haya un segundo finde en septiembre.
-findesema_rows = df[df["date"].dt.weekday.isin([4, 5, 6])].copy()
+findesema_rows = df_mostrar[df_mostrar["date"].dt.weekday.isin([4, 5, 6])].copy()
 findesema_rows["finde_inicio"] = findesema_rows["date"] - pd.to_timedelta(
     (findesema_rows["date"].dt.weekday - 4) % 7, unit="D"
 )
