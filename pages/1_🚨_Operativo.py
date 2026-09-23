@@ -456,12 +456,24 @@ def get_shared_bytes(uploaded_file, shared_path):
 
 FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]
 
+# Guarda el motivo puntual por el que no se pudo conectar (para mostrarlo en
+# pantalla mientras estamos activando esto por primera vez). No es sensible
+# — solo dice qué falló, nunca la clave en sí. Va detrás de cache_resource
+# (en vez de ser un dict suelto a nivel de módulo) para que el mismo objeto
+# sobreviva entre re-renders — si no, como Streamlit vuelve a ejecutar todo
+# el archivo en cada interacción, un dict suelto se reinicia en cada
+# re-render y pierde el mensaje apenas _gsheets_client() queda cacheada.
+@st.cache_resource(show_spinner=False)
+def _gsheets_debug_box():
+    return {"msg": None}
+
 @st.cache_resource(show_spinner=False)
 def _gsheets_client():
     """Cliente autenticado contra Google Sheets, o None si todavía no se
     cargaron las credenciales en Secrets (la app sigue funcionando igual,
     solo que sin el ranking mensual acumulado)."""
     if not _GSHEETS_LIB_OK:
+        _gsheets_debug_box()["msg"] = "La librería gspread no se instaló (revisá requirements.txt)."
         return None
     try:
         # Forma simple: pegaste el .json de la cuenta de servicio entero en
@@ -478,8 +490,11 @@ def _gsheets_client():
             "https://www.googleapis.com/auth/drive",
         ]
         creds = _GCreds.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception:
+        client = gspread.authorize(creds)
+        _gsheets_debug_box()["msg"] = None
+        return client
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error de credenciales ({type(e).__name__}): {e}"
         return None
 
 def _faltantes_log_ws():
@@ -490,6 +505,7 @@ def _faltantes_log_ws():
         return None
     sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
     if not sheet_id:
+        _gsheets_debug_box()["msg"] = "Falta FALTANTES_SHEET_ID en Secrets."
         return None
     try:
         sh = client.open_by_key(sheet_id)
@@ -498,8 +514,10 @@ def _faltantes_log_ws():
         except gspread.exceptions.WorksheetNotFound:
             ws = sh.add_worksheet(title="HistorialFaltantes", rows=2000, cols=len(FALTANTES_LOG_HEADERS))
             ws.append_row(FALTANTES_LOG_HEADERS)
+        _gsheets_debug_box()["msg"] = None
         return ws
-    except Exception:
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
         return None
 
 def log_faltantes_to_sheet(faltantes_df, fecha_str):
@@ -1938,10 +1956,15 @@ if any_data_loaded:
     )
     log_df = load_faltantes_log()
     if log_df is None:
+        _debug_msg = _gsheets_debug_box().get("msg")
+        _debug_html = (
+            f'<div style="font-size:11px;color:#b0413e;margin-top:8px;font-family:monospace;">{_debug_msg}</div>'
+            if _debug_msg else ""
+        )
         st.markdown(
             '<div class="empty-box">Este ranking todavía no está conectado — hace falta activar '
             'el historial en Google Sheets (una configuración única) para que empiece a acumular '
-            'mes a mes.</div>',
+            'mes a mes.' + _debug_html + '</div>',
             unsafe_allow_html=True
         )
     elif not len(log_df):
