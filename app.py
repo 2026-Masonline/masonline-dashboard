@@ -368,11 +368,6 @@ def replace_period(uploaded_file, year, month, label):
             )
 
     except Exception as e:
-        st.error(f"{label}: error al procesar el archivo: {e}")
-
-        st.success(f"{label}: {len(incoming)} días cargados correctamente.")
-
-    except Exception as e:
         st.error(f"{label}: no pude procesar el Excel: {e}")
 
 replace_period(upload_current, 2026, 9, "Mes en curso")
