@@ -217,6 +217,44 @@ def _gsheets_client():
         _gsheets_debug_box()["msg"] = f"Error de credenciales ({type(e).__name__}): {e}"
         return None
 
+# Código de depósito (warehouseRefId, tal como viene en "Data Picker") -> nombre
+# de tienda. Sacado del listado "Picker x tienda" que subió Emi. Un código que
+# no esté acá (por ejemplo uno nuevo, o un centro que no es de venta al público)
+# simplemente se muestra tal cual, sin romper nada.
+TIENDA_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+def tienda_nombre(codigo):
+    codigo = norm_txt(codigo)
+    return TIENDA_MAP.get(codigo, codigo)
+
 PICKER_LOG_HEADERS = [
     "Fecha", "Picker", "Deposito", "Pedidos", "Unidades",
     "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"
@@ -256,6 +294,8 @@ def load_pickers_log():
     df = pd.DataFrame(records) if records else pd.DataFrame(columns=PICKER_LOG_HEADERS)
     if "Fecha" in df.columns:
         df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+    if "Deposito" in df.columns:
+        df["Tienda"] = df["Deposito"].apply(tienda_nombre)
     for c in ["Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -310,7 +350,7 @@ if reporte_bytes is not None:
     if df_picker_raw is not None:
         d = df_picker_raw.copy()
         d["Picker"] = (d["firstName"].apply(norm_txt) + " " + d["lastName"].apply(norm_txt)).str.strip()
-        d["Depósito"] = d["warehouseRefId"].apply(norm_txt)
+        d["Tienda"] = d["warehouseRefId"].apply(tienda_nombre)
         d["Pedidos"] = pd.to_numeric(d["orders"], errors="coerce").fillna(0)
         d["Unidades"] = pd.to_numeric(d["items"], errors="coerce").fillna(0)
         d["Rendimiento"] = pd.to_numeric(d["performance"], errors="coerce")
@@ -319,7 +359,7 @@ if reporte_bytes is not None:
         d["Fill Rate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
         d = d[d["Picker"] != ""]
         pickers_all = d[[
-            "Picker", "Depósito", "Pedidos", "Unidades",
+            "Picker", "Tienda", "Pedidos", "Unidades",
             "Rendimiento", "Rend. picking", "Found Rate", "Fill Rate"
         ]].sort_values("Unidades", ascending=False)
     elif xl_reporte is not None:
@@ -339,9 +379,9 @@ log_df = load_pickers_log()
 
 tiendas = set()
 if pickers_all is not None:
-    tiendas.update([t for t in pickers_all["Depósito"].unique() if t])
-if log_df is not None and len(log_df) and "Deposito" in log_df.columns:
-    tiendas.update([t for t in log_df["Deposito"].unique() if t])
+    tiendas.update([t for t in pickers_all["Tienda"].unique() if t])
+if log_df is not None and len(log_df) and "Tienda" in log_df.columns:
+    tiendas.update([t for t in log_df["Tienda"].unique() if t])
 tiendas = sorted(tiendas)
 
 if log_df is not None and len(log_df) and log_df["FechaDt"].notna().any():
@@ -353,7 +393,7 @@ else:
 
 f1, f2, f3 = st.columns([2, 1, 1])
 with f1:
-    filtro_tienda = st.selectbox("Tienda / Depósito", ["Todas"] + tiendas, key="pickers_filtro_tienda")
+    filtro_tienda = st.selectbox("Tienda", ["Todas"] + tiendas, key="pickers_filtro_tienda")
 with f2:
     filtro_desde = st.date_input("Desde", value=min_date, min_value=min_date, max_value=max_date, key="pickers_desde")
 with f3:
@@ -364,13 +404,13 @@ if filtro_desde > filtro_hasta:
 
 pickers = pickers_all
 if pickers is not None and filtro_tienda != "Todas":
-    pickers = pickers[pickers["Depósito"] == filtro_tienda]
+    pickers = pickers[pickers["Tienda"] == filtro_tienda]
 
 log_filtrado = None
 if log_df is not None and len(log_df):
     log_filtrado = log_df.copy()
     if filtro_tienda != "Todas":
-        log_filtrado = log_filtrado[log_filtrado["Deposito"] == filtro_tienda]
+        log_filtrado = log_filtrado[log_filtrado["Tienda"] == filtro_tienda]
     log_filtrado = log_filtrado[
         (log_filtrado["FechaDt"].dt.date >= filtro_desde) & (log_filtrado["FechaDt"].dt.date <= filtro_hasta)
     ]
@@ -384,8 +424,7 @@ st.markdown(
     '<div class="section-desc">Ordenado por unidades pickeadas, de mayor a menor (siempre el último '
     'Reporte diario subido — el filtro de fechas no aplica acá, solo el de tienda). '
     '"Rendimiento" es la columna "performance" del export (unidades/hora estimadas) — en pickers con '
-    'muy pocos pedidos ese número puede salir muy alto o muy bajo, así que conviene mirarlo junto a Pedidos/Unidades. '
-    '"Depósito" es el código interno del depósito (no tenemos el nombre mapeado todavía).</div>',
+    'muy pocos pedidos ese número puede salir muy alto o muy bajo, así que conviene mirarlo junto a Pedidos/Unidades.</div>',
     unsafe_allow_html=True
 )
 
@@ -435,13 +474,12 @@ st.markdown(
 
 if log_filtrado is not None and len(log_filtrado):
     periodo = log_filtrado.groupby("Picker", as_index=False).agg(
-        Deposito=("Deposito", "first"),
+        Tienda=("Tienda", "first"),
         Dias=("Fecha", "nunique"),
         Pedidos=("Pedidos", "sum"),
         Unidades=("Unidades", "sum"),
         Rendimiento=("Rendimiento", "mean"),
     ).sort_values("Unidades", ascending=False)
-    periodo = periodo.rename(columns={"Deposito": "Depósito"})
 
     ptop = periodo.head(20).copy()
     ptop["Rendimiento"] = ptop["Rendimiento"].apply(num1)
@@ -520,14 +558,14 @@ else:
             st.write(
                 table_html(
                     log_filtrado.sort_values("FechaDt", ascending=False)
-                    [["Fecha", "Picker", "Deposito", "Pedidos", "Unidades", "Rendimiento", "FoundRate", "FillRate"]]
+                    [["Fecha", "Picker", "Tienda", "Pedidos", "Unidades", "Rendimiento", "FoundRate", "FillRate"]]
                 ),
                 unsafe_allow_html=True
             )
 
     csv_bytes = (
         log_filtrado.sort_values("FechaDt")
-        [["Fecha", "Picker", "Deposito", "Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]]
+        [["Fecha", "Picker", "Tienda", "Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]]
         .to_csv(index=False).encode("utf-8-sig")
     )
     st.download_button(
