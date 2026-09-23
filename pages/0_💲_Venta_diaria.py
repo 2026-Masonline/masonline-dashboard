@@ -192,6 +192,7 @@ if current.empty:
 latest = current.iloc[-1]
 prev = current.iloc[-2] if len(current) > 1 else None
 is_monday = arg_today.weekday() == 0
+share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
 # Buscamos el Sábado más reciente con datos cargados (y el Viernes anterior),
 # sin asumir que "hoy" es Lunes: así funciona sin importar qué día se abra el dashboard.
@@ -396,6 +397,9 @@ st.markdown(f"""
   <div class="hero-date">
     Septiembre 2026
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -851,8 +855,6 @@ with tab1:
     """, unsafe_allow_html=True)
 
     # ---- Resumen visual: Compañía vs Ecommerce (Diario / Mensual) ----
-    share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
-
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;">
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
@@ -1043,8 +1045,6 @@ with tab2:
         unsafe_allow_html=True
     )
 
-    share_daily_gdn = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
-
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;">
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
@@ -1078,7 +1078,7 @@ with tab2:
         </div>
         <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
           <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE DIARIO</span>
-          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_daily_gdn)}</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_daily)}</span>
         </div>
       </div>
 
