@@ -297,10 +297,10 @@ else:
     """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
-# Parse "Data Picker"
+# Parse "Data Picker" (ranking de hoy, sin filtrar todavía)
 # ---------------------------------------------------------------------
 
-pickers = None
+pickers_all = None
 if reporte_bytes is not None:
     xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes))
     name, df_picker_raw = find_sheet(
@@ -318,7 +318,7 @@ if reporte_bytes is not None:
         d["Found Rate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
         d["Fill Rate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
         d = d[d["Picker"] != ""]
-        pickers = d[[
+        pickers_all = d[[
             "Picker", "Depósito", "Pedidos", "Unidades",
             "Rendimiento", "Rend. picking", "Found Rate", "Fill Rate"
         ]].sort_values("Unidades", ascending=False)
@@ -329,13 +329,60 @@ if reporte_bytes is not None:
             unsafe_allow_html=True
         )
 
+log_df = load_pickers_log()
+
+# ---------------------------------------------------------------------
+# Filtros: Tienda/Depósito y rango de fechas (desde/hasta). El de tienda
+# se aplica al ranking de hoy y al historial; el de fechas solo tiene
+# sentido en el historial (el ranking de hoy es siempre el último día).
+# ---------------------------------------------------------------------
+
+tiendas = set()
+if pickers_all is not None:
+    tiendas.update([t for t in pickers_all["Depósito"].unique() if t])
+if log_df is not None and len(log_df) and "Deposito" in log_df.columns:
+    tiendas.update([t for t in log_df["Deposito"].unique() if t])
+tiendas = sorted(tiendas)
+
+if log_df is not None and len(log_df) and log_df["FechaDt"].notna().any():
+    min_date = log_df["FechaDt"].min().date()
+    max_date = log_df["FechaDt"].max().date()
+else:
+    _hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+    min_date = max_date = _hoy
+
+f1, f2, f3 = st.columns([2, 1, 1])
+with f1:
+    filtro_tienda = st.selectbox("Tienda / Depósito", ["Todas"] + tiendas, key="pickers_filtro_tienda")
+with f2:
+    filtro_desde = st.date_input("Desde", value=min_date, min_value=min_date, max_value=max_date, key="pickers_desde")
+with f3:
+    filtro_hasta = st.date_input("Hasta", value=max_date, min_value=min_date, max_value=max_date, key="pickers_hasta")
+
+if filtro_desde > filtro_hasta:
+    st.warning("La fecha 'Desde' es posterior a 'Hasta' — invertí las fechas para ver resultados.")
+
+pickers = pickers_all
+if pickers is not None and filtro_tienda != "Todas":
+    pickers = pickers[pickers["Depósito"] == filtro_tienda]
+
+log_filtrado = None
+if log_df is not None and len(log_df):
+    log_filtrado = log_df.copy()
+    if filtro_tienda != "Todas":
+        log_filtrado = log_filtrado[log_filtrado["Deposito"] == filtro_tienda]
+    log_filtrado = log_filtrado[
+        (log_filtrado["FechaDt"].dt.date >= filtro_desde) & (log_filtrado["FechaDt"].dt.date <= filtro_hasta)
+    ]
+
 # ---------------------------------------------------------------------
 # Ranking de hoy
 # ---------------------------------------------------------------------
 
 st.markdown(
     '<div class="section">🏆 Ranking de pickers — hoy</div>'
-    '<div class="section-desc">Ordenado por unidades pickeadas, de mayor a menor. '
+    '<div class="section-desc">Ordenado por unidades pickeadas, de mayor a menor (siempre el último '
+    'Reporte diario subido — el filtro de fechas no aplica acá, solo el de tienda). '
     '"Rendimiento" es la columna "performance" del export (unidades/hora estimadas) — en pickers con '
     'muy pocos pedidos ese número puede salir muy alto o muy bajo, así que conviene mirarlo junto a Pedidos/Unidades. '
     '"Depósito" es el código interno del depósito (no tenemos el nombre mapeado todavía).</div>',
@@ -369,8 +416,55 @@ if pickers is not None and len(pickers):
                 full["Pedidos"] = full["Pedidos"].apply(num0)
                 full["Unidades"] = full["Unidades"].apply(num0)
                 st.write(table_html(full), unsafe_allow_html=True)
+elif pickers_all is not None:
+    st.markdown('<div class="empty-box">Sin pickers para esta tienda en el último reporte.</div>', unsafe_allow_html=True)
 elif reporte_bytes is not None:
     st.markdown('<div class="empty-box">No encontré datos de pickers en el Reporte diario subido.</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Ranking del período (acumulado del rango de fechas elegido)
+# ---------------------------------------------------------------------
+
+st.markdown(
+    '<div class="section">📊 Ranking del período elegido</div>'
+    f'<div class="section-desc">Acumulado entre el {filtro_desde.strftime("%d/%m/%Y")} y el '
+    f'{filtro_hasta.strftime("%d/%m/%Y")}{"" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"}, '
+    'sumando todos los Reportes diarios subidos en ese rango.</div>',
+    unsafe_allow_html=True
+)
+
+if log_filtrado is not None and len(log_filtrado):
+    periodo = log_filtrado.groupby("Picker", as_index=False).agg(
+        Deposito=("Deposito", "first"),
+        Dias=("Fecha", "nunique"),
+        Pedidos=("Pedidos", "sum"),
+        Unidades=("Unidades", "sum"),
+        Rendimiento=("Rendimiento", "mean"),
+    ).sort_values("Unidades", ascending=False)
+    periodo = periodo.rename(columns={"Deposito": "Depósito"})
+
+    ptop = periodo.head(20).copy()
+    ptop["Rendimiento"] = ptop["Rendimiento"].apply(num1)
+    ptop["Pedidos"] = ptop["Pedidos"].apply(num0)
+    ptop["Unidades"] = ptop["Unidades"].apply(num0)
+    st.write(table_html(ptop), unsafe_allow_html=True)
+
+    if len(periodo) > 20:
+        with st.expander(f"Ver los {len(periodo)} pickers del período"):
+            with st.container(height=420):
+                pfull = periodo.copy()
+                pfull["Rendimiento"] = pfull["Rendimiento"].apply(num1)
+                pfull["Pedidos"] = pfull["Pedidos"].apply(num0)
+                pfull["Unidades"] = pfull["Unidades"].apply(num0)
+                st.write(table_html(pfull), unsafe_allow_html=True)
+elif log_df is None:
+    st.markdown(
+        '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
+        'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown('<div class="empty-box">Sin datos acumulados para esta tienda y este rango de fechas.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Evolución día a día (historial acumulado en Google Sheets)
@@ -379,11 +473,9 @@ elif reporte_bytes is not None:
 st.markdown(
     '<div class="section">📈 Evolución día a día</div>'
     '<div class="section-desc">Se arma solo, con cada Reporte diario que se suba en Operativo '
-    '(una fila por picker, por día).</div>',
+    '(una fila por picker, por día). Respeta los filtros de tienda y fechas de arriba.</div>',
     unsafe_allow_html=True
 )
-
-log_df = load_pickers_log()
 
 if log_df is None:
     _debug_msg = _gsheets_debug_box().get("msg")
@@ -402,8 +494,10 @@ elif not len(log_df):
         'con cada Reporte diario que subas de acá en adelante.</div>',
         unsafe_allow_html=True
     )
+elif log_filtrado is None or not len(log_filtrado):
+    st.markdown('<div class="empty-box">Sin datos para esta tienda y este rango de fechas.</div>', unsafe_allow_html=True)
 else:
-    diario = log_df.groupby("Fecha", as_index=False).agg(
+    diario = log_filtrado.groupby("Fecha", as_index=False).agg(
         FechaDt=("FechaDt", "first"),
         Pickers=("Picker", "nunique"),
         Pedidos=("Pedidos", "sum"),
@@ -421,23 +515,23 @@ else:
     if len(diario) >= 2:
         st.line_chart(diario.set_index("FechaDt")[["Unidades"]])
 
-    with st.expander(f"Ver historial completo por picker ({len(log_df)} filas)"):
+    with st.expander(f"Ver historial completo por picker ({len(log_filtrado)} filas)"):
         with st.container(height=380):
             st.write(
                 table_html(
-                    log_df.sort_values("FechaDt", ascending=False)
+                    log_filtrado.sort_values("FechaDt", ascending=False)
                     [["Fecha", "Picker", "Deposito", "Pedidos", "Unidades", "Rendimiento", "FoundRate", "FillRate"]]
                 ),
                 unsafe_allow_html=True
             )
 
     csv_bytes = (
-        log_df.sort_values("FechaDt")
+        log_filtrado.sort_values("FechaDt")
         [["Fecha", "Picker", "Deposito", "Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]]
         .to_csv(index=False).encode("utf-8-sig")
     )
     st.download_button(
-        "⬇️ Descargar historial completo (CSV)",
+        "⬇️ Descargar historial filtrado (CSV)",
         data=csv_bytes,
         file_name="pickers_historial.csv",
         mime="text/csv",
