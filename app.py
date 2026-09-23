@@ -232,6 +232,17 @@ def normalize_uploaded_excel(file):
     file.seek(0)
     d = pd.read_excel(file, sheet_name=0, header=header_row)
 
+    # Algunos reportes traen la columna "Nombre" (de la tienda) sin encabezado
+    # propio: pandas la nombra "Unnamed: N" porque en el Excel esa celda está
+    # vacía o combinada. Si eso pasa justo al lado de "Tienda", la tomamos como
+    # "Nombre".
+    if "Tienda" in d.columns and "Nombre" not in d.columns:
+        tienda_idx = d.columns.get_loc("Tienda")
+        if tienda_idx + 1 < len(d.columns):
+            next_col = d.columns[tienda_idx + 1]
+            if str(next_col).startswith("Unnamed"):
+                d = d.rename(columns={next_col: "Nombre"})
+
     required = [
         "Fecha",
         "Facturacion",
