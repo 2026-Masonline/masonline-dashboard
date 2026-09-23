@@ -574,7 +574,9 @@ body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Ro
 </html>"""
 
 # ---------------------------------------------------------------------
-# Header + uploaders
+# Header — esta página no tiene uploaders propios: siempre muestra el
+# último "Reporte diario.xlsx" y Faltantes que se hayan subido en la
+# pestaña Operativo (mismo archivo compartido, ver get_shared_bytes).
 # ---------------------------------------------------------------------
 
 st.markdown("""
@@ -586,47 +588,28 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-padding:12px 16px;margin-bottom:14px;">
-  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
-    CARGAR REPORTES
-  </div>
-  <div style="font-size:12px;color:#6b7280;">
-    Subí el "Reporte diario.xlsx" completo (Pedidos +72h, Reclamos, On Time, Fill Rate,
-    Cancelados) y, aparte, el archivo de Faltantes. Con eso arma el Top 5 de cada categoría,
-    listo para bajar y mandar a las tiendas.
-  </div>
-</div>
-""", unsafe_allow_html=True)
+reporte_bytes, _ = get_shared_bytes(None, SHARED_REPORTE_PATH)
+faltantes_bytes, _ = get_shared_bytes(None, SHARED_FALTANTES_PATH)
 
-def upload_box(col, title, help_text, key):
-    with col:
-        st.markdown(f"""
-        <div class="upload-box">
-          <div class="upload-title">{title}</div>
-          <div class="upload-text">{help_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
-
-u1, u2 = st.columns([3, 1])
-f_reporte = upload_box(
-    u1, "REPORTE DIARIO COMPLETO",
-    "El Reporte diario.xlsx de siempre, con todas las hojas: Pedidos +72h, Reclamos, On Time y Fill Rate.",
-    "resumen_f_reporte"
-)
-f_faltantes = upload_box(u2, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "resumen_f_faltantes")
-
-reporte_bytes, reporte_es_nuevo = get_shared_bytes(f_reporte, SHARED_REPORTE_PATH)
-faltantes_bytes, faltantes_es_nuevo = get_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
-
-if (reporte_bytes is not None and not reporte_es_nuevo) or (faltantes_bytes is not None and not faltantes_es_nuevo):
+if reporte_bytes is not None or faltantes_bytes is not None:
     st.markdown(
-        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
-        '● Mostrando el último reporte que subieron — no hace falta que subas nada para verlo actualizado.</div>',
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
+        '● Mostrando el último reporte subido en la pestaña Operativo — no hace falta subir nada acá.</div>',
         unsafe_allow_html=True
     )
+else:
+    st.markdown("""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:12px 16px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+        TODAVÍA NO HAY DATOS CARGADOS
+      </div>
+      <div style="font-size:12px;color:#6b7280;">
+        Subí el "Reporte diario.xlsx" y el archivo de Faltantes en la pestaña
+        <b>Operativo</b>. Esta página va a mostrar el Top 5 automáticamente con esos mismos datos.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
