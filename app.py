@@ -317,16 +317,7 @@ def replace_period(uploaded_file, year, month, label):
 
                 sha = github_file["sha"]
 
-                # No guardar el día actual si todavía está en curso
-                arg_today = datetime.now(
-                    ZoneInfo("America/Argentina/Buenos_Aires")
-                ).date()
-
-                save_df = df[
-                    df["date"].dt.date < arg_today
-                ].copy()
-
-                save_df = save_df.sort_values("date")
+                save_df = df.sort_values("date")
 
                 csv_text = save_df.to_csv(
                     index=False,
@@ -388,12 +379,10 @@ replace_period(upload_current, 2026, 9, "Mes en curso")
 replace_period(upload_prev, 2026, 8, "Mes anterior")
 replace_period(upload_ly, 2025, 9, "Mismo período año pasado")
 
-# Siempre mostramos el último día cerrado en Argentina.
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"]).copy()
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df = df[df["date"].dt.date < arg_today].copy()
 
 current = df[
     (df["date"].dt.year == 2026) &
