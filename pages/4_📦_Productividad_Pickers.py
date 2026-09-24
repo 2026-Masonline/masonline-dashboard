@@ -100,6 +100,14 @@ APP_CSS = """
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    .kpi-row { display:flex; gap:14px; margin-top:6px; flex-wrap:wrap; }
+    .kpi {
+        background:#fafaf8; border:1px solid #eef0ef; border-radius:12px;
+        padding:14px 18px; flex:1; min-width:150px;
+    }
+    .kpi .label { color:#6b7280; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .kpi .value { color:#ff5a1f; font-size:26px; font-weight:800; margin-top:6px; }
+
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -107,6 +115,8 @@ APP_CSS = """
         .section { font-size: 16px; margin: 20px 0 4px; }
         table.dashtable { font-size: 12px; }
         table.dashtable thead th, table.dashtable tbody td { padding: 7px 8px; }
+        .kpi { min-width: 130px; padding: 12px 14px; }
+        .kpi .value { font-size: 22px; }
     }
 """
 
@@ -170,6 +180,14 @@ def num0(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     return f"{v:,.0f}".replace(",", ".")
+
+def kpi_card(label, value):
+    return (
+        '<div class="kpi">'
+        '<div class="label">' + str(label) + '</div>'
+        '<div class="value">' + str(value) + '</div>'
+        '</div>'
+    )
 
 # ---------------------------------------------------------------------
 # Archivo compartido: esta pestaña NO tiene uploader propio. Usa el último
@@ -431,11 +449,15 @@ else:
     dia_df = dia_df.sort_values("Unidades", ascending=False)
 
     if len(dia_df):
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Pickers activos", num0(dia_df["Picker"].nunique()))
-        c2.metric("Pedidos totales", num0(dia_df["Pedidos"].sum()))
-        c3.metric("Unidades totales", num0(dia_df["Unidades"].sum()))
-        c4.metric("Rendimiento promedio", num1(dia_df["Rendimiento"].mean()))
+        kpi_html = (
+            '<div class="kpi-row">'
+            + kpi_card("Pickers activos", num0(dia_df["Picker"].nunique()))
+            + kpi_card("Pedidos totales", num0(dia_df["Pedidos"].sum()))
+            + kpi_card("Unidades totales", num0(dia_df["Unidades"].sum()))
+            + kpi_card("Rendimiento promedio", num1(dia_df["Rendimiento"].mean()))
+            + '</div>'
+        )
+        st.markdown(kpi_html, unsafe_allow_html=True)
 
         # Cuadro chico: Top 10 mejores pickers (más unidades pickeadas), con
         # solo lo esencial — Tienda, Picker, Pedidos, Unidades y Fill Rate.
