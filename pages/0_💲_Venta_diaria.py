@@ -76,6 +76,35 @@ st.markdown("""
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    .rank-table-card {
+        background: white; border-radius: 14px; overflow: hidden;
+        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        height: 100%;
+    }
+    .rank-table-header {
+        display: flex; align-items: center; gap: 12px;
+        padding: 16px 20px; border-bottom: 1px solid #eef1f4;
+    }
+    .rank-table-icon {
+        width: 36px; height: 36px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 18px; flex-shrink: 0;
+    }
+    .rank-table-title { font-size: 16px; font-weight: 800; color: #20252b; }
+    table.rank-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.rank-table thead th {
+        background: #eaf2fc; color: #1f5aa8; font-weight: 700;
+        padding: 10px 14px; text-align: left; white-space: nowrap;
+    }
+    table.rank-table td {
+        padding: 12px 14px; border-top: 1px solid #f1f3f5; color: #20252b;
+    }
+    .rank-badge {
+        width: 28px; height: 28px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-weight: 800; font-size: 13px;
+    }
+
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -305,7 +334,6 @@ def top_bottom_tiendas(metric, n=5):
     return mejores, peores
 
 top_venta, bottom_venta = top_bottom_tiendas("ecommerce_tax")
-top_pedidos, bottom_pedidos = top_bottom_tiendas("orders")
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -997,90 +1025,81 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    def tiendas_bar(df_in, metric, color, texttemplate):
-        chart_df = df_in.copy()
-        chart_df["etiqueta"] = chart_df["Tienda"] + " - " + chart_df["Nombre"]
-        chart_df = chart_df.sort_values(metric)
+    def tienda_rank_table_html(rows_df, icon, icon_bg, icon_color, badge_bg, badge_color, titulo):
+        header = f"""
+        <div class="rank-table-header">
+          <div class="rank-table-icon" style="background:{icon_bg};color:{icon_color};">{icon}</div>
+          <div class="rank-table-title">{titulo}</div>
+        </div>
+        """
+        if not len(rows_df):
+            return f"""
+            <div class="rank-table-card">
+              {header}
+              <div style="padding:20px;color:#9ca3af;font-size:13px;">
+                Todavía no hay datos por tienda para este mes. Se completa automáticamente
+                la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).
+              </div>
+            </div>
+            """
 
-        fig = px.bar(
-            chart_df,
-            x=metric,
-            y="etiqueta",
-            orientation="h",
-            labels={metric: "", "etiqueta": ""},
-            text=metric
-        )
-        fig.update_traces(
-            texttemplate=texttemplate,
-            textposition="outside",
-            marker_color=color
-        )
-        fig.update_layout(
-            height=320,
-            margin=dict(l=10, r=10, t=10, b=10),
-            showlegend=False,
-        )
-        return fig
+        rows_html = ""
+        for i, r in enumerate(rows_df.itertuples(), start=1):
+            nombre = str(r.Nombre) if r.Nombre else ""
+            tienda_label = f"{r.Tienda} - {nombre}" if nombre else str(r.Tienda)
+            rows_html += f"""
+            <tr>
+              <td><span class="rank-badge" style="background:{badge_bg};color:{badge_color};">{i}</span></td>
+              <td>{html.escape(tienda_label)}</td>
+              <td style="text-align:center;">{intfmt(r.orders)}</td>
+              <td style="text-align:right;font-weight:800;">{money(r.ecommerce_tax)}</td>
+            </tr>
+            """
 
-    def tiendas_section(titulo, descripcion, mejores, peores, metric, color_mejor, color_peor, texttemplate, xaxis_kwargs=None):
-        st.markdown(f'<div class="section">{titulo}</div>', unsafe_allow_html=True)
+        return f"""
+        <div class="rank-table-card">
+          {header}
+          <div class="table-scroll">
+          <table class="rank-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Tienda</th>
+                <th style="text-align:center;">Pedidos eCommerce</th>
+                <th style="text-align:right;">Venta eCommerce (con impuesto)</th>
+              </tr>
+            </thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+          </div>
+        </div>
+        """
+
+    st.markdown('<div class="section">Tiendas eCommerce - Mes en curso</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Ranking por venta ecommerce acumulada del mes en curso, con pedidos de cada tienda.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    rc1, rc2 = st.columns(2)
+    with rc1:
         st.markdown(
-            f'<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-            f'{descripcion}</div>',
+            tienda_rank_table_html(
+                top_venta, "🏆", "#dceefb", "#1f5aa8", "#dceefb", "#1f5aa8",
+                "Las 5 mejores"
+            ),
             unsafe_allow_html=True
         )
-        if not len(tiendas_resumen):
-            st.markdown(
-                '<div class="upload-text" style="padding-bottom:14px;">'
-                'Todavía no hay datos por tienda para este mes. Se completa automáticamente '
-                'la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).'
-                '</div>',
-                unsafe_allow_html=True
-            )
-            return
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(
-                '<div style="font-size:12px;font-weight:800;color:#6b7280;'
-                'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">'
-                '🏆 Las 5 mejores</div>',
-                unsafe_allow_html=True
-            )
-            st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-            fig_mejores = tiendas_bar(mejores, metric, color_mejor, texttemplate)
-            if xaxis_kwargs:
-                fig_mejores.update_layout(**xaxis_kwargs)
-            st.plotly_chart(fig_mejores, use_container_width=True, config={"displaylogo": False})
-            st.markdown("</div>", unsafe_allow_html=True)
-        with c2:
-            st.markdown(
-                '<div style="font-size:12px;font-weight:800;color:#6b7280;'
-                'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">'
-                '⚠️ Las 5 peores</div>',
-                unsafe_allow_html=True
-            )
-            st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-            fig_peores = tiendas_bar(peores, metric, color_peor, texttemplate)
-            if xaxis_kwargs:
-                fig_peores.update_layout(**xaxis_kwargs)
-            st.plotly_chart(fig_peores, use_container_width=True, config={"displaylogo": False})
-            st.markdown("</div>", unsafe_allow_html=True)
-
-    tiendas_section(
-        "Tiendas por venta ecommerce",
-        "Venta ecommerce acumulada del mes en curso, por tienda",
-        top_venta, bottom_venta, "ecommerce_tax",
-        "#2f9e66", "#d03b3b", "$%{text:,.0f}",
-        xaxis_kwargs=dict(xaxis_tickprefix="$", xaxis_tickformat=",.0f"),
-    )
-
-    tiendas_section(
-        "Tiendas por cantidad de pedidos",
-        "Pedidos ecommerce acumulados del mes en curso, por tienda",
-        top_pedidos, bottom_pedidos, "orders",
-        "#2f9e66", "#d03b3b", "%{text:,.0f}",
-    )
+    with rc2:
+        st.markdown(
+            tienda_rank_table_html(
+                bottom_venta, "⚠️", "#fbdede", "#b91c1c", "#fbdede", "#b91c1c",
+                "Las 5 peores"
+            ),
+            unsafe_allow_html=True
+        )
 
     st.markdown(
         '<div class="footer">'
