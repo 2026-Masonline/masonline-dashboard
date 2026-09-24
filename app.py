@@ -143,6 +143,16 @@ except Exception as e:
 # Desglose por tienda (para "Top 10 tiendas" en Venta diaria). Es un archivo
 # aparte, "data_tiendas.csv", que puede no existir todavía la primera vez.
 TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
+
+def _empty_tiendas_df():
+    """DataFrame vacío con las columnas de data_tiendas.csv, pero con "date"
+    ya tipado como fecha — si no, cualquier filtro con .dt más adelante
+    explota con 'Can only use .dt accessor with datetimelike values' apenas
+    data_tiendas.csv todavía no existe en el repo (primera vez)."""
+    empty = pd.DataFrame(columns=TIENDAS_COLUMNS)
+    empty["date"] = pd.to_datetime(empty["date"])
+    return empty
+
 try:
     if DATA_TIENDAS_FILE.exists():
         base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
@@ -152,9 +162,9 @@ try:
             base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
         base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
     else:
-        base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+        base_df_tiendas = _empty_tiendas_df()
 except Exception:
-    base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+    base_df_tiendas = _empty_tiendas_df()
 
 st.markdown("""
 <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
@@ -308,7 +318,7 @@ def normalize_uploaded_excel(file):
     # Desglose por tienda, para "Top 10 tiendas" en Venta diaria. Si el
     # archivo no trae columna "Tienda" (no debería pasar), seguimos igual,
     # simplemente sin el desglose para ese archivo.
-    out_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+    out_tiendas = _empty_tiendas_df()
     if "Tienda" in d.columns:
         dt = d.copy()
         dt["Tienda"] = dt["Tienda"].apply(norm_tienda_code)
