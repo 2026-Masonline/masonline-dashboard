@@ -1,5 +1,6 @@
 import re
 import io
+import base64
 import tempfile
 import unicodedata
 from pathlib import Path
@@ -121,6 +122,16 @@ APP_CSS = """
     .kpi.good .value { color:#0ca30c; }
     .kpi.warn .value { color:#c98500; }
     .kpi.crit .value { color:#d03b3b; }
+
+    a.kpi-link { text-decoration: none; display: block; }
+    a.kpi-link .kpi { cursor: pointer; transition: box-shadow .15s, transform .15s; position: relative; }
+    a.kpi-link .kpi::after {
+        content: "⬇ HTML"; position: absolute; top: 10px; right: 12px;
+        font-size: 9.5px; font-weight: 700; color: #ff5a1f; opacity: 0;
+        transition: opacity .15s; letter-spacing: .03em;
+    }
+    a.kpi-link:hover .kpi { box-shadow: 0 6px 18px rgba(0,0,0,.14); transform: translateY(-2px); }
+    a.kpi-link:hover .kpi::after { opacity: 1; }
 
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
@@ -608,6 +619,60 @@ body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Ro
 </body>
 </html>"""
 
+def export_section_html(now_ref, section_title, section_desc, body_html):
+    """Arma un HTML standalone (con el mismo look del panel) para descargar
+    una sola sección — usado para el detalle que se baja clickeando una
+    tarjeta KPI en vez de mostrarse en pantalla."""
+    if not body_html:
+        return None
+    corte_html = ""
+    if now_ref is not None:
+        corte_html = (
+            '<div class="hero-date">Corte del reporte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y %H:%M")}</small></div>'
+        )
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MásOnline · {section_title}</title>
+<style>
+{APP_CSS}
+body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }}
+.wrap {{ max-width: 1400px; margin: 0 auto; padding: 0 20px 28px; }}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div>
+    <div class="hero-brand">📋 Resumen</div>
+    <div class="hero-sub">{section_title.upper()}</div>
+  </div>
+  {corte_html}
+</div>
+<div class="wrap">
+{section_block(section_title, section_desc, body_html)}
+</div>
+</body>
+</html>"""
+
+def kpi_link_wrap(inner_html, html_doc, filename):
+    """Envuelve una tarjeta KPI en un link que descarga el HTML de esa
+    sección al clickearla (en vez de mostrar el detalle abajo en pantalla)."""
+    if not html_doc:
+        return inner_html
+    b64 = base64.b64encode(html_doc.encode("utf-8")).decode("utf-8")
+    return (
+        f'<a class="kpi-link" href="data:text/html;base64,{b64}" download="{filename}" '
+        'title="Descargar el detalle como HTML">' + inner_html + '</a>'
+    )
+
+def slug_filename(s):
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^a-zA-Z0-9]+", "_", s).strip("_").lower()
+    return s or "archivo"
+
 # ---------------------------------------------------------------------
 # Header — esta página no tiene uploaders propios: siempre muestra el
 # último "Reporte diario.xlsx" y Faltantes que se hayan subido en la
@@ -1053,14 +1118,54 @@ else:
             label_actual = f"Día actual ({fecha_actual_falt.strftime('%d/%m')})" if fecha_actual_falt is not None else "Día actual"
             label_anterior = f"Día anterior ({fecha_anterior_falt.strftime('%d/%m')})" if fecha_anterior_falt is not None else "Día anterior"
 
-            kpi_html = (
-                '<div class="kpi-row">'
-                + kpi_card("ACUMULADO DEL MES", f"{cantidad_mes}", "Faltantes registrados este mes")
-                + kpi_card(label_anterior.upper(), f"{cantidad_anterior}", "Faltantes ese día", cls="warn" if cantidad_anterior else "good")
-                + kpi_card(label_actual.upper(), f"{cantidad_actual}", "Faltantes ese día", cls="crit" if cantidad_actual else "good")
-                + '</div>'
+            # Detalle de SKUs faltantes por día (Departamento, SKU, Código
+            # Principal) — no se muestra en pantalla: se baja clickeando la
+            # tarjeta de "Día anterior" / "Día actual" (ver kpi_link_wrap).
+            _detail_cols = [c for c in ["Departamento", "Producto", "CodigoPrincipal"] if c in faltantes.columns]
+            _detail_rename = {"Producto": "SKU", "CodigoPrincipal": "Código Principal"}
+
+            def _detalle_dia_html(fecha_ref):
+                if fecha_ref is None:
+                    return None
+                sub = faltantes[_fecha_norm == fecha_ref]
+                if not len(sub):
+                    return None
+                sub = sub[_detail_cols].rename(columns=_detail_rename).sort_values(
+                    "SKU" if "SKU" in _detail_rename.values() else _detail_cols[0]
+                )
+                return table_html(sub)
+
+            _slug_tienda = slug_filename(filtro_tienda)
+            doc_anterior = export_section_html(
+                now_ref,
+                f"Faltantes {filtro_tienda} — {label_anterior}",
+                f"Listado de SKUs marcados como faltante en {filtro_tienda} el {label_anterior.split('(')[-1].rstrip(')')}.",
+                _detalle_dia_html(fecha_anterior_falt)
             )
+            doc_actual = export_section_html(
+                now_ref,
+                f"Faltantes {filtro_tienda} — {label_actual}",
+                f"Listado de SKUs marcados como faltante en {filtro_tienda} el {label_actual.split('(')[-1].rstrip(')')}.",
+                _detalle_dia_html(fecha_actual_falt)
+            )
+
+            card_mes = kpi_card("ACUMULADO DEL MES", f"{cantidad_mes}", "Faltantes registrados este mes")
+            card_anterior = kpi_link_wrap(
+                kpi_card(label_anterior.upper(), f"{cantidad_anterior}", "Faltantes ese día · click para ver el detalle", cls="warn" if cantidad_anterior else "good"),
+                doc_anterior, f"faltantes_{_slug_tienda}_dia_anterior.html"
+            )
+            card_actual = kpi_link_wrap(
+                kpi_card(label_actual.upper(), f"{cantidad_actual}", "Faltantes ese día · click para ver el detalle", cls="crit" if cantidad_actual else "good"),
+                doc_actual, f"faltantes_{_slug_tienda}_dia_actual.html"
+            )
+            kpi_html = '<div class="kpi-row">' + card_mes + card_anterior + card_actual + '</div>'
             st.markdown(kpi_html, unsafe_allow_html=True)
+            if cantidad_anterior or cantidad_actual:
+                st.markdown(
+                    '<div style="font-size:11.5px;color:#6b7280;margin-top:-4px;">'
+                    '⬇ Tocá la tarjeta de "Día anterior" o "Día actual" para bajar el listado completo de SKUs de ese día.</div>',
+                    unsafe_allow_html=True
+                )
 
             agg_sku_tienda = faltantes.groupby("Producto").agg(
                 Apariciones=("Producto", "count"),
@@ -1078,52 +1183,6 @@ else:
             body = kpi_html + (
                 '<div class="resumen-title" style="margin-top:14px;">Top 5 SKU con más faltantes (acumulado del mes)</div>'
                 + html_sku_tienda
-            )
-
-            # Listado detallado: qué faltó puntualmente el día anterior y qué
-            # falta hoy (dos tablas separadas, una por día).
-            _detail_cols = [c for c in ["Departamento", "Producto", "CodigoPrincipal"] if c in faltantes.columns]
-            _detail_rename = {"Producto": "SKU", "CodigoPrincipal": "Código Principal"}
-
-            def _detalle_dia_html(fecha_ref):
-                if fecha_ref is None:
-                    return None
-                sub = faltantes[_fecha_norm == fecha_ref]
-                if not len(sub):
-                    return None
-                sub = sub[_detail_cols].rename(columns=_detail_rename).sort_values(
-                    "SKU" if "SKU" in _detail_rename.values() else _detail_cols[0]
-                )
-                return table_html(sub)
-
-            html_detalle_anterior = _detalle_dia_html(fecha_anterior_falt)
-            html_detalle_actual = _detalle_dia_html(fecha_actual_falt)
-
-            col_det1, col_det2 = st.columns(2)
-            with col_det1:
-                st.markdown(
-                    f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_anterior}</div>',
-                    unsafe_allow_html=True
-                )
-                if html_detalle_anterior:
-                    st.write(html_detalle_anterior, unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="empty-box">Sin faltantes ese día 🎉</div>', unsafe_allow_html=True)
-            with col_det2:
-                st.markdown(
-                    f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_actual}</div>',
-                    unsafe_allow_html=True
-                )
-                if html_detalle_actual:
-                    st.write(html_detalle_actual, unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="empty-box">Sin faltantes ese día 🎉</div>', unsafe_allow_html=True)
-
-            body += (
-                f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_anterior}</div>'
-                + (html_detalle_anterior or '<div class="empty-box">Sin faltantes ese día 🎉</div>')
-                + f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_actual}</div>'
-                + (html_detalle_actual or '<div class="empty-box">Sin faltantes ese día 🎉</div>')
             )
         else:
             st.markdown('<div class="empty-box">Sin faltantes 🎉</div>', unsafe_allow_html=True)
