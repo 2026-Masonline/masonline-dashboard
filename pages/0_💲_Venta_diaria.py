@@ -311,18 +311,26 @@ if len(current_tiendas):
         .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
     )
 
-def top_bottom_tiendas(metric, n_top=10, n_bottom=5):
-    """Devuelve (mejores, peores) ordenadas de forma que al mostrarlas la
-    mejor/peor quede primera."""
-    if not len(tiendas_resumen):
-        vacio = tiendas_resumen.copy()
-        return vacio, vacio
-    ordenado = tiendas_resumen.sort_values(metric, ascending=False)
-    mejores = ordenado.head(n_top).reset_index(drop=True)
-    peores = ordenado.tail(n_bottom).sort_values(metric, ascending=True).reset_index(drop=True)
-    return mejores, peores
+# Mismo "último día cerrado" que usa el resto del dashboard (variable `latest`,
+# calculada más arriba a partir de `current`), para que el cuadro "venta
+# diaria" siempre muestre el día más reciente con datos, no el día en curso.
+latest_tienda_date = latest["date"]
+tiendas_dia = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders"])
+if len(df_tiendas):
+    filas_dia = df_tiendas[df_tiendas["date"] == latest_tienda_date]
+    if len(filas_dia):
+        tiendas_dia = (
+            filas_dia.groupby(["Tienda", "Nombre"], as_index=False)
+            .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
+        )
 
-top_venta, bottom_venta = top_bottom_tiendas("ecommerce_tax", n_top=10, n_bottom=5)
+def top_tiendas(df_in, metric, n=5):
+    if not len(df_in):
+        return df_in.copy()
+    return df_in.sort_values(metric, ascending=False).head(n).reset_index(drop=True)
+
+top_venta_dia = top_tiendas(tiendas_dia, "ecommerce_tax", n=5)
+top_venta_mes = top_tiendas(tiendas_resumen, "ecommerce_tax", n=5)
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -1014,7 +1022,7 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    def tienda_rank_table_html(rows_df, titulo):
+    def tienda_rank_table_html(rows_df, titulo, empty_msg=None):
         # Nota: el HTML se arma en una sola línea por elemento (sin saltos de
         # línea indentados) porque Streamlit interpreta texto indentado con
         # 4+ espacios después de un salto de línea como bloque de código, y
@@ -1025,13 +1033,17 @@ with tab1:
             f'<span>🏆</span><span>{titulo}</span>'
             '</div>'
         )
+        if empty_msg is None:
+            empty_msg = (
+                'Todavía no hay datos por tienda para este período. Se completa '
+                'automáticamente la próxima vez que se suba el Excel desde "app" '
+                '(si trae las columnas Tienda y Nombre).'
+            )
         if not len(rows_df):
             return (
                 f'<div class="rank-table-card">{header}'
-                '<div style="padding:20px;color:#9ca3af;font-size:13px;">'
-                'Todavía no hay datos por tienda para este mes. Se completa automáticamente '
-                'la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).'
-                '</div></div>'
+                f'<div style="padding:20px;color:#9ca3af;font-size:13px;">{empty_msg}</div>'
+                '</div>'
             )
 
         rows_html = ""
@@ -1059,18 +1071,41 @@ with tab1:
             '</div></div>'
         )
 
-    st.markdown('<div class="section">Top 10 tiendas eCommerce - Mes en curso</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section">Top 5 tiendas eCommerce</div>', unsafe_allow_html=True)
     st.markdown(
         '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Ranking por venta ecommerce acumulada del mes en curso, con pedidos de cada tienda.'
+        'Ranking por venta ecommerce, con pedidos de cada tienda.'
         '</div>',
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        tienda_rank_table_html(top_venta, "TOP 10 · VENTA ECOMMERCE"),
-        unsafe_allow_html=True
-    )
+    td1, td2 = st.columns(2)
+    with td1:
+        st.markdown(
+            tienda_rank_table_html(
+                top_venta_dia,
+                f"VENTA DIARIA · TOP 5 ({latest_tienda_date.strftime('%d/%m')})",
+                empty_msg=(
+                    'Todavía no hay datos por tienda para el último día cargado. '
+                    'Se completa automáticamente la próxima vez que se suba el Excel '
+                    'desde "app" (si trae las columnas Tienda y Nombre).'
+                ),
+            ),
+            unsafe_allow_html=True
+        )
+    with td2:
+        st.markdown(
+            tienda_rank_table_html(
+                top_venta_mes,
+                "VENTA MENSUAL · TOP 5",
+                empty_msg=(
+                    'Todavía no hay datos por tienda para el mes en curso. '
+                    'Se completa automáticamente la próxima vez que se suba el Excel '
+                    'desde "app" (si trae las columnas Tienda y Nombre).'
+                ),
+            ),
+            unsafe_allow_html=True
+        )
 
     st.markdown(
         '<div class="footer">'
