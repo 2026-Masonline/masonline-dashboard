@@ -187,6 +187,15 @@ def norm_txt(v):
         return ""
     return str(v).replace("\xa0", " ").strip()
 
+def norm_codigo(v):
+    """Como norm_txt, pero evita que un código (ej. de barras) quede como
+    '7790580146115.0' por venir de una columna numérica del Excel."""
+    if pd.isna(v):
+        return ""
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return norm_txt(v)
+
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
 }
@@ -528,8 +537,15 @@ def _faltantes_log_ws():
         _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
         return None
 
-def log_faltantes_to_sheet(faltantes_df, fecha_str):
-    """Agrega al historial las filas de Faltantes de hoy. Devuelve True si
+def replace_faltantes_meses_en_sheet(faltantes_df):
+    """El archivo de Faltantes ahora siempre trae el mes completo (desde el
+    día 1) con la fecha real de cada fila, en vez de una sola foto del día.
+    Por eso, en vez de simplemente agregar filas (lo que iría duplicando
+    todo lo ya cargado en cada subida), reemplaza en el historial las filas
+    de los meses que trae el archivo nuevo, y deja intactas las de
+    cualquier otro mes que ya estuviera guardado. Requiere que faltantes_df
+    tenga la columna FechaArchivo (fecha real, ya parseada) además de
+    Tienda/Departamento/Producto/CodigoPrincipal/Etiqueta. Devuelve True si
     pudo escribir (o si no había nada para escribir), False si falló la
     conexión con Google Sheets."""
     ws = _faltantes_log_ws()
@@ -537,13 +553,39 @@ def log_faltantes_to_sheet(faltantes_df, fecha_str):
         return False
     if faltantes_df is None or not len(faltantes_df):
         return True
-    rows = [
-        [fecha_str, r.get("Tienda", ""), r.get("Departamento", ""), r.get("Producto", ""),
-         r.get("CodigoPrincipal", ""), r.get("Etiqueta", "")]
-        for _, r in faltantes_df.iterrows()
-    ]
+    rows_df = faltantes_df.dropna(subset=["FechaArchivo"])
+    if not len(rows_df):
+        return True
+
+    meses_nuevos = set(rows_df["FechaArchivo"].dt.strftime("%Y-%m").unique())
+
     try:
-        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        existing = ws.get_all_records()
+    except Exception:
+        existing = []
+
+    keep_rows = []
+    for r in existing:
+        try:
+            fecha_dt = datetime.strptime(str(r.get("Fecha", "")), "%d/%m/%Y")
+        except (ValueError, TypeError):
+            keep_rows.append([r.get(h, "") for h in FALTANTES_LOG_HEADERS])
+            continue
+        if fecha_dt.strftime("%Y-%m") not in meses_nuevos:
+            keep_rows.append([r.get(h, "") for h in FALTANTES_LOG_HEADERS])
+
+    new_rows = [
+        [r["FechaArchivo"].strftime("%d/%m/%Y"), r.get("Tienda", ""), r.get("Departamento", ""),
+         r.get("Producto", ""), r.get("CodigoPrincipal", ""), r.get("Etiqueta", "")]
+        for _, r in rows_df.iterrows()
+    ]
+
+    try:
+        ws.clear()
+        ws.append_row(FALTANTES_LOG_HEADERS)
+        todas = keep_rows + new_rows
+        if todas:
+            ws.append_rows(todas, value_input_option="USER_ENTERED")
         return True
     except Exception:
         return False
@@ -1586,7 +1628,7 @@ if df_faltantes_raw is not None:
         (c for c in ["Codigo Principal", "Código Principal", "CodigoPrincipal", "Codigo_Principal"] if c in d.columns),
         None
     )
-    d["CodigoPrincipal"] = d[_cod_col].apply(norm_txt) if _cod_col else ""
+    d["CodigoPrincipal"] = d[_cod_col].apply(norm_codigo) if _cod_col else ""
     d["DiasSinVenta"] = pd.to_numeric(d.get("Dias sin venta"), errors="coerce")
     d["VentaProm"] = pd.to_numeric(d.get("Venta Promedio Semanal"), errors="coerce").fillna(0)
     alta_col = "ALTA_ROTACION" if "ALTA_ROTACION" in d.columns else "Alerta_Alta_Rotacion"
@@ -1594,6 +1636,9 @@ if df_faltantes_raw is not None:
     d["Etiqueta"] = d.get("Etiqueta_Stock", "").apply(norm_txt)
     d = d[d["Etiqueta"] != ""]
     d[["Sev", "SevLabel"]] = d["AltaRotacion"].apply(lambda a: pd.Series(sev_faltante(a)))
+    # El archivo ahora trae el mes completo (desde el día 1) con la fecha real
+    # de cada fila, no una sola foto del día — de acá sale FechaArchivo.
+    d["FechaArchivo"] = pd.to_datetime(d.get("Fecha"), errors="coerce")
     faltantes = d
 
 # ---- Productividad de Pickers ----
@@ -1634,14 +1679,27 @@ fill_rate = apply_tienda_canon(fill_rate, _canon_map)
 cancelados = apply_tienda_canon(cancelados, _canon_map)
 faltantes = apply_tienda_canon(faltantes, _canon_map)
 
-# ---- Acumular Faltantes de hoy en el historial mensual (Google Sheets) ----
-# Se agrega una sola vez por archivo realmente subido (se controla con un
+# El archivo ahora trae el mes completo (desde el día 1, con fecha real por
+# fila) en vez de una sola foto del día. Para las secciones EN VIVO de esta
+# página (alertas, KPIs, filtro de Auditor/Tienda) nos quedamos solo con la
+# fecha más reciente presente en el archivo — como si fuera "la foto de
+# hoy". El resto del historial (todo el mes) se guarda aparte y se usa más
+# abajo para alimentar el ranking acumulado en Google Sheets.
+faltantes_historial_completo = faltantes
+if (
+    faltantes is not None and len(faltantes)
+    and "FechaArchivo" in faltantes.columns and faltantes["FechaArchivo"].notna().any()
+):
+    faltantes = faltantes[faltantes["FechaArchivo"] == faltantes["FechaArchivo"].max()].copy()
+
+# ---- Acumular Faltantes en el historial mensual (Google Sheets) ----
+# Se escribe una sola vez por archivo realmente subido (se controla con un
 # hash guardado en session_state), no en cada re-render de la página — si no,
-# cada vez que tocás el filtro de Auditor/Tienda se duplicarían las filas.
-if faltantes is not None and faltantes_es_nuevo and len(faltantes):
+# cada vez que tocás el filtro de Auditor/Tienda se volvería a escribir todo.
+if faltantes_historial_completo is not None and faltantes_es_nuevo and len(faltantes_historial_completo):
     _falt_hash = hashlib.md5(faltantes_bytes).hexdigest()
     if st.session_state.get("_faltantes_logged_hash") != _falt_hash:
-        if log_faltantes_to_sheet(faltantes, fecha_hoy_str):
+        if replace_faltantes_meses_en_sheet(faltantes_historial_completo):
             st.session_state["_faltantes_logged_hash"] = _falt_hash
             load_faltantes_log.clear()
 
