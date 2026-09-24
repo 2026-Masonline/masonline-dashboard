@@ -2092,11 +2092,10 @@ if any_data_loaded:
     else:
         st.markdown('<div class="empty-box">Subí el archivo de Faltantes para ver esta sección.</div>', unsafe_allow_html=True)
 
-    # ---- Ranking del mes — SKUs con más faltantes (histórico acumulado) ----
+    # ---- Ranking del mes — tiendas y SKUs con más faltantes (histórico acumulado) ----
     st.markdown(
-        '<div class="section">📈 Ranking del mes — SKUs con más faltantes</div>'
-        '<div class="section-desc">Acumulado de todos los reportes de Faltantes subidos este mes: '
-        'cuántas veces apareció cada SKU en total.</div>',
+        '<div class="section">📈 Ranking del mes — tiendas y SKU con más faltantes</div>'
+        '<div class="section-desc">Acumulado de todos los reportes de Faltantes subidos este mes.</div>',
         unsafe_allow_html=True
     )
     log_df = load_faltantes_log()
@@ -2120,7 +2119,8 @@ if any_data_loaded:
         )
     else:
         mes_inicio = pd.Timestamp(fecha_hoy.replace(day=1))
-        log_mes = log_df[log_df["FechaDt"] >= mes_inicio].copy()
+        log_mes_todas = log_df[log_df["FechaDt"] >= mes_inicio].copy()
+        log_mes = log_mes_todas
         if filtro_tienda is not None:
             log_mes = log_mes[log_mes["Tienda"] == filtro_tienda]
         elif filtro_auditor is not None:
@@ -2132,10 +2132,48 @@ if any_data_loaded:
                 unsafe_allow_html=True
             )
         else:
+            # Día actual / día anterior: las 2 fechas más recientes con datos
+            # cargados este mes (sobre TODAS las tiendas, para que la fecha de
+            # referencia no cambie según el filtro de tienda/auditor activo).
+            _fechas_mes = sorted(log_mes_todas["FechaDt"].dropna().dt.normalize().unique(), reverse=True)
+            _fecha_actual_op = _fechas_mes[0] if len(_fechas_mes) >= 1 else None
+            _fecha_anterior_op = _fechas_mes[1] if len(_fechas_mes) >= 2 else None
+            _label_anterior_op = _fecha_anterior_op.strftime("%d/%m") if _fecha_anterior_op is not None else "—"
+
+            st.markdown(
+                '<div class="resumen-title">Top 10 tiendas con más faltantes</div>',
+                unsafe_allow_html=True
+            )
+            _tienda_mes = log_mes.groupby("Tienda").size().rename("Acumulado mes")
+            if _fecha_anterior_op is not None:
+                _tienda_ant = (
+                    log_mes[log_mes["FechaDt"].dt.normalize() == _fecha_anterior_op]
+                    .groupby("Tienda").size().rename("Día anterior")
+                )
+            else:
+                _tienda_ant = pd.Series(dtype="int64", name="Día anterior")
+            rank_tiendas = (
+                pd.concat([_tienda_mes, _tienda_ant], axis=1).fillna(0).astype(int)
+                .reset_index().sort_values("Acumulado mes", ascending=False).head(10)
+            )
+            rank_tiendas = rank_tiendas.rename(columns={"Día anterior": f"Día anterior ({_label_anterior_op})"})
+            st.write(
+                resumen_table_html(
+                    rank_tiendas, "Tienda",
+                    {"Acumulado mes": lambda v: f"{int(v)}", f"Día anterior ({_label_anterior_op})": lambda v: f"{int(v)}"},
+                    total_label="Total (top 10)"
+                ),
+                unsafe_allow_html=True
+            )
+
+            st.markdown(
+                '<div class="resumen-title" style="margin-top:18px;">Top 5 SKU con más presencia de faltante</div>',
+                unsafe_allow_html=True
+            )
             rank = log_mes.groupby(["SKU", "CodigoPrincipal"], as_index=False).agg(
                 Apariciones=("SKU", "count"),
                 Tiendas=("Tienda", "nunique"),
-            ).sort_values("Apariciones", ascending=False).head(20)
+            ).sort_values("Apariciones", ascending=False).head(5)
             rank = rank.rename(columns={
                 "CodigoPrincipal": "Código Principal", "Tiendas": "Tiendas afectadas"
             })
