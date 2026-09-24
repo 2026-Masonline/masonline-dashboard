@@ -277,6 +277,18 @@ def tienda_nombre(codigo):
     codigo = norm_txt(codigo)
     return TIENDA_MAP.get(codigo, codigo)
 
+# Códigos de depósito que en realidad no son una tienda válida (error de carga
+# en el Reporte diario). Para estos casos no mostramos el código crudo: en vez
+# de "tienda", se muestra el nombre del picker.
+DEPOSITO_INVALIDO = {"7460"}
+
+def tienda_nombre_row(codigo, picker=None):
+    codigo = norm_txt(codigo)
+    if codigo in DEPOSITO_INVALIDO:
+        picker = norm_txt(picker) if picker else ""
+        return picker if picker else codigo
+    return TIENDA_MAP.get(codigo, codigo)
+
 PICKER_LOG_HEADERS = [
     "Fecha", "Picker", "Deposito", "Pedidos", "Unidades",
     "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"
@@ -317,7 +329,10 @@ def load_pickers_log():
     if "Fecha" in df.columns:
         df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
     if "Deposito" in df.columns:
-        df["Tienda"] = df["Deposito"].apply(tienda_nombre)
+        pickers_col = df["Picker"] if "Picker" in df.columns else [""] * len(df)
+        df["Tienda"] = [
+            tienda_nombre_row(dep, pic) for dep, pic in zip(df["Deposito"], pickers_col)
+        ]
     for c in ["Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -372,7 +387,9 @@ if reporte_bytes is not None:
     if df_picker_raw is not None:
         d = df_picker_raw.copy()
         d["Picker"] = (d["firstName"].apply(norm_txt) + " " + d["lastName"].apply(norm_txt)).str.strip()
-        d["Tienda"] = d["warehouseRefId"].apply(tienda_nombre)
+        d["Tienda"] = [
+            tienda_nombre_row(dep, pic) for dep, pic in zip(d["warehouseRefId"], d["Picker"])
+        ]
         d["Pedidos"] = pd.to_numeric(d["orders"], errors="coerce").fillna(0)
         d["Unidades"] = pd.to_numeric(d["items"], errors="coerce").fillna(0)
         d["Rendimiento"] = pd.to_numeric(d["performance"], errors="coerce")
