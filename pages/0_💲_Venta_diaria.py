@@ -1225,17 +1225,6 @@ with tab1:
             '</div></div>'
         )
 
-    _total_faltantes_mes = int(faltantes_rank["Faltantes"].sum()) if len(faltantes_rank) else 0
-    _tiendas_con_faltantes = len(faltantes_rank)
-    st.markdown('<div class="section">Faltantes</div>', unsafe_allow_html=True)
-    st.markdown(f"""
-    <div class="card" style="border-top:4px solid #ff5a1f;max-width:340px;">
-      <div class="label" style="color:#ff5a1f;">FALTANTES · ACUMULADO DEL MES</div>
-      <div class="value">{intfmt(_total_faltantes_mes)}</div>
-      <div class="small">{intfmt(_tiendas_con_faltantes)} tiendas con faltantes este mes</div>
-    </div>
-    """, unsafe_allow_html=True)
-
     st.markdown('<div class="section">Top 5 tiendas eCommerce</div>', unsafe_allow_html=True)
     st.markdown(
         '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
