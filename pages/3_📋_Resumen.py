@@ -162,13 +162,16 @@ def norm_codigo(v):
     return norm_txt(v)
 
 def kpi_card(label, value, sub, cls=""):
-    return f"""
-    <div class="kpi {cls}">
-      <div class="label">{label}</div>
-      <div class="value">{value}</div>
-      <div class="sub">{sub}</div>
-    </div>
-    """
+    # Todo en una sola línea (sin \n): un f-string multilínea acá hace que
+    # Streamlit interprete la 2da tarjeta en adelante como bloque de código
+    # (indentado + precedido de línea en blanco) en vez de HTML.
+    return (
+        '<div class="kpi ' + cls + '">'
+        '<div class="label">' + str(label) + '</div>'
+        '<div class="value">' + str(value) + '</div>'
+        '<div class="sub">' + str(sub) + '</div>'
+        '</div>'
+    )
 
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
