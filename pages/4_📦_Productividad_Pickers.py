@@ -53,6 +53,11 @@ APP_CSS = """
         padding: 22px; text-align:center; color:#868d8e; font-size:13px; margin-top:8px;
     }
 
+    .resumen-title {
+        font-size: 12.5px; font-weight: 800; color:#565d5f; text-transform:uppercase;
+        letter-spacing:.04em; margin: 4px 0 6px;
+    }
+
     table.dashtable {
         width: 100%; border-collapse: collapse; font-size: 13px;
         background: white; border-radius: 10px; overflow: hidden;
@@ -460,29 +465,28 @@ else:
         c3.metric("Unidades totales", num0(dia_df["Unidades"].sum()))
         c4.metric("Rendimiento promedio", num1(dia_df["Rendimiento"].mean()))
 
+        # Cuadro chico: Top 10 mejores pickers (más unidades pickeadas), con
+        # solo lo esencial — Tienda, Picker, Pedidos, Unidades y Fill Rate.
+        st.markdown('<div class="resumen-title" style="margin-top:14px;">Top 10 mejores pickers</div>', unsafe_allow_html=True)
+        top10 = dia_df[["Tienda", "Picker", "Pedidos", "Unidades", "FillRate"]].head(10).copy()
+        top10["Pedidos"] = top10["Pedidos"].apply(num0)
+        top10["Unidades"] = top10["Unidades"].apply(num0)
+        top10["FillRate"] = top10["FillRate"].apply(pct1)
+        top10 = top10.rename(columns={"FillRate": "Fill Rate"})
+        st.write(table_html(top10), unsafe_allow_html=True)
+
         cols_dia = ["Picker", "Tienda", "Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]
         rename_dia = {"RendimientoPicking": "Rend. picking", "FoundRate": "Found Rate", "FillRate": "Fill Rate"}
-
-        top = dia_df[cols_dia].rename(columns=rename_dia).head(20).copy()
-        for c in ["Rendimiento", "Rend. picking"]:
-            top[c] = top[c].apply(num1)
-        for c in ["Found Rate", "Fill Rate"]:
-            top[c] = top[c].apply(pct1)
-        top["Pedidos"] = top["Pedidos"].apply(num0)
-        top["Unidades"] = top["Unidades"].apply(num0)
-        st.write(table_html(top), unsafe_allow_html=True)
-
-        if len(dia_df) > 20:
-            with st.expander(f"Ver los {len(dia_df)} pickers"):
-                with st.container(height=420):
-                    full = dia_df[cols_dia].rename(columns=rename_dia).copy()
-                    for c in ["Rendimiento", "Rend. picking"]:
-                        full[c] = full[c].apply(num1)
-                    for c in ["Found Rate", "Fill Rate"]:
-                        full[c] = full[c].apply(pct1)
-                    full["Pedidos"] = full["Pedidos"].apply(num0)
-                    full["Unidades"] = full["Unidades"].apply(num0)
-                    st.write(table_html(full), unsafe_allow_html=True)
+        with st.expander(f"Ver el detalle completo ({len(dia_df)} pickers)"):
+            with st.container(height=420):
+                full = dia_df[cols_dia].rename(columns=rename_dia).copy()
+                for c in ["Rendimiento", "Rend. picking"]:
+                    full[c] = full[c].apply(num1)
+                for c in ["Found Rate", "Fill Rate"]:
+                    full[c] = full[c].apply(pct1)
+                full["Pedidos"] = full["Pedidos"].apply(num0)
+                full["Unidades"] = full["Unidades"].apply(num0)
+                st.write(table_html(full), unsafe_allow_html=True)
     else:
         st.markdown('<div class="empty-box">Sin pickers para esta tienda en esa fecha.</div>', unsafe_allow_html=True)
 
