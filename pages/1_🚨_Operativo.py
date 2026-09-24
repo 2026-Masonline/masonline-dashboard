@@ -613,32 +613,45 @@ def _pickers_log_ws():
         _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
         return None
 
-def replace_pickers_dia_en_sheet(pickers_df, fecha_str):
-    """Reemplaza en el historial las filas del día 'fecha_str' con la
-    productividad de hoy de cada picker, y deja intactas las de cualquier
-    otro día ya guardado. Antes esto se agregaba con append_rows a secas,
-    lo que iba duplicando todo cada vez que la app se reiniciaba y volvía a
-    procesar el mismo Reporte diario (el guard de session_state no
-    sobrevive a un reboot). Devuelve True si pudo escribir (o si no había
+def replace_pickers_meses_en_sheet(pickers_df):
+    """La hoja 'Data Picker' del Reporte diario ahora también trae el mes
+    completo (desde el día 1) con la fecha real de cada fila, igual que
+    Faltantes — antes era una sola foto del día, estampada con la fecha de
+    hoy. Por eso, en vez de reemplazar solo "el día de hoy", reemplaza en el
+    historial las filas de los meses que trae el archivo nuevo (usando la
+    fecha real de cada fila), y deja intactas las de cualquier otro mes ya
+    guardado. Requiere que pickers_df tenga la columna FechaArchivo (fecha
+    real, ya parseada) además de Picker/Deposito/Pedidos/Unidades/
+    Rendimiento/RendimientoPicking/FoundRate/FillRate. De paso, saca
+    duplicados exactos que hayan quedado de antes de este cambio (cuando se
+    agregaba con append_rows a secas y cada reinicio de la app volvía a
+    sumar las mismas filas). Devuelve True si pudo escribir (o si no había
     nada para escribir), False si falló la conexión con Google Sheets."""
     ws = _pickers_log_ws()
     if ws is None:
         return False
     if pickers_df is None or not len(pickers_df):
         return True
+    rows_df = pickers_df.dropna(subset=["FechaArchivo"])
+    if not len(rows_df):
+        return True
+
+    meses_nuevos = set(rows_df["FechaArchivo"].dt.strftime("%Y-%m").unique())
 
     try:
         existing = ws.get_all_records()
     except Exception:
         existing = []
 
-    # De paso, saca duplicados exactos que hayan quedado de antes de este
-    # cambio (cuando se agregaba con append_rows a secas y cada reinicio de
-    # la app volvía a sumar las mismas filas del mismo día).
     keep_rows = []
     _vistas = set()
     for r in existing:
-        if str(r.get("Fecha", "")) == fecha_str:
+        try:
+            fecha_dt = datetime.strptime(str(r.get("Fecha", "")), "%d/%m/%Y")
+            es_mes_nuevo = fecha_dt.strftime("%Y-%m") in meses_nuevos
+        except (ValueError, TypeError):
+            es_mes_nuevo = False
+        if es_mes_nuevo:
             continue
         row = tuple(r.get(h, "") for h in PICKER_LOG_HEADERS)
         if row in _vistas:
@@ -647,10 +660,10 @@ def replace_pickers_dia_en_sheet(pickers_df, fecha_str):
         keep_rows.append(list(row))
 
     new_rows = [
-        [fecha_str, r.get("Picker", ""), r.get("Deposito", ""),
+        [r["FechaArchivo"].strftime("%d/%m/%Y"), r.get("Picker", ""), r.get("Deposito", ""),
          r.get("Pedidos", ""), r.get("Unidades", ""), r.get("Rendimiento", ""),
          r.get("RendimientoPicking", ""), r.get("FoundRate", ""), r.get("FillRate", "")]
-        for _, r in pickers_df.iterrows()
+        for _, r in rows_df.iterrows()
     ]
 
     try:
@@ -1686,10 +1699,11 @@ if df_picker_raw is not None:
     d["RendimientoPicking"] = pd.to_numeric(d.get("pickingPerformance"), errors="coerce")
     d["FoundRate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
     d["FillRate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
+    d["FechaArchivo"] = pd.to_datetime(d.get("Fecha"), errors="coerce")
     d = d[d["Picker"] != ""]
     pickers = d[[
         "Picker", "Deposito", "Pedidos", "Unidades",
-        "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"
+        "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "FechaArchivo"
     ]]
 
 # ---------------------------------------------------------------------
@@ -1738,7 +1752,7 @@ if faltantes_historial_completo is not None and faltantes_es_nuevo and len(falta
 if pickers is not None and reporte_es_nuevo and len(pickers):
     _pickers_hash = hashlib.md5(reporte_bytes).hexdigest()
     if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
-        if replace_pickers_dia_en_sheet(pickers, fecha_hoy_str):
+        if replace_pickers_meses_en_sheet(pickers):
             st.session_state["_pickers_logged_hash"] = _pickers_hash
 
 all_stores = set()
