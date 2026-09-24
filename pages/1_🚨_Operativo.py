@@ -2064,11 +2064,16 @@ if any_data_loaded:
                 Cantidad=("Producto", "count")
             ).reset_index()
             agg = agg.sort_values("Cantidad", ascending=False)
+            agg_top10 = agg.head(10)
 
-            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="resumen-title">Top 10 tiendas — última franja horaria</div>',
+                unsafe_allow_html=True
+            )
             resumen_html = resumen_table_html(
-                agg, "Tienda",
-                {"Cantidad": lambda v: f"{int(v)}"}
+                agg_top10, "Tienda",
+                {"Cantidad": lambda v: f"{int(v)}"},
+                total_label="Total (top 10)"
             )
             st.write(resumen_html, unsafe_allow_html=True)
 
@@ -2076,8 +2081,12 @@ if any_data_loaded:
                 with st.container(height=380):
                     st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
 
+            resumen_html_completo = resumen_table_html(
+                agg, "Tienda",
+                {"Cantidad": lambda v: f"{int(v)}"}
+            )
             export_body = (
-                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                '<div class="resumen-title">Resumen por tienda — última franja horaria</div>' + resumen_html_completo +
                 '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
                 + table_html(show[detail_cols])
             )
