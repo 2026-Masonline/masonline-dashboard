@@ -110,6 +110,18 @@ APP_CSS = """
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 10px; }
+    .kpi {
+        background: white; border-radius: 14px; padding: 16px 18px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06); border: 1px solid #e8ebef;
+    }
+    .kpi .label { color: #6b7280; font-size: 11.5px; font-weight: 700; text-transform:uppercase; letter-spacing:.04em;}
+    .kpi .value { color: #20252b; font-size: 26px; font-weight: 800; margin-top: 6px; }
+    .kpi .sub { color: #6b7280; font-size: 12px; margin-top: 6px; }
+    .kpi.good .value { color:#0ca30c; }
+    .kpi.warn .value { color:#c98500; }
+    .kpi.crit .value { color:#d03b3b; }
+
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -118,6 +130,8 @@ APP_CSS = """
         .section { font-size: 16px; margin: 20px 0 4px; }
         table.dashtable { font-size: 12px; }
         table.dashtable thead th, table.dashtable tbody td { padding: 7px 8px; }
+        .kpi-row { grid-template-columns: 1fr; gap: 8px; }
+        .kpi .value { font-size: 22px; }
     }
 """
 
@@ -137,6 +151,24 @@ def norm_txt(v):
     if pd.isna(v):
         return ""
     return str(v).replace("\xa0", " ").strip()
+
+def norm_codigo(v):
+    """Como norm_txt, pero evita que un código (ej. de barras) quede como
+    '7790580146115.0' por venir de una columna numérica del Excel."""
+    if pd.isna(v):
+        return ""
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return norm_txt(v)
+
+def kpi_card(label, value, sub, cls=""):
+    return f"""
+    <div class="kpi {cls}">
+      <div class="label">{label}</div>
+      <div class="value">{value}</div>
+      <div class="sub">{sub}</div>
+    </div>
+    """
 
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
@@ -766,9 +798,12 @@ if df_faltantes_raw is not None:
         (c for c in ["Codigo Principal", "Código Principal", "CodigoPrincipal", "Codigo_Principal"] if c in d.columns),
         None
     )
-    d["CodigoPrincipal"] = d[_cod_col].apply(norm_txt) if _cod_col else ""
+    d["CodigoPrincipal"] = d[_cod_col].apply(norm_codigo) if _cod_col else ""
     d["Etiqueta"] = d.get("Etiqueta_Stock", "").apply(norm_txt)
     d = d[d["Etiqueta"] != ""]
+    # El archivo trae el mes completo (desde el día 1) con la fecha real de
+    # cada fila, no una sola foto del día.
+    d["FechaArchivo"] = pd.to_datetime(d.get("Fecha"), errors="coerce")
     faltantes = d
 
 # ---------------------------------------------------------------------
@@ -830,6 +865,16 @@ else:
         if filtro_auditor is not None:
             return d[d["Tienda"].apply(get_auditor) == filtro_auditor]
         return d
+
+    # Días con datos de Faltantes (sobre el total, antes de filtrar por
+    # tienda/auditor) — "actual" es el más reciente del archivo, "anterior"
+    # el día anterior a ese.
+    fecha_actual_falt = None
+    fecha_anterior_falt = None
+    if faltantes is not None and len(faltantes) and faltantes["FechaArchivo"].notna().any():
+        _fechas_falt = sorted(faltantes["FechaArchivo"].dropna().dt.normalize().unique(), reverse=True)
+        fecha_actual_falt = _fechas_falt[0] if len(_fechas_falt) >= 1 else None
+        fecha_anterior_falt = _fechas_falt[1] if len(_fechas_falt) >= 2 else None
 
     pedidos_72h = ftr(pedidos_72h)
     reclamos = ftr(reclamos)
@@ -978,46 +1023,102 @@ else:
         body
     ))
 
-    # ---- 6) Faltantes: Top 5 tiendas + Top 5 SKU ----
-    st.markdown(
-        '<div class="section">📉 Faltantes ECOM — Top 5 tiendas y Top 5 SKU</div>'
-        '<div class="section-desc">SKUs marcados como faltante para e-commerce.</div>',
-        unsafe_allow_html=True
-    )
-    body = None
-    if faltantes is not None and len(faltantes):
-        agg_tienda = faltantes.groupby("Tienda").agg(
-            Cantidad=("Producto", "count")
-        ).reset_index().sort_values("Cantidad", ascending=False).head(5)
-        agg_sku = faltantes.groupby("Producto").agg(
-            Tiendas=("Tienda", "count"),
-            Codigo=("CodigoPrincipal", "first"),
-        ).reset_index().sort_values("Tiendas", ascending=False).head(5)
-        agg_sku = agg_sku.rename(columns={"Producto": "SKU", "Codigo": "Código Principal"})
-        html_tienda = resumen_table_html(agg_tienda, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
-        html_sku = table_html(agg_sku[["SKU", "Código Principal", "Tiendas"]])
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown('<div class="resumen-title">Top 5 tiendas con más faltantes</div>', unsafe_allow_html=True)
-            st.write(html_tienda, unsafe_allow_html=True)
-        with col2:
-            st.markdown('<div class="resumen-title">Top 5 SKU con más faltantes (todas las tiendas)</div>', unsafe_allow_html=True)
-            st.write(html_sku, unsafe_allow_html=True)
-        body = (
-            '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
-            '<div style="flex:1;min-width:260px;">'
-            '<div class="resumen-title">Top 5 tiendas con más faltantes</div>' + html_tienda + '</div>'
-            '<div style="flex:1;min-width:260px;">'
-            '<div class="resumen-title">Top 5 SKU con más faltantes (todas las tiendas)</div>' + html_sku + '</div>'
-            '</div>'
+    # ---- 6) Faltantes ----
+    if filtro_tienda is not None:
+        # Con una tienda puntual elegida: resumen de esa tienda en vez del
+        # ranking entre tiendas (que no tendría sentido con una sola).
+        titulo_falt = f"📉 Faltantes ECOM — {filtro_tienda}"
+        desc_falt = "Resumen de faltantes de esta tienda: acumulado del mes, día anterior y día actual."
+        st.markdown(
+            f'<div class="section">{titulo_falt}</div>'
+            f'<div class="section-desc">{desc_falt}</div>',
+            unsafe_allow_html=True
         )
+        body = None
+        if faltantes is not None and len(faltantes):
+            cantidad_mes = len(faltantes)
+            _fecha_norm = faltantes["FechaArchivo"].dt.normalize()
+            cantidad_actual = (
+                int((_fecha_norm == fecha_actual_falt).sum())
+                if fecha_actual_falt is not None else 0
+            )
+            cantidad_anterior = (
+                int((_fecha_norm == fecha_anterior_falt).sum())
+                if fecha_anterior_falt is not None else 0
+            )
+            label_actual = f"Día actual ({fecha_actual_falt.strftime('%d/%m')})" if fecha_actual_falt is not None else "Día actual"
+            label_anterior = f"Día anterior ({fecha_anterior_falt.strftime('%d/%m')})" if fecha_anterior_falt is not None else "Día anterior"
+
+            kpi_html = (
+                '<div class="kpi-row">'
+                + kpi_card("ACUMULADO DEL MES", f"{cantidad_mes}", "Faltantes registrados este mes")
+                + kpi_card(label_anterior.upper(), f"{cantidad_anterior}", "Faltantes ese día", cls="warn" if cantidad_anterior else "good")
+                + kpi_card(label_actual.upper(), f"{cantidad_actual}", "Faltantes ese día", cls="crit" if cantidad_actual else "good")
+                + '</div>'
+            )
+            st.markdown(kpi_html, unsafe_allow_html=True)
+
+            agg_sku_tienda = faltantes.groupby("Producto").agg(
+                Apariciones=("Producto", "count"),
+                Codigo=("CodigoPrincipal", "first"),
+            ).reset_index().sort_values("Apariciones", ascending=False).head(5)
+            agg_sku_tienda = agg_sku_tienda.rename(columns={"Producto": "SKU", "Codigo": "Código Principal"})
+            html_sku_tienda = resumen_table_html(
+                agg_sku_tienda, "SKU", {"Código Principal": lambda v: str(v), "Apariciones": lambda v: f"{int(v)}"}
+            )
+            st.markdown(
+                '<div class="resumen-title" style="margin-top:14px;">Top 5 SKU con más faltantes (acumulado del mes)</div>',
+                unsafe_allow_html=True
+            )
+            st.write(html_sku_tienda, unsafe_allow_html=True)
+            body = kpi_html + (
+                '<div class="resumen-title" style="margin-top:14px;">Top 5 SKU con más faltantes (acumulado del mes)</div>'
+                + html_sku_tienda
+            )
+        else:
+            st.markdown('<div class="empty-box">Sin faltantes 🎉</div>', unsafe_allow_html=True)
+        sections.append((titulo_falt, desc_falt, body))
     else:
-        st.markdown('<div class="empty-box">Sin faltantes 🎉</div>', unsafe_allow_html=True)
-    sections.append((
-        "📉 Faltantes ECOM — Top 5 tiendas y Top 5 SKU",
-        "SKUs marcados como faltante para e-commerce.",
-        body
-    ))
+        titulo_falt = "📉 Faltantes ECOM — Top 5 tiendas y Top 5 SKU"
+        desc_falt = (
+            f"Acumulado del mes{' para ' + filtro_auditor if filtro_auditor else ''}. "
+            "SKUs marcados como faltante para e-commerce."
+        )
+        st.markdown(
+            f'<div class="section">{titulo_falt}</div>'
+            f'<div class="section-desc">{desc_falt}</div>',
+            unsafe_allow_html=True
+        )
+        body = None
+        if faltantes is not None and len(faltantes):
+            agg_tienda = faltantes.groupby("Tienda").agg(
+                Cantidad=("Producto", "count")
+            ).reset_index().sort_values("Cantidad", ascending=False).head(5)
+            agg_sku = faltantes.groupby("Producto").agg(
+                Tiendas=("Tienda", "count"),
+                Codigo=("CodigoPrincipal", "first"),
+            ).reset_index().sort_values("Tiendas", ascending=False).head(5)
+            agg_sku = agg_sku.rename(columns={"Producto": "SKU", "Codigo": "Código Principal"})
+            html_tienda = resumen_table_html(agg_tienda, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
+            html_sku = table_html(agg_sku[["SKU", "Código Principal", "Tiendas"]])
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown('<div class="resumen-title">Top 5 tiendas con más faltantes</div>', unsafe_allow_html=True)
+                st.write(html_tienda, unsafe_allow_html=True)
+            with col2:
+                st.markdown('<div class="resumen-title">Top 5 SKU con más faltantes (todas las tiendas)</div>', unsafe_allow_html=True)
+                st.write(html_sku, unsafe_allow_html=True)
+            body = (
+                '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
+                '<div style="flex:1;min-width:260px;">'
+                '<div class="resumen-title">Top 5 tiendas con más faltantes</div>' + html_tienda + '</div>'
+                '<div style="flex:1;min-width:260px;">'
+                '<div class="resumen-title">Top 5 SKU con más faltantes (todas las tiendas)</div>' + html_sku + '</div>'
+                '</div>'
+            )
+        else:
+            st.markdown('<div class="empty-box">Sin faltantes 🎉</div>', unsafe_allow_html=True)
+        sections.append((titulo_falt, desc_falt, body))
 
     # ---- Descargar todo junto ----
     full_html = export_resumen_html(now_ref, sections)
