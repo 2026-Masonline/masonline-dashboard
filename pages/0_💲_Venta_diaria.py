@@ -3,10 +3,24 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 import calendar
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
 import html
+
+# Historial de Faltantes (Google Sheet "HistorialFaltantes"): mismo mecanismo
+# que usa la pestaña "Operativo" para acumular, mes a mes, los SKUs marcados
+# como faltante. Acá lo reusamos solo para armar el ranking de qué tiendas
+# tuvieron más faltantes. El import va "blindado": si la librería no está
+# instalada, esta página funciona igual y esa sección simplemente muestra un
+# aviso de "todavía no conectado".
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials as _GCreds
+    _GSHEETS_LIB_OK = True
+except Exception:
+    _GSHEETS_LIB_OK = False
 
 st.set_page_config(
     page_title="MásOnline | Ecommerce",
@@ -173,6 +187,62 @@ try:
 except Exception:
     base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
 
+# ---------------------------------------------------------------------
+# Historial de Faltantes (Google Sheet "HistorialFaltantes") — mismas
+# credenciales que ya están cargadas en Secrets para "Operativo". Acá solo
+# se usa para armar el ranking de tiendas con más faltantes del mes.
+# ---------------------------------------------------------------------
+
+FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]
+
+@st.cache_resource(show_spinner=False)
+def _gsheets_client():
+    if not _GSHEETS_LIB_OK:
+        return None
+    try:
+        raw_json = st.secrets.get("GCP_SERVICE_ACCOUNT_JSON")
+        if raw_json:
+            creds_dict = json.loads(raw_json)
+        else:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = _GCreds.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception:
+        return None
+
+def _faltantes_log_ws():
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        return sh.worksheet("HistorialFaltantes")
+    except Exception:
+        return None
+
+@st.cache_data(ttl=180, show_spinner=False)
+def load_faltantes_log():
+    """None = todavía no conectado. DataFrame vacío = conectado pero sin
+    filas cargadas aún."""
+    ws = _faltantes_log_ws()
+    if ws is None:
+        return None
+    try:
+        records = ws.get_all_records()
+    except Exception:
+        return None
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=FALTANTES_LOG_HEADERS)
+    if "Fecha" in df.columns:
+        df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+    return df
+
 st.markdown("""
 <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
 padding:12px 16px;margin-bottom:14px;">
@@ -331,6 +401,30 @@ def top_tiendas(df_in, metric, n=5):
 
 top_venta_dia = top_tiendas(tiendas_dia, "ecommerce_tax", n=5)
 top_venta_mes = top_tiendas(tiendas_resumen, "ecommerce_tax", n=5)
+
+# ---- Tiendas con más faltantes del mes (historial de "Operativo") ----
+faltantes_log = load_faltantes_log()
+faltantes_rank = pd.DataFrame(columns=["Tienda", "Faltantes", "Dias"])
+log_mes_falt = pd.DataFrame(columns=["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta", "FechaDt"])
+if faltantes_log is not None and len(faltantes_log):
+    mes_inicio_falt = pd.Timestamp(year=2026, month=9, day=1)
+    log_mes_falt = faltantes_log[faltantes_log["FechaDt"] >= mes_inicio_falt].copy()
+    if len(log_mes_falt):
+        faltantes_rank = (
+            log_mes_falt.groupby("Tienda", as_index=False)
+            .agg(Faltantes=("SKU", "count"), Dias=("FechaDt", "nunique"))
+            .sort_values("Faltantes", ascending=False)
+            .head(5)
+            .reset_index(drop=True)
+        )
+
+# Fechas del mes con al menos un reporte de Faltantes subido, para el filtro
+# "ver por fecha" (más reciente primero).
+faltantes_fechas_disponibles = []
+if len(log_mes_falt):
+    faltantes_fechas_disponibles = sorted(
+        log_mes_falt["FechaDt"].dropna().dt.normalize().unique(), reverse=True
+    )
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -1069,6 +1163,118 @@ with tab1:
             '<th style="text-align:right;">Venta eCommerce (con impuesto)</th>'
             f'</tr></thead><tbody>{rows_html}</tbody></table>'
             '</div></div>'
+        )
+
+    def faltantes_rank_table_html(rows_df, titulo, show_dias=False, empty_msg=None):
+        header = (
+            '<div style="background:#ff5a1f;color:#fff;font-weight:800;'
+            'font-size:15px;padding:13px 20px;display:flex;align-items:center;gap:10px;">'
+            f'<span>🚨</span><span>{titulo}</span>'
+            '</div>'
+        )
+        if faltantes_log is None:
+            return (
+                f'<div class="rank-table-card">{header}'
+                '<div style="padding:20px;color:#9ca3af;font-size:13px;">'
+                'Este ranking todavía no está conectado — hace falta activar el '
+                'historial de Faltantes en Google Sheets (misma configuración que '
+                'ya usa la pestaña "Operativo").'
+                '</div></div>'
+            )
+        if empty_msg is None:
+            empty_msg = (
+                'Todavía no hay faltantes cargados este mes. Se completa automáticamente '
+                'cada vez que se sube un archivo de Faltantes desde "Operativo".'
+            )
+        if not len(rows_df):
+            return (
+                f'<div class="rank-table-card">{header}'
+                f'<div style="padding:20px;color:#9ca3af;font-size:13px;">{empty_msg}</div>'
+                '</div>'
+            )
+
+        th_style = 'background:#fdeee5;color:#c9481a;font-weight:700;padding:10px 14px;'
+        rows_html = ""
+        for i, r in enumerate(rows_df.itertuples(), start=1):
+            dias_td = ""
+            if show_dias:
+                dias_td = f'<td style="text-align:center;">{intfmt(r.Dias)}</td>'
+            rows_html += (
+                '<tr>'
+                '<td><span class="rank-badge" style="background:#ff5a1f;color:#fff;">'
+                f'{i}</span></td>'
+                f'<td>{html.escape(str(r.Tienda))}</td>'
+                f'<td style="text-align:right;font-weight:800;color:#c9481a;">{intfmt(r.Faltantes)}</td>'
+                f'{dias_td}'
+                '</tr>'
+            )
+
+        dias_th = f'<th style="{th_style}text-align:center;">Días con faltantes</th>' if show_dias else ""
+        thead = (
+            '<tr>'
+            f'<th style="{th_style}text-align:left;"></th>'
+            f'<th style="{th_style}text-align:left;">Tienda</th>'
+            f'<th style="{th_style}text-align:right;">Faltantes (SKUs)</th>'
+            f'{dias_th}'
+            '</tr>'
+        )
+        return (
+            f'<div class="rank-table-card">{header}'
+            '<div class="table-scroll">'
+            f'<table class="rank-table"><thead>{thead}</thead><tbody>{rows_html}</tbody></table>'
+            '</div></div>'
+        )
+
+    st.markdown('<div class="section">Tiendas con más faltantes</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Acumulado del mes en curso, según los archivos de Faltantes subidos en "Operativo". '
+        'La columna "Días con faltantes" ayuda a distinguir un problema puntual (1 día) de uno '
+        'que se repite seguido.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        faltantes_rank_table_html(
+            faltantes_rank, "TIENDAS CON MÁS FALTANTES · ACUMULADO DEL MES", show_dias=True
+        ),
+        unsafe_allow_html=True
+    )
+
+    if faltantes_log is not None and len(faltantes_fechas_disponibles):
+        st.markdown(
+            '<div style="font-size:12px;font-weight:800;color:#6b7280;'
+            'text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;">'
+            '🔎 Ver un día puntual</div>',
+            unsafe_allow_html=True
+        )
+        fecha_elegida = st.selectbox(
+            "Elegí una fecha para ver los faltantes de ese día:",
+            options=faltantes_fechas_disponibles,
+            format_func=lambda d: pd.Timestamp(d).strftime("%d/%m/%Y"),
+            key="faltantes_fecha_filtro",
+            label_visibility="collapsed",
+        )
+        log_dia_falt = log_mes_falt[
+            log_mes_falt["FechaDt"].dt.normalize() == pd.Timestamp(fecha_elegida)
+        ]
+        faltantes_rank_dia = pd.DataFrame(columns=["Tienda", "Faltantes"])
+        if len(log_dia_falt):
+            faltantes_rank_dia = (
+                log_dia_falt.groupby("Tienda", as_index=False)
+                .agg(Faltantes=("SKU", "count"))
+                .sort_values("Faltantes", ascending=False)
+                .head(5)
+                .reset_index(drop=True)
+            )
+        st.markdown(
+            faltantes_rank_table_html(
+                faltantes_rank_dia,
+                f"TIENDAS CON MÁS FALTANTES · {pd.Timestamp(fecha_elegida).strftime('%d/%m/%Y')}",
+                show_dias=False,
+                empty_msg="No se subió un archivo de Faltantes ese día.",
+            ),
+            unsafe_allow_html=True
         )
 
     st.markdown('<div class="section">Top 5 tiendas eCommerce</div>', unsafe_allow_html=True)
