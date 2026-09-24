@@ -127,6 +127,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 DATA_FILE = Path(__file__).resolve().parent / "data.csv"
+DATA_TIENDAS_FILE = Path(__file__).resolve().parent / "data_tiendas.csv"
 LOGO_FILE = Path(__file__).resolve().parent / "masonline_logo.png"
 
 try:
@@ -138,6 +139,22 @@ try:
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
+
+# Desglose por tienda (para "Top 10 tiendas" en Venta diaria). Es un archivo
+# aparte, "data_tiendas.csv", que puede no existir todavía la primera vez.
+TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
+try:
+    if DATA_TIENDAS_FILE.exists():
+        base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
+        base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
+        base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
+        for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
+            base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
+        base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
+    else:
+        base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+except Exception:
+    base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
 
 st.markdown("""
 <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
@@ -198,6 +215,50 @@ with u3:
         help="Reporte Venta Con y sin Impuesto del mismo mes del año pasado."
     )
 
+# Código de tienda (columna "Tienda" del Excel) -> nombre. Mismo listado que
+# se usa en "Productividad Pickers" (viene del archivo "Picker x tienda").
+TIENDA_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+def norm_tienda_code(v):
+    """El Excel trae el código de tienda como número (1002, 1002.0, etc.).
+    Lo normalizamos siempre a texto sin decimales, para que coincida con las
+    claves de TIENDA_MAP y con lo que ya se guarda en data_tiendas.csv."""
+    try:
+        return str(int(float(v)))
+    except (TypeError, ValueError):
+        return str(v).strip()
+
+def tienda_nombre(codigo):
+    return TIENDA_MAP.get(codigo, codigo)
+
 def normalize_uploaded_excel(file):
     raw = pd.read_excel(file, sheet_name=0, header=None)
     header_row = None
@@ -243,18 +304,37 @@ def normalize_uploaded_excel(file):
 
     out = out.rename(columns={"Fecha": "date"})
     out["source"] = "Reporte subido"
-    return out
+
+    # Desglose por tienda, para "Top 10 tiendas" en Venta diaria. Si el
+    # archivo no trae columna "Tienda" (no debería pasar), seguimos igual,
+    # simplemente sin el desglose para ese archivo.
+    out_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+    if "Tienda" in d.columns:
+        dt = d.copy()
+        dt["Tienda"] = dt["Tienda"].apply(norm_tienda_code)
+        out_tiendas = dt.groupby(["Fecha", "Tienda"], as_index=False).agg(
+            company_tax=("Facturacion", "sum"),
+            ecommerce_tax=("Venta - Ecommerce", "sum"),
+            orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
+            units=("Cantidad Venta Operativa - Ecommerce", "sum")
+        )
+        out_tiendas = out_tiendas.rename(columns={"Fecha": "date"})
+        out_tiendas["Nombre"] = out_tiendas["Tienda"].apply(tienda_nombre)
+        out_tiendas = out_tiendas[TIENDAS_COLUMNS]
+
+    return out, out_tiendas
 
 df = base_df.copy()
+df_tiendas = base_df_tiendas.copy()
 
 def replace_period(uploaded_file, year, month, label):
-    global df
+    global df, df_tiendas
 
     if uploaded_file is None:
         return
 
     try:
-        incoming = normalize_uploaded_excel(uploaded_file)
+        incoming, incoming_tiendas = normalize_uploaded_excel(uploaded_file)
 
         incoming = incoming[
             (incoming["date"].dt.year == year) &
@@ -279,6 +359,27 @@ def replace_period(uploaded_file, year, month, label):
             .drop_duplicates(subset=["date"], keep="last")
             .reset_index(drop=True)
         )
+
+        if len(incoming_tiendas):
+            incoming_tiendas = incoming_tiendas[
+                (incoming_tiendas["date"].dt.year == year) &
+                (incoming_tiendas["date"].dt.month == month)
+            ].copy()
+
+            df_tiendas = df_tiendas[
+                ~(
+                    (df_tiendas["date"].dt.year == year) &
+                    (df_tiendas["date"].dt.month == month)
+                )
+            ].copy()
+
+            df_tiendas = pd.concat([df_tiendas, incoming_tiendas], ignore_index=True)
+
+            df_tiendas = (
+                df_tiendas.sort_values(["date", "Tienda"])
+                .drop_duplicates(subset=["date", "Tienda"], keep="last")
+                .reset_index(drop=True)
+            )
 
         # GUARDAR LOS DATOS EN GITHUB
         try:
@@ -350,6 +451,56 @@ def replace_period(uploaded_file, year, month, label):
                     timeout=30
                 ) as response:
                     response.read()
+
+                # Guardar también el desglose por tienda (data_tiendas.csv),
+                # para "Top 10 tiendas" en Venta diaria. Si esto falla no
+                # queremos tapar el éxito del guardado principal (data.csv),
+                # así que va aparte y en silencio (aviso chiquito nada más).
+                if len(df_tiendas):
+                    try:
+                        path_t = "data_tiendas.csv"
+                        url_t = f"https://api.github.com/repos/{repo}/contents/{path_t}"
+
+                        sha_t = None
+                        request_get_t = urllib.request.Request(
+                            f"{url_t}?ref={branch}",
+                            headers=headers,
+                            method="GET"
+                        )
+                        try:
+                            with urllib.request.urlopen(request_get_t, timeout=30) as response:
+                                sha_t = json.loads(response.read().decode("utf-8"))["sha"]
+                        except urllib.error.HTTPError as e_get:
+                            if e_get.code != 404:
+                                raise
+                            # 404 = todavía no existe data_tiendas.csv en el repo;
+                            # se crea solo, sin mandar "sha" en el payload.
+
+                        save_df_tiendas = df_tiendas.sort_values(["date", "Tienda"])
+                        csv_text_t = save_df_tiendas.to_csv(index=False, date_format="%Y-%m-%d")
+                        content_b64_t = base64.b64encode(csv_text_t.encode("utf-8")).decode("utf-8")
+
+                        payload_t = {
+                            "message": f"Actualizar datos por tienda - {label}",
+                            "content": content_b64_t,
+                            "branch": branch
+                        }
+                        if sha_t:
+                            payload_t["sha"] = sha_t
+
+                        request_put_t = urllib.request.Request(
+                            url_t,
+                            data=json.dumps(payload_t).encode("utf-8"),
+                            headers={**headers, "Content-Type": "application/json"},
+                            method="PUT"
+                        )
+                        with urllib.request.urlopen(request_put_t, timeout=30) as response:
+                            response.read()
+                    except Exception:
+                        st.caption(
+                            "⚠️ El desglose por tienda (Top 10 tiendas) no se pudo guardar esta vez — "
+                            "el resto de los datos sí se guardó bien."
+                        )
 
                 st.success(
                     f"{label}: datos cargados y guardados correctamente."
