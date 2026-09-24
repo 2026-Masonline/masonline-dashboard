@@ -1225,57 +1225,16 @@ with tab1:
             '</div></div>'
         )
 
-    st.markdown('<div class="section">Tiendas con más faltantes</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Acumulado del mes en curso, según los archivos de Faltantes subidos en "Operativo". '
-        'La columna "Días con faltantes" ayuda a distinguir un problema puntual (1 día) de uno '
-        'que se repite seguido.'
-        '</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        faltantes_rank_table_html(
-            faltantes_rank, "TIENDAS CON MÁS FALTANTES · ACUMULADO DEL MES", show_dias=True
-        ),
-        unsafe_allow_html=True
-    )
-
-    if faltantes_log is not None and len(faltantes_fechas_disponibles):
-        st.markdown(
-            '<div style="font-size:12px;font-weight:800;color:#6b7280;'
-            'text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;">'
-            '🔎 Ver un día puntual</div>',
-            unsafe_allow_html=True
-        )
-        fecha_elegida = st.selectbox(
-            "Elegí una fecha para ver los faltantes de ese día:",
-            options=faltantes_fechas_disponibles,
-            format_func=lambda d: pd.Timestamp(d).strftime("%d/%m/%Y"),
-            key="faltantes_fecha_filtro",
-            label_visibility="collapsed",
-        )
-        log_dia_falt = log_mes_falt[
-            log_mes_falt["FechaDt"].dt.normalize() == pd.Timestamp(fecha_elegida)
-        ]
-        faltantes_rank_dia = pd.DataFrame(columns=["Tienda", "Faltantes"])
-        if len(log_dia_falt):
-            faltantes_rank_dia = (
-                log_dia_falt.groupby("Tienda", as_index=False)
-                .agg(Faltantes=("SKU", "count"))
-                .sort_values("Faltantes", ascending=False)
-                .head(5)
-                .reset_index(drop=True)
-            )
-        st.markdown(
-            faltantes_rank_table_html(
-                faltantes_rank_dia,
-                f"TIENDAS CON MÁS FALTANTES · {pd.Timestamp(fecha_elegida).strftime('%d/%m/%Y')}",
-                show_dias=False,
-                empty_msg="No se subió un archivo de Faltantes ese día.",
-            ),
-            unsafe_allow_html=True
-        )
+    _total_faltantes_mes = int(faltantes_rank["Faltantes"].sum()) if len(faltantes_rank) else 0
+    _tiendas_con_faltantes = len(faltantes_rank)
+    st.markdown('<div class="section">Faltantes</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="card" style="border-top:4px solid #ff5a1f;max-width:340px;">
+      <div class="label" style="color:#ff5a1f;">FALTANTES · ACUMULADO DEL MES</div>
+      <div class="value">{intfmt(_total_faltantes_mes)}</div>
+      <div class="small">{intfmt(_tiendas_con_faltantes)} tiendas con faltantes este mes</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown('<div class="section">Top 5 tiendas eCommerce</div>', unsafe_allow_html=True)
     st.markdown(
