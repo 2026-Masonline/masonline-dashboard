@@ -278,7 +278,7 @@ sep25_acc = sep25["ecommerce_tax"].sum()
 vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
 vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 
-# ---- Top 5 tiendas con más ventas (mes en curso) ----
+# ---- Mejores y peores tiendas del mes en curso (venta y pedidos) ----
 current_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
 if len(df_tiendas):
     current_tiendas = df_tiendas[
@@ -286,15 +286,26 @@ if len(df_tiendas):
         (df_tiendas["date"].dt.month == 9)
     ].copy()
 
-top_tiendas = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax"])
+tiendas_resumen = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders"])
 if len(current_tiendas):
-    top_tiendas = (
+    tiendas_resumen = (
         current_tiendas.groupby(["Tienda", "Nombre"], as_index=False)
-        .agg(ecommerce_tax=("ecommerce_tax", "sum"))
-        .sort_values("ecommerce_tax", ascending=False)
-        .head(5)
-        .reset_index(drop=True)
+        .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
     )
+
+def top_bottom_tiendas(metric, n=5):
+    """Devuelve (mejores, peores) — n filas cada una, ordenadas de forma que
+    al graficarlas horizontalmente la mejor/peor quede arriba."""
+    if not len(tiendas_resumen):
+        vacio = tiendas_resumen.copy()
+        return vacio, vacio
+    ordenado = tiendas_resumen.sort_values(metric, ascending=False)
+    mejores = ordenado.head(n).reset_index(drop=True)
+    peores = ordenado.tail(n).sort_values(metric, ascending=True).reset_index(drop=True)
+    return mejores, peores
+
+top_venta, bottom_venta = top_bottom_tiendas("ecommerce_tax")
+top_pedidos, bottom_pedidos = top_bottom_tiendas("orders")
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -986,50 +997,90 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    st.markdown('<div class="section">Top 5 tiendas con más ventas</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Venta ecommerce acumulada del mes en curso, por tienda'
-        '</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+    def tiendas_bar(df_in, metric, color, texttemplate):
+        chart_df = df_in.copy()
+        chart_df["etiqueta"] = chart_df["Tienda"] + " - " + chart_df["Nombre"]
+        chart_df = chart_df.sort_values(metric)
 
-    if len(top_tiendas):
-        ranking_chart = top_tiendas.copy()
-        ranking_chart["etiqueta"] = ranking_chart["Tienda"] + " - " + ranking_chart["Nombre"]
-        ranking_chart = ranking_chart.sort_values("ecommerce_tax")
-
-        chart_tiendas = px.bar(
-            ranking_chart,
-            x="ecommerce_tax",
+        fig = px.bar(
+            chart_df,
+            x=metric,
             y="etiqueta",
             orientation="h",
-            labels={"ecommerce_tax": "Venta ecommerce", "etiqueta": "Tienda"},
-            text="ecommerce_tax"
+            labels={metric: "", "etiqueta": ""},
+            text=metric
         )
-        chart_tiendas.update_traces(
-            texttemplate="$%{text:,.0f}",
+        fig.update_traces(
+            texttemplate=texttemplate,
             textposition="outside",
-            marker_color="#2f9e66"
+            marker_color=color
         )
-        chart_tiendas.update_layout(
-            height=430,
-            margin=dict(l=10, r=10, t=20, b=10),
-            xaxis_tickprefix="$",
-            xaxis_tickformat=",.0f",
+        fig.update_layout(
+            height=320,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=False,
         )
-        st.plotly_chart(chart_tiendas, use_container_width=True)
-    else:
+        return fig
+
+    def tiendas_section(titulo, descripcion, mejores, peores, metric, color_mejor, color_peor, texttemplate, xaxis_kwargs=None):
+        st.markdown(f'<div class="section">{titulo}</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="upload-text" style="padding-bottom:14px;">'
-            'Todavía no hay datos por tienda para este mes. Se completa automáticamente '
-            'la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).'
-            '</div>',
+            f'<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+            f'{descripcion}</div>',
             unsafe_allow_html=True
         )
+        if not len(tiendas_resumen):
+            st.markdown(
+                '<div class="upload-text" style="padding-bottom:14px;">'
+                'Todavía no hay datos por tienda para este mes. Se completa automáticamente '
+                'la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            return
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(
+                '<div style="font-size:12px;font-weight:800;color:#6b7280;'
+                'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">'
+                '🏆 Las 5 mejores</div>',
+                unsafe_allow_html=True
+            )
+            st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+            fig_mejores = tiendas_bar(mejores, metric, color_mejor, texttemplate)
+            if xaxis_kwargs:
+                fig_mejores.update_layout(**xaxis_kwargs)
+            st.plotly_chart(fig_mejores, use_container_width=True, config={"displaylogo": False})
+            st.markdown("</div>", unsafe_allow_html=True)
+        with c2:
+            st.markdown(
+                '<div style="font-size:12px;font-weight:800;color:#6b7280;'
+                'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">'
+                '⚠️ Las 5 peores</div>',
+                unsafe_allow_html=True
+            )
+            st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+            fig_peores = tiendas_bar(peores, metric, color_peor, texttemplate)
+            if xaxis_kwargs:
+                fig_peores.update_layout(**xaxis_kwargs)
+            st.plotly_chart(fig_peores, use_container_width=True, config={"displaylogo": False})
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    tiendas_section(
+        "Tiendas por venta ecommerce",
+        "Venta ecommerce acumulada del mes en curso, por tienda",
+        top_venta, bottom_venta, "ecommerce_tax",
+        "#2f9e66", "#d03b3b", "$%{text:,.0f}",
+        xaxis_kwargs=dict(xaxis_tickprefix="$", xaxis_tickformat=",.0f"),
+    )
+
+    tiendas_section(
+        "Tiendas por cantidad de pedidos",
+        "Pedidos ecommerce acumulados del mes en curso, por tienda",
+        top_pedidos, bottom_pedidos, "orders",
+        "#2f9e66", "#d03b3b", "%{text:,.0f}",
+    )
 
     st.markdown(
         '<div class="footer">'
