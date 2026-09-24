@@ -278,7 +278,7 @@ sep25_acc = sep25["ecommerce_tax"].sum()
 vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
 vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 
-# ---- Top 10 tiendas con más ventas (mes en curso) ----
+# ---- Top 5 tiendas con más ventas (mes en curso) ----
 current_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
 if len(df_tiendas):
     current_tiendas = df_tiendas[
@@ -292,7 +292,7 @@ if len(current_tiendas):
         current_tiendas.groupby(["Tienda", "Nombre"], as_index=False)
         .agg(ecommerce_tax=("ecommerce_tax", "sum"))
         .sort_values("ecommerce_tax", ascending=False)
-        .head(10)
+        .head(5)
         .reset_index(drop=True)
     )
 
@@ -986,7 +986,7 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    st.markdown('<div class="section">Top 10 tiendas con más ventas</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section">Top 5 tiendas con más ventas</div>', unsafe_allow_html=True)
     st.markdown(
         '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
         'Venta ecommerce acumulada del mes en curso, por tienda'
