@@ -506,7 +506,7 @@ else:
 # ---------------------------------------------------------------------
 
 st.markdown(
-    '<div class="section">📊 Ranking del período elegido</div>'
+    '<div class="section">🏬 Top 10 tiendas — mejor rendimiento</div>'
     f'<div class="section-desc">Acumulado de todo el historial disponible'
     f'{"" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"}, '
     'sumando todos los Reportes diarios subidos.</div>',
@@ -514,28 +514,29 @@ st.markdown(
 )
 
 if log_filtrado is not None and len(log_filtrado):
-    periodo = log_filtrado.groupby("Picker", as_index=False).agg(
-        Tienda=("Tienda", "first"),
+    tiendas_periodo = log_filtrado.groupby("Tienda", as_index=False).agg(
+        Pickers=("Picker", "nunique"),
         Dias=("Fecha", "nunique"),
         Pedidos=("Pedidos", "sum"),
         Unidades=("Unidades", "sum"),
         Rendimiento=("Rendimiento", "mean"),
-    ).sort_values("Unidades", ascending=False)
+    ).sort_values("Rendimiento", ascending=False)
+    tiendas_periodo = tiendas_periodo.rename(columns={"Dias": "Días"})
 
-    ptop = periodo.head(20).copy()
-    ptop["Rendimiento"] = ptop["Rendimiento"].apply(num1)
-    ptop["Pedidos"] = ptop["Pedidos"].apply(num0)
-    ptop["Unidades"] = ptop["Unidades"].apply(num0)
-    st.write(table_html(ptop), unsafe_allow_html=True)
+    ttop = tiendas_periodo.head(10).copy()
+    ttop["Rendimiento"] = ttop["Rendimiento"].apply(num1)
+    ttop["Pedidos"] = ttop["Pedidos"].apply(num0)
+    ttop["Unidades"] = ttop["Unidades"].apply(num0)
+    st.write(table_html(ttop), unsafe_allow_html=True)
 
-    if len(periodo) > 20:
-        with st.expander(f"Ver los {len(periodo)} pickers del período"):
+    if len(tiendas_periodo) > 10:
+        with st.expander(f"Ver las {len(tiendas_periodo)} tiendas del período"):
             with st.container(height=420):
-                pfull = periodo.copy()
-                pfull["Rendimiento"] = pfull["Rendimiento"].apply(num1)
-                pfull["Pedidos"] = pfull["Pedidos"].apply(num0)
-                pfull["Unidades"] = pfull["Unidades"].apply(num0)
-                st.write(table_html(pfull), unsafe_allow_html=True)
+                tfull = tiendas_periodo.copy()
+                tfull["Rendimiento"] = tfull["Rendimiento"].apply(num1)
+                tfull["Pedidos"] = tfull["Pedidos"].apply(num0)
+                tfull["Unidades"] = tfull["Unidades"].apply(num0)
+                st.write(table_html(tfull), unsafe_allow_html=True)
 elif log_df is None:
     st.markdown(
         '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
