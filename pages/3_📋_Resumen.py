@@ -802,6 +802,7 @@ if df_faltantes_raw is not None:
         None
     )
     d["CodigoPrincipal"] = d[_cod_col].apply(norm_codigo) if _cod_col else ""
+    d["Departamento"] = d["Departamento@DESC"].apply(norm_txt) if "Departamento@DESC" in d.columns else ""
     d["Etiqueta"] = d.get("Etiqueta_Stock", "").apply(norm_txt)
     d = d[d["Etiqueta"] != ""]
     # El archivo trae el mes completo (desde el día 1) con la fecha real de
@@ -1077,6 +1078,52 @@ else:
             body = kpi_html + (
                 '<div class="resumen-title" style="margin-top:14px;">Top 5 SKU con más faltantes (acumulado del mes)</div>'
                 + html_sku_tienda
+            )
+
+            # Listado detallado: qué faltó puntualmente el día anterior y qué
+            # falta hoy (dos tablas separadas, una por día).
+            _detail_cols = [c for c in ["Departamento", "Producto", "CodigoPrincipal"] if c in faltantes.columns]
+            _detail_rename = {"Producto": "SKU", "CodigoPrincipal": "Código Principal"}
+
+            def _detalle_dia_html(fecha_ref):
+                if fecha_ref is None:
+                    return None
+                sub = faltantes[_fecha_norm == fecha_ref]
+                if not len(sub):
+                    return None
+                sub = sub[_detail_cols].rename(columns=_detail_rename).sort_values(
+                    "SKU" if "SKU" in _detail_rename.values() else _detail_cols[0]
+                )
+                return table_html(sub)
+
+            html_detalle_anterior = _detalle_dia_html(fecha_anterior_falt)
+            html_detalle_actual = _detalle_dia_html(fecha_actual_falt)
+
+            col_det1, col_det2 = st.columns(2)
+            with col_det1:
+                st.markdown(
+                    f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_anterior}</div>',
+                    unsafe_allow_html=True
+                )
+                if html_detalle_anterior:
+                    st.write(html_detalle_anterior, unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="empty-box">Sin faltantes ese día 🎉</div>', unsafe_allow_html=True)
+            with col_det2:
+                st.markdown(
+                    f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_actual}</div>',
+                    unsafe_allow_html=True
+                )
+                if html_detalle_actual:
+                    st.write(html_detalle_actual, unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="empty-box">Sin faltantes ese día 🎉</div>', unsafe_allow_html=True)
+
+            body += (
+                f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_anterior}</div>'
+                + (html_detalle_anterior or '<div class="empty-box">Sin faltantes ese día 🎉</div>')
+                + f'<div class="resumen-title" style="margin-top:18px;">Detalle — {label_actual}</div>'
+                + (html_detalle_actual or '<div class="empty-box">Sin faltantes ese día 🎉</div>')
             )
         else:
             st.markdown('<div class="empty-box">Sin faltantes 🎉</div>', unsafe_allow_html=True)
