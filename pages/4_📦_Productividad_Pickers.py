@@ -416,49 +416,75 @@ if log_df is not None and len(log_df):
     ]
 
 # ---------------------------------------------------------------------
-# Ranking de hoy
+# Ranking de pickers por fecha (elegís cualquier día del historial, no
+# solo el último Reporte diario subido)
 # ---------------------------------------------------------------------
 
+fechas_disponibles_dia = []
+if log_df is not None and len(log_df) and log_df["FechaDt"].notna().any():
+    fechas_disponibles_dia = sorted(log_df["FechaDt"].dropna().dt.normalize().unique(), reverse=True)
+
+fsec1, fsec2 = st.columns([1, 3])
+with fsec1:
+    if fechas_disponibles_dia:
+        opciones_fecha_dia = [f.strftime("%d/%m/%Y") for f in fechas_disponibles_dia]
+        fecha_dia_sel_str = st.selectbox("Fecha", opciones_fecha_dia, index=0, key="pickers_fecha_dia")
+        fecha_dia_sel = fechas_disponibles_dia[opciones_fecha_dia.index(fecha_dia_sel_str)]
+    else:
+        fecha_dia_sel = None
+
 st.markdown(
-    '<div class="section">🏆 Ranking de pickers — hoy</div>'
-    '<div class="section-desc">Ordenado por unidades pickeadas, de mayor a menor (siempre el último '
-    'Reporte diario subido — el filtro de fechas no aplica acá, solo el de tienda). '
-    '"Rendimiento" es la columna "performance" del export (unidades/hora estimadas) — en pickers con '
-    'muy pocos pedidos ese número puede salir muy alto o muy bajo, así que conviene mirarlo junto a Pedidos/Unidades.</div>',
+    f'<div class="section">🏆 Ranking de pickers — {fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "por fecha"}</div>',
     unsafe_allow_html=True
 )
 
-if pickers is not None and len(pickers):
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Pickers activos", num0(len(pickers)))
-    c2.metric("Pedidos totales", num0(pickers["Pedidos"].sum()))
-    c3.metric("Unidades totales", num0(pickers["Unidades"].sum()))
-    c4.metric("Rendimiento promedio", num1(pickers["Rendimiento"].mean()))
+if fecha_dia_sel is None:
+    if reporte_bytes is not None:
+        st.markdown(
+            '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
+            'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown('<div class="empty-box">Subí un Reporte diario en Operativo para ver esta sección.</div>', unsafe_allow_html=True)
+else:
+    dia_df = log_df[log_df["FechaDt"].dt.normalize() == fecha_dia_sel].copy()
+    if filtro_tienda != "Todas":
+        dia_df = dia_df[dia_df["Tienda"] == filtro_tienda]
+    dia_df = dia_df.sort_values("Unidades", ascending=False)
 
-    top = pickers.head(20).copy()
-    for c in ["Rendimiento", "Rend. picking"]:
-        top[c] = top[c].apply(num1)
-    for c in ["Found Rate", "Fill Rate"]:
-        top[c] = top[c].apply(pct1)
-    top["Pedidos"] = top["Pedidos"].apply(num0)
-    top["Unidades"] = top["Unidades"].apply(num0)
-    st.write(table_html(top), unsafe_allow_html=True)
+    if len(dia_df):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Pickers activos", num0(dia_df["Picker"].nunique()))
+        c2.metric("Pedidos totales", num0(dia_df["Pedidos"].sum()))
+        c3.metric("Unidades totales", num0(dia_df["Unidades"].sum()))
+        c4.metric("Rendimiento promedio", num1(dia_df["Rendimiento"].mean()))
 
-    if len(pickers) > 20:
-        with st.expander(f"Ver los {len(pickers)} pickers"):
-            with st.container(height=420):
-                full = pickers.copy()
-                for c in ["Rendimiento", "Rend. picking"]:
-                    full[c] = full[c].apply(num1)
-                for c in ["Found Rate", "Fill Rate"]:
-                    full[c] = full[c].apply(pct1)
-                full["Pedidos"] = full["Pedidos"].apply(num0)
-                full["Unidades"] = full["Unidades"].apply(num0)
-                st.write(table_html(full), unsafe_allow_html=True)
-elif pickers_all is not None:
-    st.markdown('<div class="empty-box">Sin pickers para esta tienda en el último reporte.</div>', unsafe_allow_html=True)
-elif reporte_bytes is not None:
-    st.markdown('<div class="empty-box">No encontré datos de pickers en el Reporte diario subido.</div>', unsafe_allow_html=True)
+        cols_dia = ["Picker", "Tienda", "Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]
+        rename_dia = {"RendimientoPicking": "Rend. picking", "FoundRate": "Found Rate", "FillRate": "Fill Rate"}
+
+        top = dia_df[cols_dia].rename(columns=rename_dia).head(20).copy()
+        for c in ["Rendimiento", "Rend. picking"]:
+            top[c] = top[c].apply(num1)
+        for c in ["Found Rate", "Fill Rate"]:
+            top[c] = top[c].apply(pct1)
+        top["Pedidos"] = top["Pedidos"].apply(num0)
+        top["Unidades"] = top["Unidades"].apply(num0)
+        st.write(table_html(top), unsafe_allow_html=True)
+
+        if len(dia_df) > 20:
+            with st.expander(f"Ver los {len(dia_df)} pickers"):
+                with st.container(height=420):
+                    full = dia_df[cols_dia].rename(columns=rename_dia).copy()
+                    for c in ["Rendimiento", "Rend. picking"]:
+                        full[c] = full[c].apply(num1)
+                    for c in ["Found Rate", "Fill Rate"]:
+                        full[c] = full[c].apply(pct1)
+                    full["Pedidos"] = full["Pedidos"].apply(num0)
+                    full["Unidades"] = full["Unidades"].apply(num0)
+                    st.write(table_html(full), unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="empty-box">Sin pickers para esta tienda en esa fecha.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Ranking del período (acumulado del rango de fechas elegido)
