@@ -421,25 +421,18 @@ if log_df is not None and len(log_df):
     ]
 
 # ---------------------------------------------------------------------
-# Ranking de pickers por fecha (elegís cualquier día del historial, no
-# solo el último Reporte diario subido)
+# Ranking de pickers — último día con datos en el historial (sin selector:
+# siempre el más reciente).
 # ---------------------------------------------------------------------
 
 fechas_disponibles_dia = []
 if log_df is not None and len(log_df) and log_df["FechaDt"].notna().any():
     fechas_disponibles_dia = sorted(log_df["FechaDt"].dropna().dt.normalize().unique(), reverse=True)
 
-fsec1, fsec2 = st.columns([1, 3])
-with fsec1:
-    if fechas_disponibles_dia:
-        opciones_fecha_dia = [f.strftime("%d/%m/%Y") for f in fechas_disponibles_dia]
-        fecha_dia_sel_str = st.selectbox("Fecha", opciones_fecha_dia, index=0, key="pickers_fecha_dia")
-        fecha_dia_sel = fechas_disponibles_dia[opciones_fecha_dia.index(fecha_dia_sel_str)]
-    else:
-        fecha_dia_sel = None
+fecha_dia_sel = fechas_disponibles_dia[0] if fechas_disponibles_dia else None
 
 st.markdown(
-    f'<div class="section">🏆 Ranking de pickers — {fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "por fecha"}</div>',
+    f'<div class="section">🏆 Ranking de pickers — {fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "hoy"}</div>',
     unsafe_allow_html=True
 )
 
