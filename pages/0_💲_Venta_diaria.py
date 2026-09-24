@@ -322,18 +322,18 @@ if len(current_tiendas):
         .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
     )
 
-def top_bottom_tiendas(metric, n=5):
-    """Devuelve (mejores, peores) — n filas cada una, ordenadas de forma que
-    al graficarlas horizontalmente la mejor/peor quede arriba."""
+def top_bottom_tiendas(metric, n_top=10, n_bottom=5):
+    """Devuelve (mejores, peores) ordenadas de forma que al mostrarlas la
+    mejor/peor quede primera."""
     if not len(tiendas_resumen):
         vacio = tiendas_resumen.copy()
         return vacio, vacio
     ordenado = tiendas_resumen.sort_values(metric, ascending=False)
-    mejores = ordenado.head(n).reset_index(drop=True)
-    peores = ordenado.tail(n).sort_values(metric, ascending=True).reset_index(drop=True)
+    mejores = ordenado.head(n_top).reset_index(drop=True)
+    peores = ordenado.tail(n_bottom).sort_values(metric, ascending=True).reset_index(drop=True)
     return mejores, peores
 
-top_venta, bottom_venta = top_bottom_tiendas("ecommerce_tax")
+top_venta, bottom_venta = top_bottom_tiendas("ecommerce_tax", n_top=10, n_bottom=5)
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -1026,54 +1026,48 @@ with tab1:
             )
 
     def tienda_rank_table_html(rows_df, icon, icon_bg, icon_color, badge_bg, badge_color, titulo):
-        header = f"""
-        <div class="rank-table-header">
-          <div class="rank-table-icon" style="background:{icon_bg};color:{icon_color};">{icon}</div>
-          <div class="rank-table-title">{titulo}</div>
-        </div>
-        """
+        # Nota: el HTML se arma en una sola línea por elemento (sin saltos de
+        # línea indentados) porque Streamlit interpreta texto indentado con
+        # 4+ espacios después de un salto de línea como bloque de código, y
+        # lo muestra como texto plano en vez de renderizarlo.
+        header = (
+            '<div class="rank-table-header">'
+            f'<div class="rank-table-icon" style="background:{icon_bg};color:{icon_color};">{icon}</div>'
+            f'<div class="rank-table-title">{titulo}</div>'
+            '</div>'
+        )
         if not len(rows_df):
-            return f"""
-            <div class="rank-table-card">
-              {header}
-              <div style="padding:20px;color:#9ca3af;font-size:13px;">
-                Todavía no hay datos por tienda para este mes. Se completa automáticamente
-                la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).
-              </div>
-            </div>
-            """
+            return (
+                f'<div class="rank-table-card">{header}'
+                '<div style="padding:20px;color:#9ca3af;font-size:13px;">'
+                'Todavía no hay datos por tienda para este mes. Se completa automáticamente '
+                'la próxima vez que se suba el Excel desde "app" (si trae las columnas Tienda y Nombre).'
+                '</div></div>'
+            )
 
         rows_html = ""
         for i, r in enumerate(rows_df.itertuples(), start=1):
             nombre = str(r.Nombre) if r.Nombre else ""
             tienda_label = f"{r.Tienda} - {nombre}" if nombre else str(r.Tienda)
-            rows_html += f"""
-            <tr>
-              <td><span class="rank-badge" style="background:{badge_bg};color:{badge_color};">{i}</span></td>
-              <td>{html.escape(tienda_label)}</td>
-              <td style="text-align:center;">{intfmt(r.orders)}</td>
-              <td style="text-align:right;font-weight:800;">{money(r.ecommerce_tax)}</td>
-            </tr>
-            """
+            rows_html += (
+                '<tr>'
+                f'<td><span class="rank-badge" style="background:{badge_bg};color:{badge_color};">{i}</span></td>'
+                f'<td>{html.escape(tienda_label)}</td>'
+                f'<td style="text-align:center;">{intfmt(r.orders)}</td>'
+                f'<td style="text-align:right;font-weight:800;">{money(r.ecommerce_tax)}</td>'
+                '</tr>'
+            )
 
-        return f"""
-        <div class="rank-table-card">
-          {header}
-          <div class="table-scroll">
-          <table class="rank-table">
-            <thead>
-              <tr>
-                <th></th>
-                <th>Tienda</th>
-                <th style="text-align:center;">Pedidos eCommerce</th>
-                <th style="text-align:right;">Venta eCommerce (con impuesto)</th>
-              </tr>
-            </thead>
-            <tbody>{rows_html}</tbody>
-          </table>
-          </div>
-        </div>
-        """
+        return (
+            f'<div class="rank-table-card">{header}'
+            '<div class="table-scroll">'
+            '<table class="rank-table"><thead><tr>'
+            '<th></th><th>Tienda</th>'
+            '<th style="text-align:center;">Pedidos eCommerce</th>'
+            '<th style="text-align:right;">Venta eCommerce (con impuesto)</th>'
+            f'</tr></thead><tbody>{rows_html}</tbody></table>'
+            '</div></div>'
+        )
 
     st.markdown('<div class="section">Tiendas eCommerce - Mes en curso</div>', unsafe_allow_html=True)
     st.markdown(
@@ -1088,7 +1082,7 @@ with tab1:
         st.markdown(
             tienda_rank_table_html(
                 top_venta, "🏆", "#dceefb", "#1f5aa8", "#dceefb", "#1f5aa8",
-                "Las 5 mejores"
+                "Las 10 mejores"
             ),
             unsafe_allow_html=True
         )
