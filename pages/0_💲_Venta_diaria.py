@@ -79,21 +79,10 @@ st.markdown("""
     .rank-table-card {
         background: white; border-radius: 14px; overflow: hidden;
         border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.06);
-        height: 100%;
     }
-    .rank-table-header {
-        display: flex; align-items: center; gap: 12px;
-        padding: 16px 20px; border-bottom: 1px solid #eef1f4;
-    }
-    .rank-table-icon {
-        width: 36px; height: 36px; border-radius: 10px;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 18px; flex-shrink: 0;
-    }
-    .rank-table-title { font-size: 16px; font-weight: 800; color: #20252b; }
     table.rank-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     table.rank-table thead th {
-        background: #eaf2fc; color: #1f5aa8; font-weight: 700;
+        background: #e9f7ef; color: #208653; font-weight: 700;
         padding: 10px 14px; text-align: left; white-space: nowrap;
     }
     table.rank-table td {
@@ -1025,15 +1014,15 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    def tienda_rank_table_html(rows_df, icon, icon_bg, icon_color, badge_bg, badge_color, titulo):
+    def tienda_rank_table_html(rows_df, titulo):
         # Nota: el HTML se arma en una sola línea por elemento (sin saltos de
         # línea indentados) porque Streamlit interpreta texto indentado con
         # 4+ espacios después de un salto de línea como bloque de código, y
         # lo muestra como texto plano en vez de renderizarlo.
         header = (
-            '<div class="rank-table-header">'
-            f'<div class="rank-table-icon" style="background:{icon_bg};color:{icon_color};">{icon}</div>'
-            f'<div class="rank-table-title">{titulo}</div>'
+            '<div style="background:#2f9e66;color:#fff;font-weight:800;'
+            'font-size:15px;padding:13px 20px;display:flex;align-items:center;gap:10px;">'
+            f'<span>🏆</span><span>{titulo}</span>'
             '</div>'
         )
         if not len(rows_df):
@@ -1051,10 +1040,11 @@ with tab1:
             tienda_label = f"{r.Tienda} - {nombre}" if nombre else str(r.Tienda)
             rows_html += (
                 '<tr>'
-                f'<td><span class="rank-badge" style="background:{badge_bg};color:{badge_color};">{i}</span></td>'
+                '<td><span class="rank-badge" style="background:#2f9e66;color:#fff;">'
+                f'{i}</span></td>'
                 f'<td>{html.escape(tienda_label)}</td>'
                 f'<td style="text-align:center;">{intfmt(r.orders)}</td>'
-                f'<td style="text-align:right;font-weight:800;">{money(r.ecommerce_tax)}</td>'
+                f'<td style="text-align:right;font-weight:800;color:#208653;">{money(r.ecommerce_tax)}</td>'
                 '</tr>'
             )
 
@@ -1069,7 +1059,7 @@ with tab1:
             '</div></div>'
         )
 
-    st.markdown('<div class="section">Tiendas eCommerce - Mes en curso</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section">Top 10 tiendas eCommerce - Mes en curso</div>', unsafe_allow_html=True)
     st.markdown(
         '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
         'Ranking por venta ecommerce acumulada del mes en curso, con pedidos de cada tienda.'
@@ -1077,23 +1067,10 @@ with tab1:
         unsafe_allow_html=True
     )
 
-    rc1, rc2 = st.columns(2)
-    with rc1:
-        st.markdown(
-            tienda_rank_table_html(
-                top_venta, "🏆", "#dceefb", "#1f5aa8", "#dceefb", "#1f5aa8",
-                "Las 10 mejores"
-            ),
-            unsafe_allow_html=True
-        )
-    with rc2:
-        st.markdown(
-            tienda_rank_table_html(
-                bottom_venta, "⚠️", "#fbdede", "#b91c1c", "#fbdede", "#b91c1c",
-                "Las 5 peores"
-            ),
-            unsafe_allow_html=True
-        )
+    st.markdown(
+        tienda_rank_table_html(top_venta, "TOP 10 · VENTA ECOMMERCE"),
+        unsafe_allow_html=True
+    )
 
     st.markdown(
         '<div class="footer">'
