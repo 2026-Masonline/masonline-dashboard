@@ -613,23 +613,52 @@ def _pickers_log_ws():
         _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
         return None
 
-def log_pickers_to_sheet(pickers_df, fecha_str):
-    """Agrega al historial la productividad de hoy de cada picker. Devuelve
-    True si pudo escribir (o si no había nada para escribir), False si falló
-    la conexión con Google Sheets."""
+def replace_pickers_dia_en_sheet(pickers_df, fecha_str):
+    """Reemplaza en el historial las filas del día 'fecha_str' con la
+    productividad de hoy de cada picker, y deja intactas las de cualquier
+    otro día ya guardado. Antes esto se agregaba con append_rows a secas,
+    lo que iba duplicando todo cada vez que la app se reiniciaba y volvía a
+    procesar el mismo Reporte diario (el guard de session_state no
+    sobrevive a un reboot). Devuelve True si pudo escribir (o si no había
+    nada para escribir), False si falló la conexión con Google Sheets."""
     ws = _pickers_log_ws()
     if ws is None:
         return False
     if pickers_df is None or not len(pickers_df):
         return True
-    rows = [
+
+    try:
+        existing = ws.get_all_records()
+    except Exception:
+        existing = []
+
+    # De paso, saca duplicados exactos que hayan quedado de antes de este
+    # cambio (cuando se agregaba con append_rows a secas y cada reinicio de
+    # la app volvía a sumar las mismas filas del mismo día).
+    keep_rows = []
+    _vistas = set()
+    for r in existing:
+        if str(r.get("Fecha", "")) == fecha_str:
+            continue
+        row = tuple(r.get(h, "") for h in PICKER_LOG_HEADERS)
+        if row in _vistas:
+            continue
+        _vistas.add(row)
+        keep_rows.append(list(row))
+
+    new_rows = [
         [fecha_str, r.get("Picker", ""), r.get("Deposito", ""),
          r.get("Pedidos", ""), r.get("Unidades", ""), r.get("Rendimiento", ""),
          r.get("RendimientoPicking", ""), r.get("FoundRate", ""), r.get("FillRate", "")]
         for _, r in pickers_df.iterrows()
     ]
+
     try:
-        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        ws.clear()
+        ws.append_row(PICKER_LOG_HEADERS)
+        todas = keep_rows + new_rows
+        if todas:
+            ws.append_rows(todas, value_input_option="USER_ENTERED")
         return True
     except Exception:
         return False
@@ -1709,7 +1738,7 @@ if faltantes_historial_completo is not None and faltantes_es_nuevo and len(falta
 if pickers is not None and reporte_es_nuevo and len(pickers):
     _pickers_hash = hashlib.md5(reporte_bytes).hexdigest()
     if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
-        if log_pickers_to_sheet(pickers, fecha_hoy_str):
+        if replace_pickers_dia_en_sheet(pickers, fecha_hoy_str):
             st.session_state["_pickers_logged_hash"] = _pickers_hash
 
 all_stores = set()
