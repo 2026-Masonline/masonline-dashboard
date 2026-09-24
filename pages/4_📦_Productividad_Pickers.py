@@ -5,7 +5,6 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 # Historial día a día: se guarda en el mismo Google Sheet que Faltantes (hoja
 # "HistorialPickers"), escrito desde la pestaña Operativo cada vez que se sube
@@ -377,9 +376,8 @@ if reporte_bytes is not None:
 log_df = load_pickers_log()
 
 # ---------------------------------------------------------------------
-# Filtros: Tienda/Depósito y rango de fechas (desde/hasta). El de tienda
-# se aplica al ranking de hoy y al historial; el de fechas solo tiene
-# sentido en el historial (el ranking de hoy es siempre el último día).
+# Filtro: Tienda/Depósito. Se aplica al ranking de hoy y a todo el
+# historial (que siempre muestra el período completo disponible).
 # ---------------------------------------------------------------------
 
 tiendas = set()
@@ -389,23 +387,7 @@ if log_df is not None and len(log_df) and "Tienda" in log_df.columns:
     tiendas.update([t for t in log_df["Tienda"].unique() if t])
 tiendas = sorted(tiendas)
 
-if log_df is not None and len(log_df) and log_df["FechaDt"].notna().any():
-    min_date = log_df["FechaDt"].min().date()
-    max_date = log_df["FechaDt"].max().date()
-else:
-    _hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-    min_date = max_date = _hoy
-
-f1, f2, f3 = st.columns([2, 1, 1])
-with f1:
-    filtro_tienda = st.selectbox("Tienda", ["Todas"] + tiendas, key="pickers_filtro_tienda")
-with f2:
-    filtro_desde = st.date_input("Desde", value=min_date, min_value=min_date, max_value=max_date, key="pickers_desde")
-with f3:
-    filtro_hasta = st.date_input("Hasta", value=max_date, min_value=min_date, max_value=max_date, key="pickers_hasta")
-
-if filtro_desde > filtro_hasta:
-    st.warning("La fecha 'Desde' es posterior a 'Hasta' — invertí las fechas para ver resultados.")
+filtro_tienda = st.selectbox("Tienda", ["Todas"] + tiendas, key="pickers_filtro_tienda")
 
 pickers = pickers_all
 if pickers is not None and filtro_tienda != "Todas":
@@ -416,9 +398,6 @@ if log_df is not None and len(log_df):
     log_filtrado = log_df.copy()
     if filtro_tienda != "Todas":
         log_filtrado = log_filtrado[log_filtrado["Tienda"] == filtro_tienda]
-    log_filtrado = log_filtrado[
-        (log_filtrado["FechaDt"].dt.date >= filtro_desde) & (log_filtrado["FechaDt"].dt.date <= filtro_hasta)
-    ]
 
 # ---------------------------------------------------------------------
 # Ranking de pickers — último día con datos en el historial (sin selector:
@@ -432,7 +411,7 @@ if log_df is not None and len(log_df) and log_df["FechaDt"].notna().any():
 fecha_dia_sel = fechas_disponibles_dia[0] if fechas_disponibles_dia else None
 
 st.markdown(
-    f'<div class="section">🏆 Ranking de pickers — {fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "hoy"}</div>',
+    '<div class="section">🏆 Ranking de pickers</div>',
     unsafe_allow_html=True
 )
 
@@ -489,9 +468,9 @@ else:
 
 st.markdown(
     '<div class="section">📊 Ranking del período elegido</div>'
-    f'<div class="section-desc">Acumulado entre el {filtro_desde.strftime("%d/%m/%Y")} y el '
-    f'{filtro_hasta.strftime("%d/%m/%Y")}{"" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"}, '
-    'sumando todos los Reportes diarios subidos en ese rango.</div>',
+    f'<div class="section-desc">Acumulado de todo el historial disponible'
+    f'{"" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"}, '
+    'sumando todos los Reportes diarios subidos.</div>',
     unsafe_allow_html=True
 )
 
@@ -525,7 +504,7 @@ elif log_df is None:
         unsafe_allow_html=True
     )
 else:
-    st.markdown('<div class="empty-box">Sin datos acumulados para esta tienda y este rango de fechas.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="empty-box">Sin datos acumulados para esta tienda.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Evolución día a día (historial acumulado en Google Sheets)
@@ -534,7 +513,7 @@ else:
 st.markdown(
     '<div class="section">📈 Evolución día a día</div>'
     '<div class="section-desc">Se arma solo, con cada Reporte diario que se suba en Operativo '
-    '(una fila por picker, por día). Respeta los filtros de tienda y fechas de arriba.</div>',
+    '(una fila por picker, por día). Respeta el filtro de tienda de arriba.</div>',
     unsafe_allow_html=True
 )
 
@@ -556,7 +535,7 @@ elif not len(log_df):
         unsafe_allow_html=True
     )
 elif log_filtrado is None or not len(log_filtrado):
-    st.markdown('<div class="empty-box">Sin datos para esta tienda y este rango de fechas.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="empty-box">Sin datos para esta tienda.</div>', unsafe_allow_html=True)
 else:
     diario = log_filtrado.groupby("Fecha", as_index=False).agg(
         FechaDt=("FechaDt", "first"),
