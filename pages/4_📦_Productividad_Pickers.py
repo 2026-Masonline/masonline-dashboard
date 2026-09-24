@@ -514,14 +514,15 @@ st.markdown(
 )
 
 if log_filtrado is not None and len(log_filtrado):
-    tiendas_periodo = log_filtrado.groupby("Tienda", as_index=False).agg(
+    _base_tiendas = log_filtrado[~log_filtrado["Deposito"].apply(norm_txt).isin(DEPOSITO_INVALIDO)]
+    tiendas_periodo = _base_tiendas.groupby("Deposito", as_index=False).agg(
         Pickers=("Picker", "nunique"),
         Dias=("Fecha", "nunique"),
         Pedidos=("Pedidos", "sum"),
         Unidades=("Unidades", "sum"),
         Rendimiento=("Rendimiento", "mean"),
     ).sort_values("Rendimiento", ascending=False)
-    tiendas_periodo = tiendas_periodo.rename(columns={"Dias": "Días"})
+    tiendas_periodo = tiendas_periodo.rename(columns={"Deposito": "Tienda", "Dias": "Días"})
 
     ttop = tiendas_periodo.head(10).copy()
     ttop["Rendimiento"] = ttop["Rendimiento"].apply(num1)
