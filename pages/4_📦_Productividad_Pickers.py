@@ -774,7 +774,7 @@ else:
     tabla = diario[["Fecha", "Pickers", "Pedidos", "Unidades", "Rendimiento"]].copy()
     tabla["Pedidos"] = tabla["Pedidos"].apply(num0)
     tabla["Unidades"] = tabla["Unidades"].apply(num0)
-    tabla["Rendimiento"] = tabla["Rendimiento"].apply(num1)
+    tabla["Rendimiento"] = tabla["Rendimiento"].apply(pct1)
     tabla = tabla.rename(columns={"Rendimiento": "Rendimiento prom."})
     st.write(table_html(tabla.iloc[::-1]), unsafe_allow_html=True)
 
