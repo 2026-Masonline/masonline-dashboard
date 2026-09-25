@@ -616,50 +616,53 @@ else:
         st.markdown('<div class="empty-box">Sin pickers para esta tienda en esa fecha.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
-# Ranking del período (acumulado del rango de fechas elegido)
+# Ranking del período (acumulado del rango de fechas elegido). Solo tiene
+# sentido cuando se están viendo todas las tiendas — si ya se filtró por
+# una tienda puntual, este ranking quedaría con una sola fila, así que se
+# oculta y se deja solo la info de los pickers.
 # ---------------------------------------------------------------------
 
-st.markdown(
-    '<div class="section">🏬 Top 10 tiendas — mejor rendimiento</div>'
-    f'<div class="section-desc">Acumulado de todo el historial disponible'
-    f'{"" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"}, '
-    'sumando todos los Reportes diarios subidos.</div>',
-    unsafe_allow_html=True
-)
-
-if log_filtrado is not None and len(log_filtrado):
-    _base_tiendas = log_filtrado[~log_filtrado["Deposito"].apply(norm_txt).isin(DEPOSITO_INVALIDO)]
-    tiendas_periodo = _base_tiendas.groupby("Deposito", as_index=False).agg(
-        Pickers=("Picker", "nunique"),
-        Dias=("Fecha", "nunique"),
-        Pedidos=("Pedidos", "sum"),
-        Unidades=("Unidades", "sum"),
-        Rendimiento=("Rendimiento", "mean"),
-    ).sort_values("Rendimiento", ascending=False)
-    tiendas_periodo = tiendas_periodo.rename(columns={"Deposito": "Tienda", "Dias": "Días"})
-
-    ttop = tiendas_periodo.head(10).copy()
-    ttop["Rendimiento"] = ttop["Rendimiento"].apply(num1)
-    ttop["Pedidos"] = ttop["Pedidos"].apply(num0)
-    ttop["Unidades"] = ttop["Unidades"].apply(num0)
-    st.write(table_html(ttop), unsafe_allow_html=True)
-
-    if len(tiendas_periodo) > 10:
-        with st.expander(f"Ver las {len(tiendas_periodo)} tiendas del período"):
-            with st.container(height=420):
-                tfull = tiendas_periodo.copy()
-                tfull["Rendimiento"] = tfull["Rendimiento"].apply(num1)
-                tfull["Pedidos"] = tfull["Pedidos"].apply(num0)
-                tfull["Unidades"] = tfull["Unidades"].apply(num0)
-                st.write(table_html(tfull), unsafe_allow_html=True)
-elif log_df is None:
+if filtro_tienda == "Todas":
     st.markdown(
-        '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
-        'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+        '<div class="section">🏬 Top 10 tiendas — mejor rendimiento</div>'
+        '<div class="section-desc">Acumulado de todo el historial disponible, '
+        'sumando todos los Reportes diarios subidos.</div>',
         unsafe_allow_html=True
     )
-else:
-    st.markdown('<div class="empty-box">Sin datos acumulados para esta tienda.</div>', unsafe_allow_html=True)
+
+    if log_filtrado is not None and len(log_filtrado):
+        _base_tiendas = log_filtrado[~log_filtrado["Deposito"].apply(norm_txt).isin(DEPOSITO_INVALIDO)]
+        tiendas_periodo = _base_tiendas.groupby("Deposito", as_index=False).agg(
+            Pickers=("Picker", "nunique"),
+            Dias=("Fecha", "nunique"),
+            Pedidos=("Pedidos", "sum"),
+            Unidades=("Unidades", "sum"),
+            Rendimiento=("Rendimiento", "mean"),
+        ).sort_values("Rendimiento", ascending=False)
+        tiendas_periodo = tiendas_periodo.rename(columns={"Deposito": "Tienda", "Dias": "Días"})
+
+        ttop = tiendas_periodo.head(10).copy()
+        ttop["Rendimiento"] = ttop["Rendimiento"].apply(num1)
+        ttop["Pedidos"] = ttop["Pedidos"].apply(num0)
+        ttop["Unidades"] = ttop["Unidades"].apply(num0)
+        st.write(table_html(ttop), unsafe_allow_html=True)
+
+        if len(tiendas_periodo) > 10:
+            with st.expander(f"Ver las {len(tiendas_periodo)} tiendas del período"):
+                with st.container(height=420):
+                    tfull = tiendas_periodo.copy()
+                    tfull["Rendimiento"] = tfull["Rendimiento"].apply(num1)
+                    tfull["Pedidos"] = tfull["Pedidos"].apply(num0)
+                    tfull["Unidades"] = tfull["Unidades"].apply(num0)
+                    st.write(table_html(tfull), unsafe_allow_html=True)
+    elif log_df is None:
+        st.markdown(
+            '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
+            'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown('<div class="empty-box">Sin datos acumulados.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Productividad del picker en un rango de fechas elegido
