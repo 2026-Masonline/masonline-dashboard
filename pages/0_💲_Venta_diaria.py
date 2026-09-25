@@ -1062,16 +1062,6 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Variación de ventas e-commerce sobre la misma cantidad de días'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    a, b = st.columns(2)
-
     def compare_box(title, value, base_text):
         cls = "positive" if value >= 0 else "negative"
         arrow = "↑" if value >= 0 else "↓"
@@ -1083,38 +1073,6 @@ with tab1:
           <div class="compare-value {cls}">{arrow}&nbsp;&nbsp;{value:+.1%}</div>
         </div>
         """
-
-    with a:
-        if vs_aug is not None:
-            st.markdown(
-                compare_box(
-                    "VS MES ANTERIOR",
-                    vs_aug,
-                    f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"
-                ),
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                compare_box("VS MES ANTERIOR", 0, "Sin base disponible"),
-                unsafe_allow_html=True
-            )
-
-    with b:
-        if vs_25 is not None:
-            st.markdown(
-                compare_box(
-                    "VS MISMO MES AÑO ANTERIOR",
-                    vs_25,
-                    f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
-                ),
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                compare_box("VS MISMO MES AÑO ANTERIOR", 0, "Sin base disponible"),
-                unsafe_allow_html=True
-            )
 
     def tienda_rank_table_html(rows_df, titulo, empty_msg=None):
         # Nota: el HTML se arma en una sola línea por elemento (sin saltos de
@@ -1260,6 +1218,48 @@ with tab1:
             ),
             unsafe_allow_html=True
         )
+
+    st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Variación de ventas e-commerce sobre la misma cantidad de días'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    a, b = st.columns(2)
+
+    with a:
+        if vs_aug is not None:
+            st.markdown(
+                compare_box(
+                    "VS MES ANTERIOR",
+                    vs_aug,
+                    f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"
+                ),
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                compare_box("VS MES ANTERIOR", 0, "Sin base disponible"),
+                unsafe_allow_html=True
+            )
+
+    with b:
+        if vs_25 is not None:
+            st.markdown(
+                compare_box(
+                    "VS MISMO MES AÑO ANTERIOR",
+                    vs_25,
+                    f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
+                ),
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                compare_box("VS MISMO MES AÑO ANTERIOR", 0, "Sin base disponible"),
+                unsafe_allow_html=True
+            )
 
     st.markdown(
         '<div class="footer">'
