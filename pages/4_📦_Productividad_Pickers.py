@@ -542,6 +542,7 @@ else:
 
     if len(dia_df):
         tienda_desc = "" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"
+        fecha_label = fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "hoy"
 
         MESES_ES = {
             1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
@@ -549,8 +550,8 @@ else:
         }
         mes_label = f"{MESES_ES.get(fecha_dia_sel.month, '')} {fecha_dia_sel.year}"
 
-        # Las 4 cards de arriba muestran el acumulado del mes en curso (mismo
-        # mes que la fecha más reciente con datos), no solo el último día.
+        # Fila de arriba: acumulado del mes en curso (mismo mes que la fecha
+        # más reciente con datos), no solo el último día.
         if log_filtrado is not None and len(log_filtrado):
             mes_df = log_filtrado[
                 (log_filtrado["FechaDt"].dt.year == fecha_dia_sel.year)
@@ -564,10 +565,9 @@ else:
                 Tienda=("Tienda", "first"),
                 Pedidos=("Pedidos", "sum"),
                 Unidades=("Unidades", "sum"),
-                RendimientoPicking=("RendimientoPicking", "mean"),
             )
         else:
-            mes_agg = pd.DataFrame(columns=["Picker", "Tienda", "Pedidos", "Unidades", "RendimientoPicking"])
+            mes_agg = pd.DataFrame(columns=["Picker", "Tienda", "Pedidos", "Unidades"])
 
         def _detalle_mes_html(cols, sort_col, fmts):
             if not len(mes_agg):
@@ -592,11 +592,6 @@ else:
             f"Unidades acumuladas por picker en {mes_label}{tienda_desc}.",
             _detalle_mes_html(["Unidades"], "Unidades", [num0]),
         )
-        doc_ot_prep = card_export_html(
-            f"OT Preparación — {mes_label}",
-            f"OT Preparación promedio por picker en {mes_label}{tienda_desc}.",
-            _detalle_mes_html(["RendimientoPicking"], "RendimientoPicking", [num1]),
-        )
 
         kpi_html = (
             '<div class="kpi-row">'
@@ -615,14 +610,58 @@ else:
                 doc_unidades,
                 f"unidades_del_mes_{slug_filename(mes_label)}.html",
             )
-            + kpi_link_wrap(
-                kpi_card("OT Preparación", num1(mes_df["RendimientoPicking"].mean())),
-                doc_ot_prep,
-                f"ot_preparacion_{slug_filename(mes_label)}.html",
-            )
             + '</div>'
         )
         st.markdown(kpi_html, unsafe_allow_html=True)
+
+        # Fila de abajo: los mismos indicadores pero solo del día de cierre
+        # (el último día con Reporte diario subido), no acumulado del mes.
+        def _detalle_dia_html(cols, sort_col, fmts):
+            d = dia_df[["Tienda", "Picker"] + cols].sort_values(sort_col, ascending=False).copy()
+            for c, fmt in zip(cols, fmts):
+                d[c] = d[c].apply(fmt)
+            return table_html(d)
+
+        doc_pickers_dia = card_export_html(
+            f"Pickers activos — día de cierre {fecha_label}",
+            f"Los {int(dia_df['Picker'].nunique())} pickers activos ese día{tienda_desc}.",
+            _detalle_dia_html(["Pedidos", "Unidades"], "Unidades", [num0, num0]),
+        )
+        doc_pedidos_dia = card_export_html(
+            f"Pedidos — día de cierre {fecha_label}",
+            f"Pedidos por picker ese día{tienda_desc}.",
+            _detalle_dia_html(["Pedidos"], "Pedidos", [num0]),
+        )
+        doc_unidades_dia = card_export_html(
+            f"Unidades — día de cierre {fecha_label}",
+            f"Unidades por picker ese día{tienda_desc}.",
+            _detalle_dia_html(["Unidades"], "Unidades", [num0]),
+        )
+
+        st.markdown(
+            f'<div class="resumen-title" style="margin-top:14px;">Día de cierre — {fecha_label}</div>',
+            unsafe_allow_html=True
+        )
+        kpi_html_dia = (
+            '<div class="kpi-row">'
+            + kpi_link_wrap(
+                kpi_card("Pickers activos", num0(dia_df["Picker"].nunique())),
+                doc_pickers_dia,
+                f"pickers_activos_dia_{slug_filename(fecha_label)}.html",
+            )
+            + kpi_link_wrap(
+                kpi_card("Pedidos", num0(dia_df["Pedidos"].sum())),
+                doc_pedidos_dia,
+                f"pedidos_dia_{slug_filename(fecha_label)}.html",
+            )
+            + kpi_link_wrap(
+                kpi_card("Unidades", num0(dia_df["Unidades"].sum())),
+                doc_unidades_dia,
+                f"unidades_dia_{slug_filename(fecha_label)}.html",
+            )
+            + '</div>'
+        )
+        st.markdown(kpi_html_dia, unsafe_allow_html=True)
 
         # Cuadro chico: Top 10 mejores pickers (más unidades pickeadas), con
         # solo lo esencial — Tienda, Picker, Pedidos, Unidades y Fill Rate.
