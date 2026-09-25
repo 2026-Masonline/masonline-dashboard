@@ -541,57 +541,84 @@ else:
     dia_df = dia_df.sort_values("Unidades", ascending=False)
 
     if len(dia_df):
-        fecha_label = fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "hoy"
         tienda_desc = "" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"
 
-        def _detalle_metric_html(cols, sort_col, fmts):
-            d = dia_df[["Tienda", "Picker"] + cols].sort_values(sort_col, ascending=False).copy()
+        MESES_ES = {
+            1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+            7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+        }
+        mes_label = f"{MESES_ES.get(fecha_dia_sel.month, '')} {fecha_dia_sel.year}"
+
+        # Las 4 cards de arriba muestran el acumulado del mes en curso (mismo
+        # mes que la fecha más reciente con datos), no solo el último día.
+        if log_filtrado is not None and len(log_filtrado):
+            mes_df = log_filtrado[
+                (log_filtrado["FechaDt"].dt.year == fecha_dia_sel.year)
+                & (log_filtrado["FechaDt"].dt.month == fecha_dia_sel.month)
+            ].copy()
+        else:
+            mes_df = dia_df.iloc[0:0]
+
+        if len(mes_df):
+            mes_agg = mes_df.groupby("Picker", as_index=False).agg(
+                Tienda=("Tienda", "first"),
+                Pedidos=("Pedidos", "sum"),
+                Unidades=("Unidades", "sum"),
+                FillRate=("FillRate", "mean"),
+            )
+        else:
+            mes_agg = pd.DataFrame(columns=["Picker", "Tienda", "Pedidos", "Unidades", "FillRate"])
+
+        def _detalle_mes_html(cols, sort_col, fmts):
+            if not len(mes_agg):
+                return None
+            d = mes_agg[["Tienda", "Picker"] + cols].sort_values(sort_col, ascending=False).copy()
             for c, fmt in zip(cols, fmts):
                 d[c] = d[c].apply(fmt)
             return table_html(d)
 
         doc_pickers = card_export_html(
-            f"Pickers activos — {fecha_label}",
-            f"Los {int(dia_df['Picker'].nunique())} pickers activos ese día{tienda_desc}.",
-            _detalle_metric_html(["Pedidos", "Unidades"], "Unidades", [num0, num0]),
+            f"Pickers activos — {mes_label}",
+            f"Los {int(mes_df['Picker'].nunique())} pickers activos en {mes_label}{tienda_desc}.",
+            _detalle_mes_html(["Pedidos", "Unidades"], "Unidades", [num0, num0]),
         )
         doc_pedidos = card_export_html(
-            f"Pedidos totales — {fecha_label}",
-            f"Pedidos por picker ese día{tienda_desc}.",
-            _detalle_metric_html(["Pedidos"], "Pedidos", [num0]),
+            f"Pedidos del mes — {mes_label}",
+            f"Pedidos acumulados por picker en {mes_label}{tienda_desc}.",
+            _detalle_mes_html(["Pedidos"], "Pedidos", [num0]),
         )
         doc_unidades = card_export_html(
-            f"Unidades totales — {fecha_label}",
-            f"Unidades por picker ese día{tienda_desc}.",
-            _detalle_metric_html(["Unidades"], "Unidades", [num0]),
+            f"Unidades del mes — {mes_label}",
+            f"Unidades acumuladas por picker en {mes_label}{tienda_desc}.",
+            _detalle_mes_html(["Unidades"], "Unidades", [num0]),
         )
-        doc_rendimiento = card_export_html(
-            f"Rendimiento promedio — {fecha_label}",
-            f"Rendimiento por picker ese día{tienda_desc}.",
-            _detalle_metric_html(["Rendimiento"], "Rendimiento", [num1]),
+        doc_fillrate = card_export_html(
+            f"Fill Rate promedio — {mes_label}",
+            f"Fill Rate promedio por picker en {mes_label}{tienda_desc}.",
+            _detalle_mes_html(["FillRate"], "FillRate", [pct1]),
         )
 
         kpi_html = (
             '<div class="kpi-row">'
             + kpi_link_wrap(
-                kpi_card("Pickers activos", num0(dia_df["Picker"].nunique())),
+                kpi_card("Pickers activos", num0(mes_df["Picker"].nunique())),
                 doc_pickers,
-                f"pickers_activos_{slug_filename(fecha_label)}.html",
+                f"pickers_activos_{slug_filename(mes_label)}.html",
             )
             + kpi_link_wrap(
-                kpi_card("Pedidos totales", num0(dia_df["Pedidos"].sum())),
+                kpi_card("Pedidos del mes", num0(mes_df["Pedidos"].sum())),
                 doc_pedidos,
-                f"pedidos_totales_{slug_filename(fecha_label)}.html",
+                f"pedidos_del_mes_{slug_filename(mes_label)}.html",
             )
             + kpi_link_wrap(
-                kpi_card("Unidades totales", num0(dia_df["Unidades"].sum())),
+                kpi_card("Unidades del mes", num0(mes_df["Unidades"].sum())),
                 doc_unidades,
-                f"unidades_totales_{slug_filename(fecha_label)}.html",
+                f"unidades_del_mes_{slug_filename(mes_label)}.html",
             )
             + kpi_link_wrap(
-                kpi_card("Rendimiento promedio", num1(dia_df["Rendimiento"].mean())),
-                doc_rendimiento,
-                f"rendimiento_promedio_{slug_filename(fecha_label)}.html",
+                kpi_card("Fill Rate promedio", pct1(mes_df["FillRate"].mean())),
+                doc_fillrate,
+                f"fill_rate_promedio_{slug_filename(mes_label)}.html",
             )
             + '</div>'
         )
