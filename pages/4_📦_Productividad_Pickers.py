@@ -564,10 +564,10 @@ else:
                 Tienda=("Tienda", "first"),
                 Pedidos=("Pedidos", "sum"),
                 Unidades=("Unidades", "sum"),
-                FillRate=("FillRate", "mean"),
+                RendimientoPicking=("RendimientoPicking", "mean"),
             )
         else:
-            mes_agg = pd.DataFrame(columns=["Picker", "Tienda", "Pedidos", "Unidades", "FillRate"])
+            mes_agg = pd.DataFrame(columns=["Picker", "Tienda", "Pedidos", "Unidades", "RendimientoPicking"])
 
         def _detalle_mes_html(cols, sort_col, fmts):
             if not len(mes_agg):
@@ -592,10 +592,10 @@ else:
             f"Unidades acumuladas por picker en {mes_label}{tienda_desc}.",
             _detalle_mes_html(["Unidades"], "Unidades", [num0]),
         )
-        doc_fillrate = card_export_html(
-            f"Fill Rate promedio — {mes_label}",
-            f"Fill Rate promedio por picker en {mes_label}{tienda_desc}.",
-            _detalle_mes_html(["FillRate"], "FillRate", [pct1]),
+        doc_ot_prep = card_export_html(
+            f"OT Preparación — {mes_label}",
+            f"OT Preparación promedio por picker en {mes_label}{tienda_desc}.",
+            _detalle_mes_html(["RendimientoPicking"], "RendimientoPicking", [num1]),
         )
 
         kpi_html = (
@@ -616,9 +616,9 @@ else:
                 f"unidades_del_mes_{slug_filename(mes_label)}.html",
             )
             + kpi_link_wrap(
-                kpi_card("Fill Rate promedio", pct1(mes_df["FillRate"].mean())),
-                doc_fillrate,
-                f"fill_rate_promedio_{slug_filename(mes_label)}.html",
+                kpi_card("OT Preparación", num1(mes_df["RendimientoPicking"].mean())),
+                doc_ot_prep,
+                f"ot_preparacion_{slug_filename(mes_label)}.html",
             )
             + '</div>'
         )
