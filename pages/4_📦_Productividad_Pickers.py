@@ -121,6 +121,10 @@ APP_CSS = """
     a.kpi-link:hover .kpi { box-shadow: 0 6px 18px rgba(0,0,0,.14); transform: translateY(-2px); }
     a.kpi-link:hover .kpi::after { opacity: 1; }
 
+    .field-label {
+        color:#ff5a1f; font-size:13px; font-weight:700; margin-bottom:2px;
+    }
+
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -490,7 +494,10 @@ if log_df is not None and len(log_df) and "Tienda" in log_df.columns and "Deposi
     ])
 tiendas = sorted(tiendas)
 
-filtro_tienda = st.selectbox("Tienda", ["Todas"] + tiendas, key="pickers_filtro_tienda")
+st.markdown('<div class="field-label">Tienda</div>', unsafe_allow_html=True)
+filtro_tienda = st.selectbox(
+    "Tienda", ["Todas"] + tiendas, key="pickers_filtro_tienda", label_visibility="collapsed"
+)
 
 pickers = pickers_all
 if pickers is not None and filtro_tienda != "Todas":
@@ -681,12 +688,16 @@ if log_filtrado is not None and len(log_filtrado) and log_filtrado["FechaDt"].no
 
     fp1, fp2 = st.columns(2)
     with fp1:
+        st.markdown('<div class="field-label">Desde</div>', unsafe_allow_html=True)
         picker_desde = st.date_input(
-            "Desde", value=_min_date, min_value=_min_date, max_value=_max_date, key="picker_prod_desde"
+            "Desde", value=_min_date, min_value=_min_date, max_value=_max_date,
+            key="picker_prod_desde", label_visibility="collapsed"
         )
     with fp2:
+        st.markdown('<div class="field-label">Hasta</div>', unsafe_allow_html=True)
         picker_hasta = st.date_input(
-            "Hasta", value=_max_date, min_value=_min_date, max_value=_max_date, key="picker_prod_hasta"
+            "Hasta", value=_max_date, min_value=_min_date, max_value=_max_date,
+            key="picker_prod_hasta", label_visibility="collapsed"
         )
 
     if picker_desde > picker_hasta:
@@ -780,9 +791,6 @@ else:
     tabla["Rendimiento"] = tabla["Rendimiento"].apply(pct1)
     tabla = tabla.rename(columns={"Rendimiento": "Rendimiento prom."})
     st.write(table_html(tabla.iloc[::-1]), unsafe_allow_html=True)
-
-    if len(diario) >= 2:
-        st.line_chart(diario.set_index("FechaDt")[["Unidades"]])
 
     with st.expander(f"Ver historial completo por picker ({len(log_filtrado)} filas)"):
         with st.container(height=380):
