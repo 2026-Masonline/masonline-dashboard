@@ -1,6 +1,9 @@
+import base64
 import io
 import json
+import re
 import tempfile
+import unicodedata
 from pathlib import Path
 import streamlit as st
 import pandas as pd
@@ -108,6 +111,16 @@ APP_CSS = """
     .kpi .label { color:#6b7280; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
     .kpi .value { color:#ff5a1f; font-size:26px; font-weight:800; margin-top:6px; }
 
+    a.kpi-link { text-decoration:none; display:block; flex:1; min-width:150px; }
+    a.kpi-link .kpi { cursor:pointer; transition:box-shadow .15s, transform .15s; position:relative; min-width:0; }
+    a.kpi-link .kpi::after {
+        content: "⬇ HTML"; position:absolute; top:10px; right:12px;
+        font-size:9.5px; font-weight:700; color:#ff5a1f; opacity:0;
+        transition:opacity .15s; letter-spacing:.03em;
+    }
+    a.kpi-link:hover .kpi { box-shadow: 0 6px 18px rgba(0,0,0,.14); transform: translateY(-2px); }
+    a.kpi-link:hover .kpi::after { opacity: 1; }
+
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -187,6 +200,54 @@ def kpi_card(label, value):
         '<div class="label">' + str(label) + '</div>'
         '<div class="value">' + str(value) + '</div>'
         '</div>'
+    )
+
+def slug_filename(s):
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^a-zA-Z0-9]+", "_", s).strip("_").lower()
+    return s or "archivo"
+
+def card_export_html(section_title, section_desc, body_html):
+    """Arma un HTML standalone (con el mismo look de la página) para
+    descargar el detalle de una card KPI al clickearla."""
+    if not body_html:
+        return None
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MásOnline · {section_title}</title>
+<style>
+{APP_CSS}
+body {{ margin:0; background:#fafaf8; }}
+.wrap {{ max-width: 1200px; margin: 0 auto; padding: 24px 20px 28px; }}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div>
+    <div class="hero-brand">📦 Productividad Pickers</div>
+    <div class="hero-sub">{section_title.upper()}</div>
+  </div>
+</div>
+<div class="wrap">
+<div class="section">{section_title}</div>
+<div class="section-desc">{section_desc}</div>
+{body_html}
+</div>
+</body>
+</html>"""
+
+def kpi_link_wrap(inner_html, html_doc, filename):
+    """Envuelve una tarjeta KPI en un link que descarga el HTML de detalle
+    al clickearla (en vez de mostrar la info abajo en pantalla)."""
+    if not html_doc:
+        return inner_html
+    b64 = base64.b64encode(html_doc.encode("utf-8")).decode("utf-8")
+    return (
+        f'<a class="kpi-link" href="data:text/html;base64,{b64}" download="{filename}" '
+        'title="Descargar el detalle como HTML">' + inner_html + '</a>'
     )
 
 # ---------------------------------------------------------------------
@@ -473,12 +534,58 @@ else:
     dia_df = dia_df.sort_values("Unidades", ascending=False)
 
     if len(dia_df):
+        fecha_label = fecha_dia_sel.strftime("%d/%m/%Y") if fecha_dia_sel is not None else "hoy"
+        tienda_desc = "" if filtro_tienda == "Todas" else f" — tienda {filtro_tienda}"
+
+        def _detalle_metric_html(cols, sort_col, fmts):
+            d = dia_df[["Tienda", "Picker"] + cols].sort_values(sort_col, ascending=False).copy()
+            for c, fmt in zip(cols, fmts):
+                d[c] = d[c].apply(fmt)
+            return table_html(d)
+
+        doc_pickers = card_export_html(
+            f"Pickers activos — {fecha_label}",
+            f"Los {int(dia_df['Picker'].nunique())} pickers activos ese día{tienda_desc}.",
+            _detalle_metric_html(["Pedidos", "Unidades"], "Unidades", [num0, num0]),
+        )
+        doc_pedidos = card_export_html(
+            f"Pedidos totales — {fecha_label}",
+            f"Pedidos por picker ese día{tienda_desc}.",
+            _detalle_metric_html(["Pedidos"], "Pedidos", [num0]),
+        )
+        doc_unidades = card_export_html(
+            f"Unidades totales — {fecha_label}",
+            f"Unidades por picker ese día{tienda_desc}.",
+            _detalle_metric_html(["Unidades"], "Unidades", [num0]),
+        )
+        doc_rendimiento = card_export_html(
+            f"Rendimiento promedio — {fecha_label}",
+            f"Rendimiento por picker ese día{tienda_desc}.",
+            _detalle_metric_html(["Rendimiento"], "Rendimiento", [num1]),
+        )
+
         kpi_html = (
             '<div class="kpi-row">'
-            + kpi_card("Pickers activos", num0(dia_df["Picker"].nunique()))
-            + kpi_card("Pedidos totales", num0(dia_df["Pedidos"].sum()))
-            + kpi_card("Unidades totales", num0(dia_df["Unidades"].sum()))
-            + kpi_card("Rendimiento promedio", num1(dia_df["Rendimiento"].mean()))
+            + kpi_link_wrap(
+                kpi_card("Pickers activos", num0(dia_df["Picker"].nunique())),
+                doc_pickers,
+                f"pickers_activos_{slug_filename(fecha_label)}.html",
+            )
+            + kpi_link_wrap(
+                kpi_card("Pedidos totales", num0(dia_df["Pedidos"].sum())),
+                doc_pedidos,
+                f"pedidos_totales_{slug_filename(fecha_label)}.html",
+            )
+            + kpi_link_wrap(
+                kpi_card("Unidades totales", num0(dia_df["Unidades"].sum())),
+                doc_unidades,
+                f"unidades_totales_{slug_filename(fecha_label)}.html",
+            )
+            + kpi_link_wrap(
+                kpi_card("Rendimiento promedio", num1(dia_df["Rendimiento"].mean())),
+                doc_rendimiento,
+                f"rendimiento_promedio_{slug_filename(fecha_label)}.html",
+            )
             + '</div>'
         )
         st.markdown(kpi_html, unsafe_allow_html=True)
