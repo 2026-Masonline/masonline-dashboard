@@ -663,10 +663,17 @@ else:
         )
         st.markdown(kpi_html_dia, unsafe_allow_html=True)
 
-        # Cuadro chico: Top 10 mejores pickers (más unidades pickeadas), con
-        # solo lo esencial — Tienda, Picker, Pedidos, Unidades y Fill Rate.
+        # Cuadro chico: Top 10 mejores pickers (más unidades pickeadas), uno
+        # por tienda — así no se llena con varios pickers de la misma tienda
+        # y deja afuera a las demás. dia_df ya viene ordenado de mejor a peor
+        # (por Unidades), así que nos quedamos con el primero de cada tienda.
         st.markdown('<div class="resumen-title" style="margin-top:14px;">Top 10 mejores pickers</div>', unsafe_allow_html=True)
-        top10 = dia_df[["Tienda", "Picker", "Pedidos", "Unidades", "FillRate"]].head(10).copy()
+        top10 = (
+            dia_df[["Tienda", "Picker", "Pedidos", "Unidades", "FillRate"]]
+            .drop_duplicates(subset="Tienda", keep="first")
+            .head(10)
+            .copy()
+        )
         top10["Pedidos"] = top10["Pedidos"].apply(num0)
         top10["Unidades"] = top10["Unidades"].apply(num0)
         top10["FillRate"] = top10["FillRate"].apply(pct1)
@@ -712,21 +719,28 @@ if filtro_tienda == "Todas":
             Unidades=("Unidades", "sum"),
             Rendimiento=("Rendimiento", "mean"),
         ).sort_values("Rendimiento", ascending=False)
+        # Prom. Pedido = unidades promedio por pedido (Unidades / Pedidos).
+        tiendas_periodo["PromPedido"] = tiendas_periodo["Unidades"] / tiendas_periodo["Pedidos"].replace(0, float("nan"))
         tiendas_periodo = tiendas_periodo.rename(columns={"Deposito": "Tienda", "Dias": "Días"})
 
-        ttop = tiendas_periodo.head(10).copy()
-        ttop["Rendimiento"] = ttop["Rendimiento"].apply(num1)
-        ttop["Pedidos"] = ttop["Pedidos"].apply(num0)
-        ttop["Unidades"] = ttop["Unidades"].apply(num0)
+        def _fmt_tiendas(d):
+            d = d.copy()
+            d["Rendimiento"] = d["Rendimiento"].apply(num1)
+            d["Pedidos"] = d["Pedidos"].apply(num0)
+            d["PromPedido"] = d["PromPedido"].apply(num1)
+            d["Unidades"] = d["Unidades"].apply(num0)
+            d = d.rename(columns={
+                "Unidades": "Ítems", "PromPedido": "Prom. Pedido", "Rendimiento": "Ítems/Hora",
+            })
+            return d[["Tienda", "Pickers", "Días", "Pedidos", "Prom. Pedido", "Ítems", "Ítems/Hora"]]
+
+        ttop = _fmt_tiendas(tiendas_periodo.head(10))
         st.write(table_html(ttop), unsafe_allow_html=True)
 
         if len(tiendas_periodo) > 10:
             with st.expander(f"Ver las {len(tiendas_periodo)} tiendas del período"):
                 with st.container(height=420):
-                    tfull = tiendas_periodo.copy()
-                    tfull["Rendimiento"] = tfull["Rendimiento"].apply(num1)
-                    tfull["Pedidos"] = tfull["Pedidos"].apply(num0)
-                    tfull["Unidades"] = tfull["Unidades"].apply(num0)
+                    tfull = _fmt_tiendas(tiendas_periodo)
                     st.write(table_html(tfull), unsafe_allow_html=True)
     elif log_df is None:
         st.markdown(
