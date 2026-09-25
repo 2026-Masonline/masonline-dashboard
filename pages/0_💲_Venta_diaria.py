@@ -637,6 +637,35 @@ def build_standalone_html():
         </div>
         """
 
+    def standalone_tienda_table(rows_df, titulo):
+        header = f'<div class="rank-table-header">🏆 {html.escape(titulo)}</div>'
+        if not len(rows_df):
+            return (
+                f'<div class="rank-table-card">{header}'
+                '<div style="padding:20px;color:#9ca3af;font-size:13px;">'
+                'Todavía no hay datos por tienda para este período.</div></div>'
+            )
+        rows_html = ""
+        for i, r in enumerate(rows_df.itertuples(), start=1):
+            nombre = str(r.Nombre) if r.Nombre else ""
+            tienda_label = f"{r.Tienda} - {nombre}" if nombre else str(r.Tienda)
+            rows_html += (
+                '<tr>'
+                f'<td><span class="rank-badge">{i}</span></td>'
+                f'<td>{html.escape(tienda_label)}</td>'
+                f'<td style="text-align:center;">{intfmt(r.orders)}</td>'
+                f'<td style="text-align:right;font-weight:800;color:#208653;">{html.escape(money(r.ecommerce_tax))}</td>'
+                '</tr>'
+            )
+        return (
+            f'<div class="rank-table-card">{header}'
+            '<table class="rank-table"><thead><tr>'
+            '<th></th><th>Tienda</th>'
+            '<th style="text-align:center;">Pedidos eCommerce</th>'
+            '<th style="text-align:right;">Venta eCommerce (con impuesto)</th>'
+            f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        )
+
     html_doc = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -784,6 +813,46 @@ body {{
 }}
 .negative {{ color: #d64545; }}
 .positive {{ color: #208653; }}
+.rank-tables {{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}}
+.rank-table-card {{
+    background: white;
+    border: 1px solid #e8ebef;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06);
+}}
+.rank-table-header {{
+    background: #2f9e66;
+    color: #fff;
+    font-weight: 800;
+    font-size: 15px;
+    padding: 13px 20px;
+}}
+table.rank-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+table.rank-table thead th {{
+    text-align: left;
+    padding: 9px 12px;
+    color: #6b7280;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid #e8ebef;
+}}
+table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
+.rank-badge {{
+    display: inline-block;
+    min-width: 20px;
+    text-align: center;
+    background: #2f9e66;
+    color: #fff;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 6px;
+}}
 .footer {{
     display: flex;
     justify-content: space-between;
@@ -798,7 +867,7 @@ body {{
 @media (max-width: 600px) {{
     .hero {{ flex-direction: column; align-items: flex-start; gap: 15px; }}
     .hero-date {{ text-align: left; }}
-    .kpis, .comparisons {{ grid-template-columns: 1fr; }}
+    .kpis, .comparisons, .rank-tables {{ grid-template-columns: 1fr; }}
     .progress-layout {{ flex-direction: column; align-items: stretch; }}
     .progress-target {{ width: auto; text-align: left; }}
 }}
@@ -869,6 +938,15 @@ body {{
       <small>del objetivo</small>
     </div>
   </div>
+</div>
+
+<div class="section">Top 5 tiendas eCommerce</div>
+<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">
+Ranking por venta ecommerce, con pedidos de cada tienda.
+</div>
+<div class="rank-tables">
+{standalone_tienda_table(top_venta_dia, f"VENTA DIARIA · TOP 5 ({latest_tienda_date.strftime('%d/%m')})")}
+{standalone_tienda_table(top_venta_mes, "VENTA MENSUAL · TOP 5")}
 </div>
 
 <div class="section">Comparaciones</div>
