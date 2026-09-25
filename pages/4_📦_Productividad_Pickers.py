@@ -662,6 +662,77 @@ else:
     st.markdown('<div class="empty-box">Sin datos acumulados para esta tienda.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
+# Productividad del picker en un rango de fechas elegido
+# ---------------------------------------------------------------------
+
+st.markdown('<div class="section">🧑‍💼 Productividad del picker</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-desc">Elegí un rango de fechas para ver el rendimiento de cada picker '
+    'en ese período (respeta el filtro de tienda de arriba).</div>',
+    unsafe_allow_html=True
+)
+
+if log_filtrado is not None and len(log_filtrado) and log_filtrado["FechaDt"].notna().any():
+    _min_date = log_filtrado["FechaDt"].min().date()
+    _max_date = log_filtrado["FechaDt"].max().date()
+
+    fp1, fp2 = st.columns(2)
+    with fp1:
+        picker_desde = st.date_input(
+            "Desde", value=_min_date, min_value=_min_date, max_value=_max_date, key="picker_prod_desde"
+        )
+    with fp2:
+        picker_hasta = st.date_input(
+            "Hasta", value=_max_date, min_value=_min_date, max_value=_max_date, key="picker_prod_hasta"
+        )
+
+    if picker_desde > picker_hasta:
+        st.warning("La fecha 'Desde' es posterior a 'Hasta' — invertí las fechas para ver resultados.")
+        picker_rango = log_filtrado.iloc[0:0]
+    else:
+        picker_rango = log_filtrado[
+            (log_filtrado["FechaDt"].dt.date >= picker_desde) & (log_filtrado["FechaDt"].dt.date <= picker_hasta)
+        ]
+
+    if len(picker_rango):
+        productividad = picker_rango.groupby("Picker", as_index=False).agg(
+            Tienda=("Tienda", "first"),
+            Dias=("Fecha", "nunique"),
+            Pedidos=("Pedidos", "sum"),
+            Unidades=("Unidades", "sum"),
+            Rendimiento=("Rendimiento", "mean"),
+        ).sort_values("Unidades", ascending=False)
+        productividad = productividad.rename(columns={"Dias": "Días"})
+
+        ptop = productividad.head(20).copy()
+        ptop["Rendimiento"] = ptop["Rendimiento"].apply(num1)
+        ptop["Pedidos"] = ptop["Pedidos"].apply(num0)
+        ptop["Unidades"] = ptop["Unidades"].apply(num0)
+        st.write(table_html(ptop), unsafe_allow_html=True)
+
+        if len(productividad) > 20:
+            with st.expander(f"Ver los {len(productividad)} pickers del período"):
+                with st.container(height=420):
+                    pfull = productividad.copy()
+                    pfull["Rendimiento"] = pfull["Rendimiento"].apply(num1)
+                    pfull["Pedidos"] = pfull["Pedidos"].apply(num0)
+                    pfull["Unidades"] = pfull["Unidades"].apply(num0)
+                    st.write(table_html(pfull), unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div class="empty-box">Sin datos de pickers para ese rango de fechas.</div>',
+            unsafe_allow_html=True
+        )
+elif log_df is None:
+    st.markdown(
+        '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
+        'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown('<div class="empty-box">Sin datos acumulados para esta tienda.</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
 # Evolución día a día (historial acumulado en Google Sheets)
 # ---------------------------------------------------------------------
 
