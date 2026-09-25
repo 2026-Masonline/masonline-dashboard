@@ -396,9 +396,10 @@ if reporte_bytes is not None:
         d["Rend. picking"] = pd.to_numeric(d.get("pickingPerformance"), errors="coerce")
         d["Found Rate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
         d["Fill Rate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
+        d["Deposito"] = d["warehouseRefId"].apply(norm_txt)
         d = d[d["Picker"] != ""]
         pickers_all = d[[
-            "Picker", "Tienda", "Pedidos", "Unidades",
+            "Picker", "Tienda", "Deposito", "Pedidos", "Unidades",
             "Rendimiento", "Rend. picking", "Found Rate", "Fill Rate"
         ]].sort_values("Unidades", ascending=False)
     elif xl_reporte is not None:
@@ -416,10 +417,16 @@ log_df = load_pickers_log()
 # ---------------------------------------------------------------------
 
 tiendas = set()
-if pickers_all is not None:
-    tiendas.update([t for t in pickers_all["Tienda"].unique() if t])
-if log_df is not None and len(log_df) and "Tienda" in log_df.columns:
-    tiendas.update([t for t in log_df["Tienda"].unique() if t])
+if pickers_all is not None and "Deposito" in pickers_all.columns:
+    tiendas.update([
+        t for dep, t in zip(pickers_all["Deposito"], pickers_all["Tienda"])
+        if t and norm_txt(dep) not in DEPOSITO_INVALIDO
+    ])
+if log_df is not None and len(log_df) and "Tienda" in log_df.columns and "Deposito" in log_df.columns:
+    tiendas.update([
+        t for dep, t in zip(log_df["Deposito"], log_df["Tienda"])
+        if t and norm_txt(dep) not in DEPOSITO_INVALIDO
+    ])
 tiendas = sorted(tiendas)
 
 filtro_tienda = st.selectbox("Tienda", ["Todas"] + tiendas, key="pickers_filtro_tienda")
