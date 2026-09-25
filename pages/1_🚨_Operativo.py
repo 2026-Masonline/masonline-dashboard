@@ -911,8 +911,8 @@ def export_section_html(section_title, section_desc, body_html):
     corte_html = ""
     if now_ref is not None:
         corte_html = (
-            '<div class="hero-date">Corte del reporte<br>'
-            f'<small>{now_ref.strftime("%d/%m/%Y %H:%M")}</small></div>'
+            '<div class="hero-date">Fecha de corte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y")}</small></div>'
         )
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -1256,8 +1256,8 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f
     corte_html = ""
     if now_ref is not None:
         corte_html = (
-            '<div class="hero-date">Corte del reporte<br>'
-            f'<small>{now_ref.strftime("%d/%m/%Y %H:%M")}</small></div>'
+            '<div class="hero-date">Fecha de corte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y")}</small></div>'
         )
     blocks_html = "".join(
         f'<div class="section">{title}</div><div class="section-desc">{desc}</div>{body}'
@@ -1496,9 +1496,11 @@ if df_cancelados_raw is not None:
     cancelados = d
 
 if candidate_times:
-    now_ref = max([t for t in candidate_times if pd.notna(t)])
+    now_ref = max([t for t in candidate_times if pd.notna(t)]).normalize()
 else:
-    now_ref = pd.Timestamp(datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).replace(tzinfo=None))
+    now_ref = pd.Timestamp(
+        datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).replace(tzinfo=None)
+    ).normalize()
 
 # Fecha "de hoy" (Argentina) — se usa para estampar cada fila de Faltantes en
 # el historial mensual. Va aparte de now_ref porque Faltantes no trae su
@@ -1508,7 +1510,7 @@ fecha_hoy_str = fecha_hoy.strftime("%d/%m/%Y")
 
 # ---- Pedidos +72h ----
 if pedidos_72h is not None:
-    pedidos_72h["Dias"] = (now_ref - pedidos_72h["Fecha"]).dt.total_seconds() / 86400
+    pedidos_72h["Dias"] = (now_ref - pedidos_72h["Fecha"].dt.normalize()).dt.days.astype(float)
     pedidos_72h = pedidos_72h[pedidos_72h["Dias"] >= 3].copy()
     pedidos_72h["MontoNum"] = pedidos_72h["Monto"].apply(ar_number)
     pedidos_72h["Tienda"] = pedidos_72h["Tienda"].apply(norm_txt)
@@ -1518,7 +1520,7 @@ if pedidos_72h is not None:
 
 # ---- Reclamos ----
 if reclamos is not None:
-    reclamos["Horas"] = (now_ref - reclamos["Fecha"]).dt.total_seconds() / 3600
+    reclamos["Horas"] = (now_ref - reclamos["Fecha"].dt.normalize()).dt.days.astype(float) * 24
     reclamos["Tienda"] = reclamos["Tienda"].apply(norm_txt)
     reclamos["Estado"] = reclamos["Estado"].apply(norm_txt)
     reclamos["Tipo"] = reclamos["Tipo"].apply(norm_txt)
@@ -1766,7 +1768,7 @@ if any_data_loaded:
     st.markdown(f"""
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
       <div style="font-size:12px;color:#6b7280;">
-        Corte del reporte: <b style="color:#20252b;">{now_ref.strftime('%d/%m/%Y %H:%M')}</b>
+        Fecha de corte: <b style="color:#20252b;">{now_ref.strftime('%d/%m/%Y')}</b>
       </div>
     </div>
     """, unsafe_allow_html=True)
