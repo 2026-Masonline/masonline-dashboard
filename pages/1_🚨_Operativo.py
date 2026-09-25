@@ -158,6 +158,10 @@ APP_CSS = """
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    .field-label {
+        color:#ff5a1f; font-size:13px; font-weight:700; margin-bottom:2px;
+    }
+
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -1776,7 +1780,11 @@ if any_data_loaded:
     auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
     col_aud, col_tda = st.columns([1, 2])
     with col_aud:
-        auditor_sel = st.selectbox("Auditor", ["Todos los auditores"] + auditores)
+        st.markdown('<div class="field-label">Auditor</div>', unsafe_allow_html=True)
+        auditor_sel = st.selectbox(
+            "Auditor", ["Todos los auditores"] + auditores,
+            label_visibility="collapsed"
+        )
     filtro_auditor = None if auditor_sel == "Todos los auditores" else auditor_sel
 
     # Si hay un auditor elegido, el desplegable de Tienda se acota a sus tiendas.
@@ -1785,7 +1793,11 @@ if any_data_loaded:
         if filtro_auditor else all_stores
     )
     with col_tda:
-        tienda_sel = st.selectbox("Tienda", ["Todas las tiendas"] + sorted(stores_disponibles))
+        st.markdown('<div class="field-label">Tienda</div>', unsafe_allow_html=True)
+        tienda_sel = st.selectbox(
+            "Tienda", ["Todas las tiendas"] + sorted(stores_disponibles),
+            label_visibility="collapsed"
+        )
     filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
 
     def ftr(d):
