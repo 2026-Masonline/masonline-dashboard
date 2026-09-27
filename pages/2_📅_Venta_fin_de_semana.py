@@ -221,6 +221,45 @@ def pct(v):
 def intfmt(v):
     return f"{int(v):,}".replace(",", ".")
 
+def render_finde_cards_html(finde_tabla, detalle_dia):
+    """Una tarjeta por fin de semana: arriba el rango de fechas, abajo la
+    info de Viernes, después Sábado y después Domingo (en ese orden)."""
+    if not len(finde_tabla):
+        return (
+            '<div class="upload-box"><div class="upload-text">'
+            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+            '</div></div>'
+        )
+    orden_dia = {"Viernes": 0, "Sábado": 1, "Domingo": 2}
+    cards = ""
+    for _, wknd in finde_tabla.iterrows():
+        dias_finde = (
+            detalle_dia[detalle_dia["rango"] == wknd["rango"]]
+            .copy()
+        )
+        dias_finde["orden"] = dias_finde["dia_nombre"].map(orden_dia)
+        dias_finde = dias_finde.sort_values("orden")
+
+        filas_dias = ""
+        for _, d in dias_finde.iterrows():
+            filas_dias += (
+                '<div style="display:flex;justify-content:space-between;align-items:baseline;'
+                'padding:9px 0;border-top:1px solid #eef0ef;">'
+                f'<span style="font-weight:700;color:#20252b;font-size:13.5px;">'
+                f'{d["dia_nombre"]} <span style="font-weight:400;color:#6b7280;">{d["date"].strftime("%d/%m")}</span></span>'
+                f'<span style="font-size:13px;color:#20252b;">'
+                f'<b style="color:#e8432c;">{money(d["ecommerce_tax"])}</b>'
+                f' · {intfmt(d["orders"])} pedidos · {intfmt(d["units"])} unidades</span>'
+                '</div>'
+            )
+        cards += f"""
+        <div class="card" style="border-top:4px solid #e8432c;margin-bottom:14px;min-height:0;">
+          <div class="label" style="color:#e8432c;">{wknd["rango"].upper()}</div>
+          <div style="margin-top:4px;">{filas_dias}</div>
+        </div>
+        """
+    return cards
+
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
     brand_html = (
@@ -289,40 +328,7 @@ def build_standalone_html():
             '</div></div>'
         )
 
-    if len(detalle_dia):
-        detalle_rows_html_static = ""
-        for _, r in detalle_dia.iterrows():
-            detalle_rows_html_static += (
-                '<tr style="border-top:1px solid #eee;">'
-                f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
-                f'<td style="padding:10px 14px;color:#20252b;">{r["dia_nombre"]} {r["date"].strftime("%d/%m")}</td>'
-                f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["ecommerce_tax"])}</td>'
-                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["orders"])}</td>'
-                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["units"])}</td>'
-                '</tr>'
-            )
-        detalle_tabla_html = f"""
-        <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
-          <table style="width:100%;border-collapse:collapse;font-size:13px;">
-            <thead>
-              <tr style="background:#20252b;color:white;text-align:left;">
-                <th style="padding:10px 14px;">FIN DE SEMANA</th>
-                <th style="padding:10px 14px;">DÍA</th>
-                <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
-                <th style="padding:10px 14px;">PEDIDOS</th>
-                <th style="padding:10px 14px;">UNIDADES</th>
-              </tr>
-            </thead>
-            <tbody>{detalle_rows_html_static}</tbody>
-          </table>
-        </div>
-        """
-    else:
-        detalle_tabla_html = (
-            '<div class="upload-box"><div class="upload-text">'
-            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
-            '</div></div>'
-        )
+    detalle_tabla_html = render_finde_cards_html(finde_tabla, detalle_dia)
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="es">
@@ -601,44 +607,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-if len(detalle_dia):
-    detalle_rows_html = ""
-    for _, r in detalle_dia.iterrows():
-        detalle_rows_html += (
-            '<tr style="border-top:1px solid #eee;">'
-            f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
-            f'<td style="padding:10px 14px;color:#20252b;">{r["dia_nombre"]} {r["date"].strftime("%d/%m")}</td>'
-            f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["ecommerce_tax"])}</td>'
-            f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["orders"])}</td>'
-            f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["units"])}</td>'
-            '</tr>'
-        )
-
-    st.markdown(f"""
-    <div class="table-scroll" style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow-x:auto;box-shadow:0 2px 10px rgba(0,0,0,.06);">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px;">
-        <thead>
-          <tr style="background:#20252b;color:white;text-align:left;">
-            <th style="padding:10px 14px;">FIN DE SEMANA</th>
-            <th style="padding:10px 14px;">DÍA</th>
-            <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
-            <th style="padding:10px 14px;">PEDIDOS</th>
-            <th style="padding:10px 14px;">UNIDADES</th>
-          </tr>
-        </thead>
-        <tbody>
-          {detalle_rows_html}
-        </tbody>
-      </table>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown(
-        '<div class="upload-box"><div class="upload-text">'
-        'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
-        '</div></div>',
-        unsafe_allow_html=True
-    )
+st.markdown(render_finde_cards_html(finde_tabla, detalle_dia), unsafe_allow_html=True)
 
 st.markdown(
     '<div class="footer">'
