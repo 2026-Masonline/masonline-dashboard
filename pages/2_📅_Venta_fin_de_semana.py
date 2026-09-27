@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import calendar
 from pathlib import Path
-from datetime import datetime
-from zoneinfo import ZoneInfo
 import base64
 import html
 
@@ -118,9 +116,8 @@ except Exception as e:
 # Esta página muestra la misma info de fin de semana que ya está en la
 # pestaña "Venta fin de semana" del Dashboard de Ventas. Los datos se
 # actualizan subiendo los Excels ahí — acá solo se leen y se muestran.
-
-arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df = df[df["date"].dt.date < arg_today].copy()
+# Se incluye el día de hoy apenas esté cargado en data.csv (no se espera a
+# que termine el día).
 
 current = df[
     (df["date"].dt.year == 2026) &
