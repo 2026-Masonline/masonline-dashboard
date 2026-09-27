@@ -199,6 +199,14 @@ finde_tabla["participacion"] = (
     finde_tabla["venta"] / acc_ecom if acc_ecom else 0
 )
 
+# ---- Mismo período, abierto día por día (Viernes/Sábado/Domingo) ----
+DIA_NOMBRE = {4: "Viernes", 5: "Sábado", 6: "Domingo"}
+detalle_dia = finde_rows.copy().sort_values("date")
+detalle_dia["dia_nombre"] = detalle_dia["date"].dt.weekday.map(DIA_NOMBRE)
+detalle_dia["rango"] = detalle_dia["finde_inicio"].apply(
+    lambda d: f"Vie {d.strftime('%d/%m')} – Dom {(d + pd.Timedelta(days=2)).strftime('%d/%m')}"
+)
+
 def money(v):
     return (
        f"${v/1_000_000:,.2f} M"
@@ -276,6 +284,41 @@ def build_standalone_html():
         """
     else:
         tabla_html = (
+            '<div class="upload-box"><div class="upload-text">'
+            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+            '</div></div>'
+        )
+
+    if len(detalle_dia):
+        detalle_rows_html_static = ""
+        for _, r in detalle_dia.iterrows():
+            detalle_rows_html_static += (
+                '<tr style="border-top:1px solid #eee;">'
+                f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{r["dia_nombre"]} {r["date"].strftime("%d/%m")}</td>'
+                f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["ecommerce_tax"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["orders"])}</td>'
+                f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["units"])}</td>'
+                '</tr>'
+            )
+        detalle_tabla_html = f"""
+        <div style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#20252b;color:white;text-align:left;">
+                <th style="padding:10px 14px;">FIN DE SEMANA</th>
+                <th style="padding:10px 14px;">DÍA</th>
+                <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
+                <th style="padding:10px 14px;">PEDIDOS</th>
+                <th style="padding:10px 14px;">UNIDADES</th>
+              </tr>
+            </thead>
+            <tbody>{detalle_rows_html_static}</tbody>
+          </table>
+        </div>
+        """
+    else:
+        detalle_tabla_html = (
             '<div class="upload-box"><div class="upload-text">'
             'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
             '</div></div>'
@@ -420,6 +463,10 @@ body {{
 <div class="section">Venta por fin de semana del mes</div>
 {tabla_html}
 
+<div class="section">Detalle por día</div>
+<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Mismo período de arriba, abierto día por día (viernes, sábado y domingo de cada fin de semana).</div>
+{detalle_tabla_html}
+
 <div class="footer">
   <span>Fuente: venta con impuesto de MicroStrategy.</span>
   <span>MásOnline | E-commerce</span>
@@ -534,6 +581,53 @@ if len(finde_tabla):
         </thead>
         <tbody>
           {finde_rows_html}
+        </tbody>
+      </table>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown(
+        '<div class="upload-box"><div class="upload-text">'
+        'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+        '</div></div>',
+        unsafe_allow_html=True
+    )
+
+st.markdown('<div class="section">Detalle por día</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
+    'Mismo período de arriba, abierto día por día (viernes, sábado y domingo de cada fin de semana).'
+    '</div>',
+    unsafe_allow_html=True
+)
+
+if len(detalle_dia):
+    detalle_rows_html = ""
+    for _, r in detalle_dia.iterrows():
+        detalle_rows_html += (
+            '<tr style="border-top:1px solid #eee;">'
+            f'<td style="padding:10px 14px;color:#20252b;">{r["rango"]}</td>'
+            f'<td style="padding:10px 14px;color:#20252b;">{r["dia_nombre"]} {r["date"].strftime("%d/%m")}</td>'
+            f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["ecommerce_tax"])}</td>'
+            f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["orders"])}</td>'
+            f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["units"])}</td>'
+            '</tr>'
+        )
+
+    st.markdown(f"""
+    <div class="table-scroll" style="background:white;border:1px solid #e8ebef;border-radius:14px;overflow-x:auto;box-shadow:0 2px 10px rgba(0,0,0,.06);">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px;">
+        <thead>
+          <tr style="background:#20252b;color:white;text-align:left;">
+            <th style="padding:10px 14px;">FIN DE SEMANA</th>
+            <th style="padding:10px 14px;">DÍA</th>
+            <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
+            <th style="padding:10px 14px;">PEDIDOS</th>
+            <th style="padding:10px 14px;">UNIDADES</th>
+          </tr>
+        </thead>
+        <tbody>
+          {detalle_rows_html}
         </tbody>
       </table>
     </div>
