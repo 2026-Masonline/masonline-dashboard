@@ -158,6 +158,17 @@ def norm_cols(df):
     df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
     return df
 
+def get_col_ci(df, name):
+    """Devuelve la columna que coincide con `name` sin importar mayúsc/minúsc
+    (por si el export cambia el casing de una columna de un día a otro).
+    Si no la encuentra, devuelve una serie vacía del mismo largo que df."""
+    if df is None:
+        return pd.Series([], dtype=object)
+    for c in df.columns:
+        if str(c).strip().lower() == name.lower():
+            return df[c]
+    return pd.Series([""] * len(df), index=df.index)
+
 def norm_txt(v):
     if pd.isna(v):
         return ""
@@ -1016,6 +1027,9 @@ if df_faltantes_raw is not None:
     # El archivo trae el mes completo (una fila por pedido) con la fecha real
     # de cada fila, no una sola foto del día.
     d["FechaArchivo"] = pd.to_datetime(d.get("dateCreated"), errors="coerce").dt.normalize()
+    # Los productos "pesables" (se venden por peso, no por unidad —
+    # sellingMeasurementUnit = "KG") no se cuentan como faltante acá.
+    _unidad_venta = get_col_ci(d, "sellingMeasurementUnit").apply(norm_txt).str.upper()
     # Filtro de sanidad: nunca puede faltar más cantidad de la que se compró
     # en ese pedido (ver mismo comentario en Operativo — una minoría de
     # filas del archivo trae valores absurdos).
@@ -1023,6 +1037,7 @@ if df_faltantes_raw is not None:
         (d["CantidadFaltante"] > 0)
         & d["FechaArchivo"].notna()
         & (d["CantidadFaltante"] <= _comprado.fillna(float("inf")))
+        & (_unidad_venta != "KG")
     ]
     faltantes = d.groupby(
         ["FechaArchivo", "Tienda", "Producto", "SKU"], as_index=False
