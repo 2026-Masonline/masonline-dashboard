@@ -439,24 +439,17 @@ SHARED_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 
-def get_shared_bytes(uploaded_file, shared_path):
-    """Si en ESTA sesión alguien subió un archivo, lo usa y lo guarda para
-    compartirlo con quien entre después. Si nadie subió nada en esta
-    sesión, usa el último que haya quedado guardado (subido antes por
-    cualquier otra persona). Devuelve (bytes o None, es_subida_nueva)."""
-    if uploaded_file is not None:
-        data = uploaded_file.getvalue()
-        try:
-            shared_path.write_bytes(data)
-        except Exception:
-            pass
-        return data, True
+def get_shared_bytes(shared_path):
+    """Esta pestaña ya no tiene uploader propio: el "Reporte diario.xlsx" y
+    "Faltantes" se suben en la pestaña "app". Acá solo se lee la última
+    copia que haya quedado guardada ahí (misma carpeta compartida que usan
+    también Productividad Pickers y Resumen)."""
     if shared_path.exists():
         try:
-            return shared_path.read_bytes(), False
+            return shared_path.read_bytes()
         except Exception:
-            return None, False
-    return None, False
+            return None
+    return None
 
 # ---------------------------------------------------------------------
 # Historial mensual de Faltantes: cada vez que subís un archivo de Faltantes
@@ -1406,47 +1399,28 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-padding:12px 16px;margin-bottom:14px;">
-  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
-    CARGAR REPORTES
-  </div>
-  <div style="font-size:12px;color:#6b7280;">
-    Subí el "Reporte diario.xlsx" completo una sola vez: detecto solas todas las hojas
-    (Pedidos +72h, Reclamos, On Time, Fill Rate, Cancelados) por sus columnas y armo
-    todas las secciones de abajo. Faltantes viene siempre en un archivo aparte.
-  </div>
-</div>
-""", unsafe_allow_html=True)
+reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
+faltantes_bytes = get_shared_bytes(SHARED_FALTANTES_PATH)
 
-def upload_box(col, title, help_text, key):
-    with col:
-        st.markdown(f"""
-        <div class="upload-box">
-          <div class="upload-title">{title}</div>
-          <div class="upload-text">{help_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
-
-u1, u2 = st.columns([3, 1])
-f_reporte = upload_box(
-    u1, "REPORTE DIARIO COMPLETO",
-    "El Reporte diario.xlsx de siempre, con todas las hojas: Pedidos +72h, Reclamos, On Time y Fill Rate.",
-    "f_reporte"
-)
-f_faltantes = upload_box(u2, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
-
-reporte_bytes, reporte_es_nuevo = get_shared_bytes(f_reporte, SHARED_REPORTE_PATH)
-faltantes_bytes, faltantes_es_nuevo = get_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
-
-if (reporte_bytes is not None and not reporte_es_nuevo) or (faltantes_bytes is not None and not faltantes_es_nuevo):
+if reporte_bytes is not None or faltantes_bytes is not None:
     st.markdown(
-        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
-        '● Mostrando el último reporte que subieron — no hace falta que subas nada para verlo actualizado.</div>',
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
+        '● Mostrando los reportes subidos en la pestaña app — no hace falta subir nada acá.</div>',
         unsafe_allow_html=True
     )
+else:
+    st.markdown("""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:12px 16px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+        TODAVÍA NO HAY REPORTES CARGADOS
+      </div>
+      <div style="font-size:12px;color:#6b7280;">
+        Subí el "Reporte diario.xlsx" y "Faltantes" en la pestaña <b>app</b>
+        (menú de la izquierda) para ver acá las alertas operativas.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
@@ -1745,7 +1719,7 @@ if (
 # Se escribe una sola vez por archivo realmente subido (se controla con un
 # hash guardado en session_state), no en cada re-render de la página — si no,
 # cada vez que tocás el filtro de Auditor/Tienda se volvería a escribir todo.
-if faltantes_historial_completo is not None and faltantes_es_nuevo and len(faltantes_historial_completo):
+if faltantes_historial_completo is not None and len(faltantes_historial_completo):
     _falt_hash = hashlib.md5(faltantes_bytes).hexdigest()
     if st.session_state.get("_faltantes_logged_hash") != _falt_hash:
         if replace_faltantes_meses_en_sheet(faltantes_historial_completo):
@@ -1755,7 +1729,7 @@ if faltantes_historial_completo is not None and faltantes_es_nuevo and len(falta
 # ---- Acumular Productividad de Pickers de hoy en el historial (Google Sheets) ----
 # Mismo criterio que Faltantes: se agrega una sola vez por archivo realmente
 # subido (hash del Reporte diario en session_state), no en cada re-render.
-if pickers is not None and reporte_es_nuevo and len(pickers):
+if pickers is not None and len(pickers):
     _pickers_hash = hashlib.md5(reporte_bytes).hexdigest()
     if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
         if replace_pickers_meses_en_sheet(pickers):
