@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import tempfile
 from pathlib import Path
 
 st.set_page_config(
@@ -141,6 +142,71 @@ with u3:
         key="upload_ly",
         label_visibility="collapsed",
         help="Reporte Venta Con y sin Impuesto del mismo mes del año pasado."
+    )
+
+# ---------------------------------------------------------------------
+# Reporte diario + Faltantes: se suben acá y quedan guardados en una carpeta
+# compartida en el servidor, para que las pestañas Operativo, Productividad
+# Pickers y Resumen los lean directo, sin tener que subirlos de nuevo ahí.
+# ---------------------------------------------------------------------
+
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:12px 16px;margin:22px 0 14px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    CARGAR REPORTES (Operativo)
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Subí el "Reporte diario.xlsx" completo una sola vez: detecto solas todas las hojas
+    (Pedidos +72h, Reclamos, On Time, Fill Rate, Cancelados) y armo todas las secciones
+    de la pestaña Operativo. Faltantes viene siempre en un archivo aparte.
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+def upload_box_reporte(col, title, help_text, key):
+    with col:
+        st.markdown(f"""
+        <div class="upload-box">
+          <div class="upload-title">{title}</div>
+          <div class="upload-text">{help_text}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
+
+r1, r2 = st.columns([3, 1])
+f_reporte = upload_box_reporte(
+    r1, "REPORTE DIARIO COMPLETO",
+    "El Reporte diario.xlsx de siempre, con todas las hojas: Pedidos +72h, Reclamos, On Time y Fill Rate.",
+    "f_reporte"
+)
+f_faltantes = upload_box_reporte(r2, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+
+SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
+SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
+SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
+
+def save_shared_bytes(uploaded_file, shared_path):
+    """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
+    compartida para que las demás pestañas lo lean. Devuelve True si había
+    algo (nuevo o ya guardado antes)."""
+    if uploaded_file is not None:
+        try:
+            shared_path.write_bytes(uploaded_file.getvalue())
+        except Exception:
+            pass
+        return True
+    return shared_path.exists()
+
+reporte_guardado = save_shared_bytes(f_reporte, SHARED_REPORTE_PATH)
+faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
+
+if reporte_guardado or faltantes_guardado:
+    st.markdown(
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
+        '● Listo — ya lo podés ver en la pestaña Operativo.</div>',
+        unsafe_allow_html=True
     )
 
 # Código de tienda (columna "Tienda" del Excel) -> nombre. Mismo listado que
