@@ -401,11 +401,9 @@ SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 
 def get_shared_bytes(uploaded_file, shared_path):
-    """Si en ESTA sesión alguien subió un archivo, lo usa y lo guarda para
-    compartirlo con quien entre después. Si nadie subió nada en esta
-    sesión, usa el último que haya quedado guardado (subido antes por
-    cualquier otra persona, incluso desde la pestaña Operativo). Devuelve
-    (bytes o None, es_subida_nueva)."""
+    """Esta pestaña no tiene uploader propio (siempre se llama con
+    uploaded_file=None): solo lee el último Reporte diario / Faltantes que
+    se haya subido en la pestaña "app" (carpeta compartida)."""
     if uploaded_file is not None:
         data = uploaded_file.getvalue()
         try:
@@ -676,7 +674,7 @@ def slug_filename(s):
 # ---------------------------------------------------------------------
 # Header — esta página no tiene uploaders propios: siempre muestra el
 # último "Reporte diario.xlsx" y Faltantes que se hayan subido en la
-# pestaña Operativo (mismo archivo compartido, ver get_shared_bytes).
+# pestaña app (mismo archivo compartido, ver get_shared_bytes).
 # ---------------------------------------------------------------------
 
 st.markdown("""
@@ -694,7 +692,7 @@ faltantes_bytes, _ = get_shared_bytes(None, SHARED_FALTANTES_PATH)
 if reporte_bytes is not None or faltantes_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
-        '● Mostrando el último reporte subido en la pestaña Operativo — no hace falta subir nada acá.</div>',
+        '● Mostrando el último reporte subido en la pestaña app — no hace falta subir nada acá.</div>',
         unsafe_allow_html=True
     )
 else:
@@ -706,7 +704,7 @@ else:
       </div>
       <div style="font-size:12px;color:#6b7280;">
         Subí el "Reporte diario.xlsx" y el archivo de Faltantes en la pestaña
-        <b>Operativo</b>. Esta página va a mostrar el Top 5 automáticamente con esos mismos datos.
+        <b>app</b>. Esta página va a mostrar el Top 5 automáticamente con esos mismos datos.
       </div>
     </div>
     """, unsafe_allow_html=True)
