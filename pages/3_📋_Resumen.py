@@ -260,6 +260,38 @@ def warehouse_to_tienda(v):
         return alias
     return s.title()
 
+def clean_shipping_location(v):
+    """El archivo de Pedidos trae 'shippingLocationName', que casi siempre
+    ya es el nombre de tienda legible (ej. 'Sucursal San Justo', alguna vez
+    con la errata 'Sucurcal'), a veces con un código de depósito pegado al
+    final (ej. 'Sucursal Tucuman 1020'). Devuelve '' si no había nada útil,
+    para que warehouse_to_tienda(shippingWarehouseName) sirva de respaldo."""
+    s = norm_txt(v)
+    if not s:
+        return ""
+    s = re.sub(r"(?i)^sucur[sc]al\s+", "", s)
+    s = re.sub(r"\s+\d{3,6}$", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def parse_pedidos_monto(v):
+    """El archivo de Pedidos trae el monto como '$122014.84' (punto decimal,
+    sin separador de miles) — a diferencia del '$46K' del Reporte diario de
+    siempre, que sí espera la notación argentina que usa ar_number(). Lo
+    dejamos como número de una — ar_number() más abajo, al recibir ya un
+    número, lo deja pasar tal cual."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return 0.0
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return float(v)
+    s = norm_txt(v).replace("$", "").replace(" ", "")
+    if not s:
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
 # Mapa Tienda -> Auditor (el mismo que en Operativo). Pendiente de confirmar
 # con Emi: "Comodoro Rivadavia" / "Comodoro Rivadavia Norte" y "R.S. Peña,
 # Chaco" — hasta aclararlo, esas tiendas no muestran auditor.
@@ -457,11 +489,12 @@ SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
+SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 
 def get_shared_bytes(uploaded_file, shared_path):
     """Esta pestaña no tiene uploader propio (siempre se llama con
-    uploaded_file=None): solo lee el último Reporte diario / Faltantes que
-    se haya subido en la pestaña "app" (carpeta compartida)."""
+    uploaded_file=None): solo lee el último Reporte diario / Pedidos /
+    Faltantes que se haya subido en la pestaña "app" (carpeta compartida)."""
     if uploaded_file is not None:
         data = uploaded_file.getvalue()
         try:
@@ -476,15 +509,16 @@ def get_shared_bytes(uploaded_file, shared_path):
             return None, False
     return None, False
 
-def load_section_from_xl(xl, required_cols):
+def load_section_from_xl(xl, required_cols, required=True):
     if xl is None:
         return None
     name, df = find_sheet(xl, required_cols)
     if df is None:
-        st.error(
-            "No encontré una hoja con las columnas esperadas "
-            f"({', '.join(required_cols)}) en el archivo subido."
-        )
+        if required:
+            st.error(
+                "No encontré una hoja con las columnas esperadas "
+                f"({', '.join(required_cols)}) en el archivo subido."
+            )
         return None
     return df
 
@@ -746,8 +780,9 @@ st.markdown("""
 
 reporte_bytes, _ = get_shared_bytes(None, SHARED_REPORTE_PATH)
 faltantes_bytes, _ = get_shared_bytes(None, SHARED_FALTANTES_PATH)
+pedidos_bytes, _ = get_shared_bytes(None, SHARED_PEDIDOS_PATH)
 
-if reporte_bytes is not None or faltantes_bytes is not None:
+if reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
         '● Mostrando el último reporte subido en la pestaña app — no hace falta subir nada acá.</div>',
@@ -761,7 +796,7 @@ else:
         TODAVÍA NO HAY DATOS CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí el "Reporte diario.xlsx" y el archivo de Faltantes en la pestaña
+        Subí "Pedidos", el "Reporte diario.xlsx" y el archivo de Faltantes en la pestaña
         <b>app</b>. Esta página va a mostrar el Top 5 automáticamente con esos mismos datos.
       </div>
     </div>
@@ -776,7 +811,11 @@ st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 now_ref = None
 
 xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes)) if reporte_bytes is not None else None
-df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"])
+# "Pedido" adentro del Reporte diario: se deja de requerir (required=False)
+# porque Pedidos ahora se sube en su propio archivo aparte, así que esta
+# hoja puede faltar sin que sea un error — queda solo como respaldo mientras
+# se termina de migrar.
+df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"], required=False)
 df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_fr_from_xl(xl_reporte)
@@ -786,11 +825,33 @@ df_faltantes_raw = load_section_from_xl(
     xl_faltantes,
     ["warehouseName", "refName", "missingQuantity", "substitutedQuantity", "noSubstitutedQuantity"]
 )
+xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes)) if pedidos_bytes is not None else None
+df_pedidos_raw = load_section_from_xl(
+    xl_pedidos,
+    ["commerceId", "commerceDateCreated", "status", "totalAmount", "shippingWarehouseName"],
+    required=False
+)
 
 candidate_times = []
 
 pedidos_72h = None
-if df_72h_raw is not None:
+if df_pedidos_raw is not None:
+    # Archivo nuevo de Pedidos (export "order-operation"): mismo esquema
+    # Pedido/Tienda/Fecha/Estado/Monto que ya usa el resto de esta sección
+    # (misma lógica que en Operativo).
+    d = df_pedidos_raw.copy()
+    d["Pedido"] = d.get("commerceId", "").apply(norm_txt)
+    tienda_loc = d.get("shippingLocationName", "").apply(clean_shipping_location)
+    tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
+    d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
+    d["Fecha"] = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
+    d["Estado"] = d.get("status", "").apply(norm_txt)
+    d["Monto"] = d.get("totalAmount").apply(parse_pedidos_monto)
+    d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
+    d = d.dropna(subset=["Fecha"])
+    candidate_times.append(d["Fecha"].max())
+    pedidos_72h = d[["Pedido", "Tienda", "Fecha", "Estado", "Monto"]]
+elif df_72h_raw is not None:
     d = df_72h_raw.copy()
     d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
     d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
