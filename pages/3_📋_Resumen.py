@@ -1386,11 +1386,16 @@ else:
 
     # ---- Descargar todo junto ----
     full_html = export_resumen_html(now_ref, sections)
+    # La fecha va también en el NOMBRE del archivo (no solo adentro, en
+    # "Corte del reporte") para que se vea de una en la carpeta de
+    # Descargas o en el mail, sin tener que abrirlo.
+    _fecha_archivo = now_ref.strftime("%Y-%m-%d") if now_ref is not None else None
+    _nombre_resumen = f"resumen_top5_tiendas_{_fecha_archivo}.html" if _fecha_archivo else "resumen_top5_tiendas.html"
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     st.download_button(
         "📋 Descargar Resumen completo (HTML) — para mandar a las tiendas",
         data=full_html.encode("utf-8"),
-        file_name="resumen_top5_tiendas.html",
+        file_name=_nombre_resumen,
         mime="text/html",
         key="dl_resumen_full",
         use_container_width=True,
