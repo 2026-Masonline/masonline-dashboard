@@ -579,7 +579,9 @@ def load_fr_from_xl(xl):
     )
     return None
 
-def load_cancelados_from_xl(xl):
+def load_cancelados_from_xl(xl, required=True):
+    """required=False porque los cancelados ahora salen del archivo de
+    Pedidos — esta hoja del Reporte diario puede faltar sin que sea error."""
     if xl is None:
         return None
     named = [s for s in xl.sheet_names if "cancel" in s.lower()]
@@ -595,10 +597,11 @@ def load_cancelados_from_xl(xl):
     name, df = find_sheet(xl, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
     if df is not None:
         return df
-    st.error(
-        "No encontré una hoja con las columnas esperadas "
-        "(Pedido, Tienda, Fecha, Estado, Total $) en el archivo subido."
-    )
+    if required:
+        st.error(
+            "No encontré una hoja con las columnas esperadas "
+            "(Pedido, Tienda, Fecha, Estado, Total $) en el archivo subido."
+        )
     return None
 
 def load_reclamos_from_xl(xl):
@@ -819,7 +822,7 @@ df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Est
 df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_fr_from_xl(xl_reporte)
-df_cancelados_raw = load_cancelados_from_xl(xl_reporte)
+df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
 xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
     xl_faltantes,
@@ -849,10 +852,10 @@ if df_pedidos_raw is not None:
     fecha_creacion = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
     # "Sin mover +72h" se mide contra el FIN de la ventana de entrega
     # prometida (deliveryFinishDate), no contra la fecha del pedido (misma
-    # lógica que en Operativo). Un pedido cancelado también entra en la
-    # alerta — solo se excluyen los entregados.
+    # lógica que en Operativo). Los cancelados se sacan de acá y van a la
+    # sección de Cancelados aparte (más abajo).
     d["Fecha"] = pd.to_datetime(d.get("deliveryFinishDate"), errors="coerce")
-    d = d[d["Estado"].astype(str).str.lower() != "delivered"]
+    d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
     d = d.dropna(subset=["Fecha"])
     if fecha_creacion.notna().any():
         candidate_times.append(fecha_creacion.max())
@@ -874,7 +877,24 @@ if df_reclamos_raw is not None:
     reclamos = d
 
 cancelados = None
-if df_cancelados_raw is not None:
+if df_pedidos_raw is not None:
+    # Los cancelados del archivo nuevo de Pedidos (separados de "sin
+    # mover +72h" más arriba) van a esta sección (misma lógica que en
+    # Operativo).
+    d = df_pedidos_raw.copy()
+    d = d[d.get("status", "").apply(norm_txt).str.lower().isin(["canceled", "cancelled"])].copy()
+    d["Pedido"] = d.get("commerceId", "").apply(norm_txt)
+    tienda_loc = d.get("shippingLocationName", "").apply(clean_shipping_location)
+    tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
+    d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
+    d["Fecha"] = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
+    d["Estado"] = d.get("status", "").apply(norm_txt)
+    d["Monto"] = d.get("totalAmount").apply(parse_pedidos_monto)
+    d = d.dropna(subset=["Fecha"])
+    if len(d):
+        candidate_times.append(d["Fecha"].max())
+    cancelados = d[["Pedido", "Tienda", "Fecha", "Estado", "Monto"]]
+elif df_cancelados_raw is not None:
     d = df_cancelados_raw.copy()
     d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
     d = d.dropna(subset=["Fecha"])
