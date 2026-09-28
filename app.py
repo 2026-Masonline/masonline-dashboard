@@ -157,9 +157,9 @@ padding:12px 16px;margin:22px 0 14px;">
     CARGAR REPORTES (Operativo)
   </div>
   <div style="font-size:12px;color:#6b7280;">
-    Subí el "Reporte diario.xlsx" completo una sola vez: detecto solas todas las hojas
-    (Pedidos +72h, Reclamos, On Time, Fill Rate, Cancelados) y armo todas las secciones
-    de la pestaña Operativo. Faltantes viene siempre en un archivo aparte.
+    Pedidos ahora se sube en su propia tarjeta, aparte. El resto de las hojas
+    (Reclamos, On Time, Fill Rate, Cancelados) siguen en el mismo Reporte diario.xlsx
+    de siempre. Faltantes sigue siendo un archivo aparte, como hasta ahora.
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -174,18 +174,31 @@ def upload_box_reporte(col, title, help_text, key):
         """, unsafe_allow_html=True)
         return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
 
-r1, r2 = st.columns([3, 1])
+r1, r2, r3 = st.columns([2, 2, 1.3])
+f_pedidos = upload_box_reporte(
+    r1, "PEDIDOS",
+    "Archivo nuevo de Pedidos +72h, aparte del Reporte diario.",
+    "f_pedidos"
+)
 f_reporte = upload_box_reporte(
-    r1, "REPORTE DIARIO COMPLETO",
-    "El Reporte diario.xlsx de siempre, con todas las hojas: Pedidos +72h, Reclamos, On Time y Fill Rate.",
+    r2, "REPORTE DIARIO (Reclamos, On Time, Fill Rate, Cancelados)",
+    "El Reporte diario.xlsx de siempre, ahora sin la hoja de Pedidos.",
     "f_reporte"
 )
-f_faltantes = upload_box_reporte(r2, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+f_faltantes = upload_box_reporte(r3, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+
+st.markdown(
+    '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
+    'La tarjeta de Pedidos todavía guarda el archivo pero no arma la sección — '
+    'eso lo terminamos de conectar en el próximo paso.</div>',
+    unsafe_allow_html=True
+)
 
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
+SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 
 def save_shared_bytes(uploaded_file, shared_path):
     """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
@@ -201,6 +214,7 @@ def save_shared_bytes(uploaded_file, shared_path):
 
 reporte_guardado = save_shared_bytes(f_reporte, SHARED_REPORTE_PATH)
 faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
+pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH)
 
 if reporte_guardado or faltantes_guardado:
     st.markdown(
