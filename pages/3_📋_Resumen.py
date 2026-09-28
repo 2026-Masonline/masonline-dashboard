@@ -828,7 +828,7 @@ df_faltantes_raw = load_section_from_xl(
 xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes)) if pedidos_bytes is not None else None
 df_pedidos_raw = load_section_from_xl(
     xl_pedidos,
-    ["commerceId", "commerceDateCreated", "status", "totalAmount", "shippingWarehouseName"],
+    ["commerceId", "commerceDateCreated", "deliveryFinishDate", "status", "totalAmount", "shippingWarehouseName"],
     required=False
 )
 
@@ -844,12 +844,18 @@ if df_pedidos_raw is not None:
     tienda_loc = d.get("shippingLocationName", "").apply(clean_shipping_location)
     tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
     d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
-    d["Fecha"] = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
     d["Estado"] = d.get("status", "").apply(norm_txt)
     d["Monto"] = d.get("totalAmount").apply(parse_pedidos_monto)
-    d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
+    fecha_creacion = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
+    # "Sin mover +72h" se mide contra el FIN de la ventana de entrega
+    # prometida (deliveryFinishDate), no contra la fecha del pedido (misma
+    # lógica que en Operativo). Un pedido cancelado también entra en la
+    # alerta — solo se excluyen los entregados.
+    d["Fecha"] = pd.to_datetime(d.get("deliveryFinishDate"), errors="coerce")
+    d = d[d["Estado"].astype(str).str.lower() != "delivered"]
     d = d.dropna(subset=["Fecha"])
-    candidate_times.append(d["Fecha"].max())
+    if fecha_creacion.notna().any():
+        candidate_times.append(fecha_creacion.max())
     pedidos_72h = d[["Pedido", "Tienda", "Fecha", "Estado", "Monto"]]
 elif df_72h_raw is not None:
     d = df_72h_raw.copy()
