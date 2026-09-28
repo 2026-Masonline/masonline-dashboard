@@ -157,9 +157,9 @@ padding:12px 16px;margin:22px 0 14px;">
     CARGAR REPORTES (Operativo)
   </div>
   <div style="font-size:12px;color:#6b7280;">
-    Pedidos ahora se sube en su propia tarjeta, aparte. El resto de las hojas
-    (Reclamos, On Time, Fill Rate, Cancelados) siguen en el mismo Reporte diario.xlsx
-    de siempre. Faltantes sigue siendo un archivo aparte, como hasta ahora.
+    Ya no se sube más el Reporte diario combinado. Cada sección se sube en su
+    propio archivo, aparte: Pedidos +72h, Reclamos Operativos, On Time, Delivery,
+    Fill Rate, Faltantes y Pickers.
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -174,37 +174,58 @@ def upload_box_reporte(col, title, help_text, key):
         """, unsafe_allow_html=True)
         return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
 
-r1, r2, r3, r4 = st.columns([1.8, 1.8, 1.1, 1.1])
+r1, r2, r3, r4 = st.columns(4)
 f_pedidos = upload_box_reporte(
     r1, "PEDIDOS +72H",
-    "Archivo de Pedidos +72h, aparte del Reporte diario.",
+    "Archivo de Pedidos +72h.",
     "f_pedidos"
 )
-f_reporte = upload_box_reporte(
-    r2, "REPORTE DIARIO (Reclamos, On Time, Fill Rate, Cancelados)",
-    "El Reporte diario.xlsx de siempre, ahora sin la hoja de Pedidos.",
-    "f_reporte"
+f_reclamos = upload_box_reporte(
+    r2, "RECLAMOS OPERATIVOS",
+    "Archivo nuevo de Reclamos Operativos, aparte del Reporte diario.",
+    "f_reclamos"
 )
-f_faltantes = upload_box_reporte(r3, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+f_ontime = upload_box_reporte(
+    r3, "ON-TIME",
+    "Archivo nuevo de On Time, aparte del Reporte diario.",
+    "f_ontime"
+)
+f_delivery = upload_box_reporte(
+    r4, "DELIVERY",
+    "Archivo nuevo de Delivery, aparte del Reporte diario.",
+    "f_delivery"
+)
+
+r5, r6, r7 = st.columns(3)
+f_fillrate = upload_box_reporte(
+    r5, "FILL RATE",
+    "Archivo nuevo de Fill Rate, aparte del Reporte diario.",
+    "f_fillrate"
+)
+f_faltantes = upload_box_reporte(r6, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
 f_pickers = upload_box_reporte(
-    r4, "PICKERS",
+    r7, "PICKERS",
     "Archivo nuevo de Productividad Pickers, aparte del Reporte diario.",
     "f_pickers"
 )
 
 st.markdown(
     '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
-    'La tarjeta de Pickers todavía guarda el archivo pero no arma la sección — '
-    'eso lo terminamos de conectar en el próximo paso.</div>',
+    'Reclamos Operativos, On-Time, Delivery, Fill Rate y Pickers todavía '
+    'guardan el archivo pero no arman la sección — eso lo vamos conectando a '
+    'medida que tengamos un archivo de ejemplo de cada uno.</div>',
     unsafe_allow_html=True
 )
 
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
-SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
+SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
+SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
+SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
+SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 
 def save_shared_bytes(uploaded_file, shared_path):
     """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
@@ -218,12 +239,15 @@ def save_shared_bytes(uploaded_file, shared_path):
         return True
     return shared_path.exists()
 
-reporte_guardado = save_shared_bytes(f_reporte, SHARED_REPORTE_PATH)
 faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
 pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH)
 pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH)
+reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH)
+ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH)
+delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH)
+fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH)
 
-if reporte_guardado or faltantes_guardado:
+if pedidos_guardado or faltantes_guardado:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
         '● Listo — ya lo podés ver en la pestaña Operativo.</div>',
