@@ -501,10 +501,11 @@ SHARED_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
+SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 
 def get_shared_bytes(uploaded_file, shared_path):
     """Esta pestaña no tiene uploader propio (siempre se llama con
-    uploaded_file=None): solo lee el último Reporte diario / Pedidos /
+    uploaded_file=None): solo lee el último Pedidos / Reclamos Operativos /
     Faltantes que se haya subido en la pestaña "app" (carpeta compartida)."""
     if uploaded_file is not None:
         data = uploaded_file.getvalue()
@@ -615,7 +616,7 @@ def load_cancelados_from_xl(xl, required=True):
         )
     return None
 
-def load_reclamos_from_xl(xl):
+def load_reclamos_from_xl(xl, required=True):
     if xl is None:
         return None
     name, df = find_sheet(xl, ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha"])
@@ -624,19 +625,21 @@ def load_reclamos_from_xl(xl):
     raw_cols = ["displayId", "typeName", "orderCommerceSequentialId", "storeName", "statusName", "dateCreated"]
     name, raw = find_sheet(xl, raw_cols)
     if raw is None:
-        st.error(
-            "No encontré una hoja con las columnas esperadas de Reclamos "
-            "(Reclamo/Pedido/Tienda/Tipo/Estado/Fecha, o el export crudo con "
-            "displayId/typeName/orderCommerceSequentialId/storeName/statusName/dateCreated) "
-            "en el archivo subido."
-        )
+        if required:
+            st.error(
+                "No encontré una hoja con las columnas esperadas de Reclamos "
+                "(Reclamo/Pedido/Tienda/Tipo/Estado/Fecha, o el export crudo con "
+                "displayId/typeName/orderCommerceSequentialId/storeName/statusName/dateCreated) "
+                "en el archivo subido."
+            )
         return None
     raw = raw[raw["typeName"].apply(norm_txt).str.lower().str.contains("reclamo", na=False)].copy()
     return pd.DataFrame({
         "Reclamo": raw["displayId"].apply(norm_txt),
-        "Pedido": raw["orderCommerceSequentialId"].apply(
-            lambda v: "" if pd.isna(v) else str(int(v))
-        ),
+        # norm_codigo (no int() a secas): la mayoría son ids numéricos, pero
+        # algunos pedidos con más de un reclamo vienen con sufijo, ej.
+        # "11404682-1", y forzar int() ahí rompía toda la carga.
+        "Pedido": raw["orderCommerceSequentialId"].apply(norm_codigo),
         "Tienda": raw["storeName"].apply(norm_txt),
         "Tipo": raw["typeName"].apply(norm_txt),
         "Estado": raw["statusName"].apply(norm_txt),
@@ -795,8 +798,9 @@ st.markdown("""
 reporte_bytes, _ = get_shared_bytes(None, SHARED_REPORTE_PATH)
 faltantes_bytes, _ = get_shared_bytes(None, SHARED_FALTANTES_PATH)
 pedidos_bytes, _ = get_shared_bytes(None, SHARED_PEDIDOS_PATH)
+reclamos_bytes, _ = get_shared_bytes(None, SHARED_RECLAMOS_PATH)
 
-if reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None:
+if reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None or reclamos_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
         '● Mostrando el último reporte subido en la pestaña app — no hace falta subir nada acá.</div>',
@@ -810,7 +814,7 @@ else:
         TODAVÍA NO HAY DATOS CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí "Pedidos", el "Reporte diario.xlsx" y el archivo de Faltantes en la pestaña
+        Subí "Pedidos", "Reclamos Operativos" y el archivo de Faltantes en la pestaña
         <b>app</b>. Esta página va a mostrar el Top 5 automáticamente con esos mismos datos.
       </div>
     </div>
@@ -830,7 +834,12 @@ xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes)) if reporte_bytes is not 
 # hoja puede faltar sin que sea un error — queda solo como respaldo mientras
 # se termina de migrar.
 df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"], required=False)
-df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
+xl_reclamos = safe_open_excel(io.BytesIO(reclamos_bytes)) if reclamos_bytes is not None else None
+df_reclamos_raw = load_reclamos_from_xl(xl_reclamos)
+if df_reclamos_raw is None:
+    # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
+    # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
+    df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_fr_from_xl(xl_reporte)
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
