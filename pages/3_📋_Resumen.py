@@ -202,6 +202,64 @@ def fold_tienda_key(s):
     s = "".join(c for c in s if not unicodedata.combining(c))
     return s.lower()
 
+# Código de tienda (columna "warehouseName" del archivo de Faltantes, cuando
+# viene como número, ej. "Inv-Full-1006") -> nombre. Mismo listado que se usa
+# en "app", "Productividad Pickers" y Operativo.
+TIENDA_CODE_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+WAREHOUSE_NAME_ALIASES = {
+    "larioja": "La Rioja",
+}
+
+_WAREHOUSE_PREFIX_RE = re.compile(r"(?i)^inv-(fullgm|full|mg|pp)-")
+
+def warehouse_to_tienda(v):
+    """El archivo de Faltantes mensual trae el depósito como
+    'Inv-Full-San Fernando', 'inv-fullgm-viedma', 'Inv-Full-1006' (código),
+    etc. en vez del nombre de tienda tal cual. Le saca el prefijo técnico y
+    lo deja como nombre de tienda; strip_sucursal/apply_tienda_canon
+    terminan de unificarlo con la ortografía que ya usan las demás hojas."""
+    s = norm_txt(v)
+    s = _WAREHOUSE_PREFIX_RE.sub("", s)
+    s = re.sub(r"[-_]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return s
+    if s.isdigit():
+        return TIENDA_CODE_MAP.get(s, s)
+    alias = WAREHOUSE_NAME_ALIASES.get(s.lower())
+    if alias:
+        return alias
+    return s.title()
+
 # Mapa Tienda -> Auditor (el mismo que en Operativo). Pendiente de confirmar
 # con Emi: "Comodoro Rivadavia" / "Comodoro Rivadavia Norte" y "R.S. Peña,
 # Chaco" — hasta aclararlo, esas tiendas no muestran auditor.
@@ -726,7 +784,7 @@ df_cancelados_raw = load_cancelados_from_xl(xl_reporte)
 xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
     xl_faltantes,
-    ["Tienda@DESC", "SKU@DESC", "Etiqueta_Stock", "Dias sin venta"]
+    ["warehouseName", "refName", "missingQuantity", "substitutedQuantity", "noSubstitutedQuantity"]
 )
 
 candidate_times = []
@@ -855,23 +913,37 @@ if cancelados is not None:
     cancelados["Total $"] = _total_num.fillna(_monto_num).fillna(0)
 
 # ---- Faltantes ----
+# Formato nuevo (archivo "Faltantes_Mensual"): una fila por cada producto
+# faltante dentro de cada pedido (tienda, producto, cantidad faltante,
+# sustituido o no, fecha) — igual que en Operativo.
 faltantes = None
 if df_faltantes_raw is not None:
     d = df_faltantes_raw.copy()
-    d["Tienda"] = d["Tienda@DESC"].apply(norm_txt)
-    d["Producto"] = d["SKU@DESC"].apply(norm_txt) if "SKU@DESC" in d.columns else ""
-    _cod_col = next(
-        (c for c in ["Codigo Principal", "Código Principal", "CodigoPrincipal", "Codigo_Principal"] if c in d.columns),
-        None
+    d["Tienda"] = d["warehouseName"].apply(warehouse_to_tienda)
+    d["Producto"] = d["refName"].apply(norm_txt)
+    d["SKU"] = d.get("skuId", "").apply(norm_codigo)
+    d["CantidadFaltante"] = pd.to_numeric(d.get("missingQuantity"), errors="coerce").fillna(0)
+    d["Sustituido"] = pd.to_numeric(d.get("substitutedQuantity"), errors="coerce").fillna(0)
+    d["NoSustituido"] = pd.to_numeric(d.get("noSubstitutedQuantity"), errors="coerce").fillna(0)
+    _comprado = pd.to_numeric(d.get("purchasedQuantity"), errors="coerce")
+    # El archivo trae el mes completo (una fila por pedido) con la fecha real
+    # de cada fila, no una sola foto del día.
+    d["FechaArchivo"] = pd.to_datetime(d.get("dateCreated"), errors="coerce").dt.normalize()
+    # Filtro de sanidad: nunca puede faltar más cantidad de la que se compró
+    # en ese pedido (ver mismo comentario en Operativo — una minoría de
+    # filas del archivo trae valores absurdos).
+    d = d[
+        (d["CantidadFaltante"] > 0)
+        & d["FechaArchivo"].notna()
+        & (d["CantidadFaltante"] <= _comprado.fillna(float("inf")))
+    ]
+    faltantes = d.groupby(
+        ["FechaArchivo", "Tienda", "Producto", "SKU"], as_index=False
+    ).agg(
+        CantidadFaltante=("CantidadFaltante", "sum"),
+        Sustituido=("Sustituido", "sum"),
+        NoSustituido=("NoSustituido", "sum"),
     )
-    d["CodigoPrincipal"] = d[_cod_col].apply(norm_codigo) if _cod_col else ""
-    d["Departamento"] = d["Departamento@DESC"].apply(norm_txt) if "Departamento@DESC" in d.columns else ""
-    d["Etiqueta"] = d.get("Etiqueta_Stock", "").apply(norm_txt)
-    d = d[d["Etiqueta"] != ""]
-    # El archivo trae el mes completo (desde el día 1) con la fecha real de
-    # cada fila, no una sola foto del día.
-    d["FechaArchivo"] = pd.to_datetime(d.get("Fecha"), errors="coerce")
-    faltantes = d
 
 # ---------------------------------------------------------------------
 # Unificar nombres de tienda entre hojas
@@ -1103,24 +1175,24 @@ else:
         )
         body = None
         if faltantes is not None and len(faltantes):
-            cantidad_mes = len(faltantes)
+            cantidad_mes = int(faltantes["CantidadFaltante"].sum())
             _fecha_norm = faltantes["FechaArchivo"].dt.normalize()
             cantidad_actual = (
-                int((_fecha_norm == fecha_actual_falt).sum())
+                int(faltantes.loc[_fecha_norm == fecha_actual_falt, "CantidadFaltante"].sum())
                 if fecha_actual_falt is not None else 0
             )
             cantidad_anterior = (
-                int((_fecha_norm == fecha_anterior_falt).sum())
+                int(faltantes.loc[_fecha_norm == fecha_anterior_falt, "CantidadFaltante"].sum())
                 if fecha_anterior_falt is not None else 0
             )
             label_actual = f"Día actual ({fecha_actual_falt.strftime('%d/%m')})" if fecha_actual_falt is not None else "Día actual"
             label_anterior = f"Día anterior ({fecha_anterior_falt.strftime('%d/%m')})" if fecha_anterior_falt is not None else "Día anterior"
 
-            # Detalle de SKUs faltantes por día (Departamento, SKU, Código
-            # Principal) — no se muestra en pantalla: se baja clickeando la
-            # tarjeta de "Día anterior" / "Día actual" (ver kpi_link_wrap).
-            _detail_cols = [c for c in ["Departamento", "Producto", "CodigoPrincipal"] if c in faltantes.columns]
-            _detail_rename = {"Producto": "SKU", "CodigoPrincipal": "Código Principal"}
+            # Detalle de faltantes por día (Producto, SKU, Cantidad faltante)
+            # — no se muestra en pantalla: se baja clickeando la tarjeta de
+            # "Día anterior" / "Día actual" (ver kpi_link_wrap).
+            _detail_cols = ["Producto", "SKU", "CantidadFaltante"]
+            _detail_rename = {"CantidadFaltante": "Cantidad faltante"}
 
             def _detalle_dia_html(fecha_ref):
                 if fecha_ref is None:
@@ -1128,32 +1200,30 @@ else:
                 sub = faltantes[_fecha_norm == fecha_ref]
                 if not len(sub):
                     return None
-                sub = sub[_detail_cols].rename(columns=_detail_rename).sort_values(
-                    "SKU" if "SKU" in _detail_rename.values() else _detail_cols[0]
-                )
+                sub = sub[_detail_cols].rename(columns=_detail_rename).sort_values("Producto")
                 return table_html(sub)
 
             _slug_tienda = slug_filename(filtro_tienda)
             doc_anterior = export_section_html(
                 now_ref,
                 f"Faltantes {filtro_tienda} — {label_anterior}",
-                f"Listado de SKUs marcados como faltante en {filtro_tienda} el {label_anterior.split('(')[-1].rstrip(')')}.",
+                f"Listado de productos faltantes en {filtro_tienda} el {label_anterior.split('(')[-1].rstrip(')')}.",
                 _detalle_dia_html(fecha_anterior_falt)
             )
             doc_actual = export_section_html(
                 now_ref,
                 f"Faltantes {filtro_tienda} — {label_actual}",
-                f"Listado de SKUs marcados como faltante en {filtro_tienda} el {label_actual.split('(')[-1].rstrip(')')}.",
+                f"Listado de productos faltantes en {filtro_tienda} el {label_actual.split('(')[-1].rstrip(')')}.",
                 _detalle_dia_html(fecha_actual_falt)
             )
 
-            card_mes = kpi_card("ACUMULADO DEL MES", f"{cantidad_mes}", "Faltantes registrados este mes")
+            card_mes = kpi_card("ACUMULADO DEL MES", f"{cantidad_mes}", "Unidades faltantes este mes")
             card_anterior = kpi_link_wrap(
-                kpi_card(label_anterior.upper(), f"{cantidad_anterior}", "Faltantes ese día · click para ver el detalle", cls="warn" if cantidad_anterior else "good"),
+                kpi_card(label_anterior.upper(), f"{cantidad_anterior}", "Unidades faltantes ese día · click para ver el detalle", cls="warn" if cantidad_anterior else "good"),
                 doc_anterior, f"faltantes_{_slug_tienda}_dia_anterior.html"
             )
             card_actual = kpi_link_wrap(
-                kpi_card(label_actual.upper(), f"{cantidad_actual}", "Faltantes ese día · click para ver el detalle", cls="crit" if cantidad_actual else "good"),
+                kpi_card(label_actual.upper(), f"{cantidad_actual}", "Unidades faltantes ese día · click para ver el detalle", cls="crit" if cantidad_actual else "good"),
                 doc_actual, f"faltantes_{_slug_tienda}_dia_actual.html"
             )
             kpi_html = '<div class="kpi-row">' + card_mes + card_anterior + card_actual + '</div>'
@@ -1161,35 +1231,34 @@ else:
             if cantidad_anterior or cantidad_actual:
                 st.markdown(
                     '<div style="font-size:11.5px;color:#6b7280;margin-top:-4px;">'
-                    '⬇ Tocá la tarjeta de "Día anterior" o "Día actual" para bajar el listado completo de SKUs de ese día.</div>',
+                    '⬇ Tocá la tarjeta de "Día anterior" o "Día actual" para bajar el listado completo de ese día.</div>',
                     unsafe_allow_html=True
                 )
 
-            agg_sku_tienda = faltantes.groupby("Producto").agg(
-                Apariciones=("Producto", "count"),
-                Codigo=("CodigoPrincipal", "first"),
-            ).reset_index().sort_values("Apariciones", ascending=False).head(5)
-            agg_sku_tienda = agg_sku_tienda.rename(columns={"Producto": "SKU", "Codigo": "Código Principal"})
+            agg_sku_tienda = faltantes.groupby("Producto", as_index=False).agg(
+                CantidadFaltante=("CantidadFaltante", "sum"),
+            ).sort_values("CantidadFaltante", ascending=False).head(5)
+            agg_sku_tienda = agg_sku_tienda.rename(columns={"Producto": "SKU", "CantidadFaltante": "Cantidad faltante"})
             html_sku_tienda = resumen_table_html(
-                agg_sku_tienda, "SKU", {"Código Principal": lambda v: str(v), "Apariciones": lambda v: f"{int(v)}"}
+                agg_sku_tienda, "SKU", {"Cantidad faltante": lambda v: f"{int(v)}"}
             )
             st.markdown(
-                '<div class="resumen-title" style="margin-top:14px;">Top 5 SKU con más faltantes (acumulado del mes)</div>',
+                '<div class="resumen-title" style="margin-top:14px;">Top 5 productos con más faltantes (acumulado del mes)</div>',
                 unsafe_allow_html=True
             )
             st.write(html_sku_tienda, unsafe_allow_html=True)
             body = kpi_html + (
-                '<div class="resumen-title" style="margin-top:14px;">Top 5 SKU con más faltantes (acumulado del mes)</div>'
+                '<div class="resumen-title" style="margin-top:14px;">Top 5 productos con más faltantes (acumulado del mes)</div>'
                 + html_sku_tienda
             )
         else:
             st.markdown('<div class="empty-box">Sin faltantes 🎉</div>', unsafe_allow_html=True)
         sections.append((titulo_falt, desc_falt, body))
     else:
-        titulo_falt = "📉 Faltantes ECOM — Top 5 tiendas y Top 5 SKU"
+        titulo_falt = "📉 Faltantes ECOM — Top 5 tiendas y Top 5 productos"
         desc_falt = (
             f"Acumulado del mes{' para ' + filtro_auditor if filtro_auditor else ''}. "
-            "SKUs marcados como faltante para e-commerce."
+            "Unidades faltantes por tienda y producto."
         )
         st.markdown(
             f'<div class="section">{titulo_falt}</div>'
@@ -1198,29 +1267,30 @@ else:
         )
         body = None
         if faltantes is not None and len(faltantes):
-            agg_tienda = faltantes.groupby("Tienda").agg(
-                Cantidad=("Producto", "count")
-            ).reset_index().sort_values("Cantidad", ascending=False).head(5)
-            agg_sku = faltantes.groupby("Producto").agg(
-                Tiendas=("Tienda", "count"),
-                Codigo=("CodigoPrincipal", "first"),
-            ).reset_index().sort_values("Tiendas", ascending=False).head(5)
-            agg_sku = agg_sku.rename(columns={"Producto": "SKU", "Codigo": "Código Principal"})
-            html_tienda = resumen_table_html(agg_tienda, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
-            html_sku = table_html(agg_sku[["SKU", "Código Principal", "Tiendas"]])
+            agg_tienda = faltantes.groupby("Tienda", as_index=False).agg(
+                CantidadFaltante=("CantidadFaltante", "sum")
+            ).sort_values("CantidadFaltante", ascending=False).head(5)
+            agg_sku = faltantes.groupby("Producto", as_index=False).agg(
+                CantidadFaltante=("CantidadFaltante", "sum"),
+                Tiendas=("Tienda", "nunique"),
+            ).sort_values("CantidadFaltante", ascending=False).head(5)
+            agg_sku = agg_sku.rename(columns={"Producto": "SKU", "CantidadFaltante": "Cantidad faltante"})
+            agg_sku["Cantidad faltante"] = agg_sku["Cantidad faltante"].apply(lambda v: f"{int(v)}")
+            html_tienda = resumen_table_html(agg_tienda, "Tienda", {"CantidadFaltante": lambda v: f"{int(v)}"})
+            html_sku = table_html(agg_sku[["SKU", "Cantidad faltante", "Tiendas"]])
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown('<div class="resumen-title">Top 5 tiendas con más faltantes</div>', unsafe_allow_html=True)
                 st.write(html_tienda, unsafe_allow_html=True)
             with col2:
-                st.markdown('<div class="resumen-title">Top 5 SKU con más faltantes (todas las tiendas)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 productos con más faltantes (todas las tiendas)</div>', unsafe_allow_html=True)
                 st.write(html_sku, unsafe_allow_html=True)
             body = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
                 '<div style="flex:1;min-width:260px;">'
                 '<div class="resumen-title">Top 5 tiendas con más faltantes</div>' + html_tienda + '</div>'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Top 5 SKU con más faltantes (todas las tiendas)</div>' + html_sku + '</div>'
+                '<div class="resumen-title">Top 5 productos con más faltantes (todas las tiendas)</div>' + html_sku + '</div>'
                 '</div>'
             )
         else:
