@@ -1423,7 +1423,7 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
     if pedidos_f is not None:
         card = kpi_card(
             "Pedidos +72h sin mover", f"{len(pedidos_f)}",
-            f"{money(pedidos_f['MontoNum'].sum())} en pedidos",
+            f"{money(pedidos_f['MontoNum'].sum())}",
             "crit" if len(pedidos_f) > 0 else "good"
         )
         kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
