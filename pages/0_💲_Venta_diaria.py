@@ -3,24 +3,10 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 import calendar
-import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
 import html
-
-# Historial de Faltantes (Google Sheet "HistorialFaltantes"): mismo mecanismo
-# que usa la pestaña "Operativo" para acumular, mes a mes, los SKUs marcados
-# como faltante. Acá lo reusamos solo para armar el ranking de qué tiendas
-# tuvieron más faltantes. El import va "blindado": si la librería no está
-# instalada, esta página funciona igual y esa sección simplemente muestra un
-# aviso de "todavía no conectado".
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials as _GCreds
-    _GSHEETS_LIB_OK = True
-except Exception:
-    _GSHEETS_LIB_OK = False
 
 st.set_page_config(
     page_title="MásOnline | Ecommerce",
@@ -90,24 +76,6 @@ st.markdown("""
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-    .rank-table-card {
-        background: white; border-radius: 14px; overflow: hidden;
-        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.06);
-    }
-    table.rank-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.rank-table thead th {
-        background: #e9f7ef; color: #208653; font-weight: 700;
-        padding: 10px 14px; text-align: left; white-space: nowrap;
-    }
-    table.rank-table td {
-        padding: 12px 14px; border-top: 1px solid #f1f3f5; color: #20252b;
-    }
-    .rank-badge {
-        width: 28px; height: 28px; border-radius: 50%;
-        display: inline-flex; align-items: center; justify-content: center;
-        font-weight: 800; font-size: 13px;
-    }
-
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
@@ -159,7 +127,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 DATA_FILE = Path(__file__).resolve().parent.parent / "data.csv"
-DATA_TIENDAS_FILE = Path(__file__).resolve().parent.parent / "data_tiendas.csv"
 LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
 
 try:
@@ -172,105 +139,26 @@ except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
 
-TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
-
-try:
-    if DATA_TIENDAS_FILE.exists():
-        base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
-        base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
-        base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
-        for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
-            base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
-        base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
-    else:
-        base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
-except Exception:
-    base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
-
-# ---------------------------------------------------------------------
-# Historial de Faltantes (Google Sheet "HistorialFaltantes") — mismas
-# credenciales que ya están cargadas en Secrets para "Operativo". Acá solo
-# se usa para armar el ranking de tiendas con más faltantes del mes.
-# ---------------------------------------------------------------------
-
-FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta"]
-
-@st.cache_resource(show_spinner=False)
-def _gsheets_client():
-    if not _GSHEETS_LIB_OK:
-        return None
-    try:
-        raw_json = st.secrets.get("GCP_SERVICE_ACCOUNT_JSON")
-        if raw_json:
-            creds_dict = json.loads(raw_json)
-        else:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds = _GCreds.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception:
-        return None
-
-def _faltantes_log_ws():
-    client = _gsheets_client()
-    if client is None:
-        return None
-    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
-    if not sheet_id:
-        return None
-    try:
-        sh = client.open_by_key(sheet_id)
-        return sh.worksheet("HistorialFaltantes")
-    except Exception:
-        return None
-
-@st.cache_data(ttl=180, show_spinner=False)
-def load_faltantes_log():
-    """None = todavía no conectado. DataFrame vacío = conectado pero sin
-    filas cargadas aún."""
-    ws = _faltantes_log_ws()
-    if ws is None:
-        return None
-    try:
-        records = ws.get_all_records()
-    except Exception:
-        return None
-    df = pd.DataFrame(records) if records else pd.DataFrame(columns=FALTANTES_LOG_HEADERS)
-    if "Fecha" in df.columns:
-        df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
-    return df
-
-st.markdown("""
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-padding:12px 16px;margin-bottom:14px;">
-  <div style="font-size:12px;color:#6b7280;">
-    Los datos se actualizan desde la página principal ("app"). Esta página muestra
-    siempre la última información cargada ahí.
-  </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    '<div style="color:#6b7280;font-size:12px;margin:-6px 0 14px;">'
+    'Los datos se cargan desde la pestaña <b>app</b> (menú de la izquierda) — subí '
+    'ahí el Excel "Venta Con y sin Impuesto" cuando quieras actualizarlos.'
+    '</div>',
+    unsafe_allow_html=True
+)
 
 df = base_df.copy()
-df_tiendas = base_df_tiendas.copy()
 
+# Siempre mostramos el último día cerrado en Argentina.
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"]).copy()
 
-# Siempre mostramos el último día cerrado en Argentina (no el día en curso,
-# que todavía puede estar sumando ventas).
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df_mostrar = df[df["date"].dt.date < arg_today].copy()
+df = df[df["date"].dt.date < arg_today].copy()
 
-if len(df_tiendas):
-    df_tiendas["date"] = pd.to_datetime(df_tiendas["date"], errors="coerce")
-    df_tiendas = df_tiendas.dropna(subset=["date"]).copy()
-
-current = df_mostrar[
-    (df_mostrar["date"].dt.year == 2026) &
-    (df_mostrar["date"].dt.month == 9)
+current = df[
+    (df["date"].dt.year == 2026) &
+    (df["date"].dt.month == 9)
 ].copy().sort_values("date")
 
 if current.empty:
@@ -280,7 +168,6 @@ if current.empty:
 latest = current.iloc[-1]
 prev = current.iloc[-2] if len(current) > 1 else None
 is_monday = arg_today.weekday() == 0
-share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
 # Buscamos el Sábado más reciente con datos cargados (y el Viernes anterior),
 # sin asumir que "hoy" es Lunes: así funciona sin importar qué día se abra el dashboard.
@@ -348,16 +235,16 @@ day_change = (
 
 n = days_elapsed
 
-aug = df_mostrar[
-    (df_mostrar["date"].dt.year == 2026) &
-    (df_mostrar["date"].dt.month == 8) &
-    (df_mostrar["date"].dt.day <= n)
+aug = df[
+    (df["date"].dt.year == 2026) &
+    (df["date"].dt.month == 8) &
+    (df["date"].dt.day <= n)
 ].sort_values("date")
 
-sep25 = df_mostrar[
-    (df_mostrar["date"].dt.year == 2025) &
-    (df_mostrar["date"].dt.month == 9) &
-    (df_mostrar["date"].dt.day <= n)
+sep25 = df[
+    (df["date"].dt.year == 2025) &
+    (df["date"].dt.month == 9) &
+    (df["date"].dt.day <= n)
 ].sort_values("date")
 
 aug_acc = aug["ecommerce_tax"].sum()
@@ -365,66 +252,6 @@ sep25_acc = sep25["ecommerce_tax"].sum()
 
 vs_aug = (acc_ecom / aug_acc - 1) if aug_acc else None
 vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
-
-# ---- Mejores y peores tiendas del mes en curso (venta y pedidos) ----
-current_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
-if len(df_tiendas):
-    current_tiendas = df_tiendas[
-        (df_tiendas["date"].dt.year == 2026) &
-        (df_tiendas["date"].dt.month == 9)
-    ].copy()
-
-tiendas_resumen = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders"])
-if len(current_tiendas):
-    tiendas_resumen = (
-        current_tiendas.groupby(["Tienda", "Nombre"], as_index=False)
-        .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
-    )
-
-# Mismo "último día cerrado" que usa el resto del dashboard (variable `latest`,
-# calculada más arriba a partir de `current`), para que el cuadro "venta
-# diaria" siempre muestre el día más reciente con datos, no el día en curso.
-latest_tienda_date = latest["date"]
-tiendas_dia = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders"])
-if len(df_tiendas):
-    filas_dia = df_tiendas[df_tiendas["date"] == latest_tienda_date]
-    if len(filas_dia):
-        tiendas_dia = (
-            filas_dia.groupby(["Tienda", "Nombre"], as_index=False)
-            .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
-        )
-
-def top_tiendas(df_in, metric, n=5):
-    if not len(df_in):
-        return df_in.copy()
-    return df_in.sort_values(metric, ascending=False).head(n).reset_index(drop=True)
-
-top_venta_dia = top_tiendas(tiendas_dia, "ecommerce_tax", n=5)
-top_venta_mes = top_tiendas(tiendas_resumen, "ecommerce_tax", n=5)
-
-# ---- Tiendas con más faltantes del mes (historial de "Operativo") ----
-faltantes_log = load_faltantes_log()
-faltantes_rank = pd.DataFrame(columns=["Tienda", "Faltantes", "Dias"])
-log_mes_falt = pd.DataFrame(columns=["Fecha", "Tienda", "Departamento", "SKU", "CodigoPrincipal", "Etiqueta", "FechaDt"])
-if faltantes_log is not None and len(faltantes_log):
-    mes_inicio_falt = pd.Timestamp(year=2026, month=9, day=1)
-    log_mes_falt = faltantes_log[faltantes_log["FechaDt"] >= mes_inicio_falt].copy()
-    if len(log_mes_falt):
-        faltantes_rank = (
-            log_mes_falt.groupby("Tienda", as_index=False)
-            .agg(Faltantes=("SKU", "count"), Dias=("FechaDt", "nunique"))
-            .sort_values("Faltantes", ascending=False)
-            .head(5)
-            .reset_index(drop=True)
-        )
-
-# Fechas del mes con al menos un reporte de Faltantes subido, para el filtro
-# "ver por fecha" (más reciente primero).
-faltantes_fechas_disponibles = []
-if len(log_mes_falt):
-    faltantes_fechas_disponibles = sorted(
-        log_mes_falt["FechaDt"].dropna().dt.normalize().unique(), reverse=True
-    )
 
 # ---- Venta por fin de semana del mes en curso ----
 # Para la pestaña "Venta fin de semana": Fin de semana = Viernes + Sábado +
@@ -454,7 +281,7 @@ finde_tabla["participacion"] = (
 # Usamos TODO el historial cargado (no solo el mes en curso) para poder
 # comparar el finde más reciente contra el anterior aunque estemos al
 # principio del mes y todavía no haya un segundo finde en septiembre.
-findesema_rows = df_mostrar[df_mostrar["date"].dt.weekday.isin([4, 5, 6])].copy()
+findesema_rows = df[df["date"].dt.weekday.isin([4, 5, 6])].copy()
 findesema_rows["finde_inicio"] = findesema_rows["date"] - pd.to_timedelta(
     (findesema_rows["date"].dt.weekday - 4) % 7, unit="D"
 )
@@ -527,9 +354,6 @@ st.markdown(f"""
   <div class="hero-date">
     Septiembre 2026
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
-    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
-      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
-    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -636,35 +460,6 @@ def build_standalone_html():
           </div>
         </div>
         """
-
-    def standalone_tienda_table(rows_df, titulo):
-        header = f'<div class="rank-table-header">🏆 {html.escape(titulo)}</div>'
-        if not len(rows_df):
-            return (
-                f'<div class="rank-table-card">{header}'
-                '<div style="padding:20px;color:#9ca3af;font-size:13px;">'
-                'Todavía no hay datos por tienda para este período.</div></div>'
-            )
-        rows_html = ""
-        for i, r in enumerate(rows_df.itertuples(), start=1):
-            nombre = str(r.Nombre) if r.Nombre else ""
-            tienda_label = f"{r.Tienda} - {nombre}" if nombre else str(r.Tienda)
-            rows_html += (
-                '<tr>'
-                f'<td><span class="rank-badge">{i}</span></td>'
-                f'<td>{html.escape(tienda_label)}</td>'
-                f'<td style="text-align:center;">{intfmt(r.orders)}</td>'
-                f'<td style="text-align:right;font-weight:800;color:#208653;">{html.escape(money(r.ecommerce_tax))}</td>'
-                '</tr>'
-            )
-        return (
-            f'<div class="rank-table-card">{header}'
-            '<table class="rank-table"><thead><tr>'
-            '<th></th><th>Tienda</th>'
-            '<th style="text-align:center;">Pedidos eCommerce</th>'
-            '<th style="text-align:right;">Venta eCommerce (con impuesto)</th>'
-            f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
-        )
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="es">
@@ -813,46 +608,6 @@ body {{
 }}
 .negative {{ color: #d64545; }}
 .positive {{ color: #208653; }}
-.rank-tables {{
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-}}
-.rank-table-card {{
-    background: white;
-    border: 1px solid #e8ebef;
-    border-radius: 14px;
-    overflow: hidden;
-    box-shadow: 0 2px 10px rgba(0,0,0,.06);
-}}
-.rank-table-header {{
-    background: #2f9e66;
-    color: #fff;
-    font-weight: 800;
-    font-size: 15px;
-    padding: 13px 20px;
-}}
-table.rank-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-table.rank-table thead th {{
-    text-align: left;
-    padding: 9px 12px;
-    color: #6b7280;
-    font-size: 11.5px;
-    text-transform: uppercase;
-    border-bottom: 1px solid #e8ebef;
-}}
-table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
-.rank-badge {{
-    display: inline-block;
-    min-width: 20px;
-    text-align: center;
-    background: #2f9e66;
-    color: #fff;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 2px 6px;
-}}
 .footer {{
     display: flex;
     justify-content: space-between;
@@ -867,7 +622,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 @media (max-width: 600px) {{
     .hero {{ flex-direction: column; align-items: flex-start; gap: 15px; }}
     .hero-date {{ text-align: left; }}
-    .kpis, .comparisons, .rank-tables {{ grid-template-columns: 1fr; }}
+    .kpis, .comparisons {{ grid-template-columns: 1fr; }}
     .progress-layout {{ flex-direction: column; align-items: stretch; }}
     .progress-target {{ width: auto; text-align: left; }}
 }}
@@ -884,9 +639,6 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
   <div class="hero-date">
     Septiembre 2026
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
-    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
-      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
-    </div>
   </div>
 </div>
 
@@ -938,15 +690,6 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
       <small>del objetivo</small>
     </div>
   </div>
-</div>
-
-<div class="section">Top 5 tiendas eCommerce</div>
-<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">
-Ranking por venta ecommerce, con pedidos de cada tienda.
-</div>
-<div class="rank-tables">
-{standalone_tienda_table(top_venta_dia, f"VENTA DIARIA · TOP 5 ({latest_tienda_date.strftime('%d/%m')})")}
-{standalone_tienda_table(top_venta_mes, "VENTA MENSUAL · TOP 5")}
 </div>
 
 <div class="section">Comparaciones</div>
@@ -1066,6 +809,8 @@ with tab1:
     """, unsafe_allow_html=True)
 
     # ---- Resumen visual: Compañía vs Ecommerce (Diario / Mensual) ----
+    share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;">
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
@@ -1140,6 +885,16 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
+        'Variación de ventas e-commerce sobre la misma cantidad de días'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    a, b = st.columns(2)
+
     def compare_box(title, value, base_text):
         cls = "positive" if value >= 0 else "negative"
         arrow = "↑" if value >= 0 else "↓"
@@ -1151,161 +906,6 @@ with tab1:
           <div class="compare-value {cls}">{arrow}&nbsp;&nbsp;{value:+.1%}</div>
         </div>
         """
-
-    def tienda_rank_table_html(rows_df, titulo, empty_msg=None):
-        # Nota: el HTML se arma en una sola línea por elemento (sin saltos de
-        # línea indentados) porque Streamlit interpreta texto indentado con
-        # 4+ espacios después de un salto de línea como bloque de código, y
-        # lo muestra como texto plano en vez de renderizarlo.
-        header = (
-            '<div style="background:#2f9e66;color:#fff;font-weight:800;'
-            'font-size:15px;padding:13px 20px;display:flex;align-items:center;gap:10px;">'
-            f'<span>🏆</span><span>{titulo}</span>'
-            '</div>'
-        )
-        if empty_msg is None:
-            empty_msg = (
-                'Todavía no hay datos por tienda para este período. Se completa '
-                'automáticamente la próxima vez que se suba el Excel desde "app" '
-                '(si trae las columnas Tienda y Nombre).'
-            )
-        if not len(rows_df):
-            return (
-                f'<div class="rank-table-card">{header}'
-                f'<div style="padding:20px;color:#9ca3af;font-size:13px;">{empty_msg}</div>'
-                '</div>'
-            )
-
-        rows_html = ""
-        for i, r in enumerate(rows_df.itertuples(), start=1):
-            nombre = str(r.Nombre) if r.Nombre else ""
-            tienda_label = f"{r.Tienda} - {nombre}" if nombre else str(r.Tienda)
-            rows_html += (
-                '<tr>'
-                '<td><span class="rank-badge" style="background:#2f9e66;color:#fff;">'
-                f'{i}</span></td>'
-                f'<td>{html.escape(tienda_label)}</td>'
-                f'<td style="text-align:center;">{intfmt(r.orders)}</td>'
-                f'<td style="text-align:right;font-weight:800;color:#208653;">{money(r.ecommerce_tax)}</td>'
-                '</tr>'
-            )
-
-        return (
-            f'<div class="rank-table-card">{header}'
-            '<div class="table-scroll">'
-            '<table class="rank-table"><thead><tr>'
-            '<th></th><th>Tienda</th>'
-            '<th style="text-align:center;">Pedidos eCommerce</th>'
-            '<th style="text-align:right;">Venta eCommerce (con impuesto)</th>'
-            f'</tr></thead><tbody>{rows_html}</tbody></table>'
-            '</div></div>'
-        )
-
-    def faltantes_rank_table_html(rows_df, titulo, show_dias=False, empty_msg=None):
-        header = (
-            '<div style="background:#ff5a1f;color:#fff;font-weight:800;'
-            'font-size:15px;padding:13px 20px;display:flex;align-items:center;gap:10px;">'
-            f'<span>🚨</span><span>{titulo}</span>'
-            '</div>'
-        )
-        if faltantes_log is None:
-            return (
-                f'<div class="rank-table-card">{header}'
-                '<div style="padding:20px;color:#9ca3af;font-size:13px;">'
-                'Este ranking todavía no está conectado — hace falta activar el '
-                'historial de Faltantes en Google Sheets (misma configuración que '
-                'ya usa la pestaña "Operativo").'
-                '</div></div>'
-            )
-        if empty_msg is None:
-            empty_msg = (
-                'Todavía no hay faltantes cargados este mes. Se completa automáticamente '
-                'cada vez que se sube un archivo de Faltantes desde "Operativo".'
-            )
-        if not len(rows_df):
-            return (
-                f'<div class="rank-table-card">{header}'
-                f'<div style="padding:20px;color:#9ca3af;font-size:13px;">{empty_msg}</div>'
-                '</div>'
-            )
-
-        th_style = 'background:#fdeee5;color:#c9481a;font-weight:700;padding:10px 14px;'
-        rows_html = ""
-        for i, r in enumerate(rows_df.itertuples(), start=1):
-            dias_td = ""
-            if show_dias:
-                dias_td = f'<td style="text-align:center;">{intfmt(r.Dias)}</td>'
-            rows_html += (
-                '<tr>'
-                '<td><span class="rank-badge" style="background:#ff5a1f;color:#fff;">'
-                f'{i}</span></td>'
-                f'<td>{html.escape(str(r.Tienda))}</td>'
-                f'<td style="text-align:right;font-weight:800;color:#c9481a;">{intfmt(r.Faltantes)}</td>'
-                f'{dias_td}'
-                '</tr>'
-            )
-
-        dias_th = f'<th style="{th_style}text-align:center;">Días con faltantes</th>' if show_dias else ""
-        thead = (
-            '<tr>'
-            f'<th style="{th_style}text-align:left;"></th>'
-            f'<th style="{th_style}text-align:left;">Tienda</th>'
-            f'<th style="{th_style}text-align:right;">Faltantes (SKUs)</th>'
-            f'{dias_th}'
-            '</tr>'
-        )
-        return (
-            f'<div class="rank-table-card">{header}'
-            '<div class="table-scroll">'
-            f'<table class="rank-table"><thead>{thead}</thead><tbody>{rows_html}</tbody></table>'
-            '</div></div>'
-        )
-
-    st.markdown('<div class="section">Top 5 tiendas eCommerce</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Ranking por venta ecommerce, con pedidos de cada tienda.'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    td1, td2 = st.columns(2)
-    with td1:
-        st.markdown(
-            tienda_rank_table_html(
-                top_venta_dia,
-                f"VENTA DIARIA · TOP 5 ({latest_tienda_date.strftime('%d/%m')})",
-                empty_msg=(
-                    'Todavía no hay datos por tienda para el último día cargado. '
-                    'Se completa automáticamente la próxima vez que se suba el Excel '
-                    'desde "app" (si trae las columnas Tienda y Nombre).'
-                ),
-            ),
-            unsafe_allow_html=True
-        )
-    with td2:
-        st.markdown(
-            tienda_rank_table_html(
-                top_venta_mes,
-                "VENTA MENSUAL · TOP 5",
-                empty_msg=(
-                    'Todavía no hay datos por tienda para el mes en curso. '
-                    'Se completa automáticamente la próxima vez que se suba el Excel '
-                    'desde "app" (si trae las columnas Tienda y Nombre).'
-                ),
-            ),
-            unsafe_allow_html=True
-        )
-
-    st.markdown('<div class="section">Comparaciones</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">'
-        'Variación de ventas e-commerce sobre la misma cantidad de días'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    a, b = st.columns(2)
 
     with a:
         if vs_aug is not None:
@@ -1339,6 +939,28 @@ with tab1:
                 unsafe_allow_html=True
             )
 
+    st.markdown('<div class="section">Evolución diaria</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+
+    chart = px.line(
+        current,
+        x="date",
+        y="ecommerce_tax",
+        markers=True,
+        labels={"date": "Fecha", "ecommerce_tax": "Venta ecommerce"}
+    )
+
+    chart.update_layout(
+        height=430,
+        margin=dict(l=10, r=10, t=20, b=10),
+        yaxis_tickprefix="$",
+        yaxis_tickformat=",.0f",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(chart, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown(
         '<div class="footer">'
         '<span>Fuente: venta con impuesto de MicroStrategy.</span>'
@@ -1355,6 +977,8 @@ with tab2:
         '</div>',
         unsafe_allow_html=True
     )
+
+    share_daily_gdn = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;">
@@ -1389,7 +1013,7 @@ with tab2:
         </div>
         <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
           <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE DIARIO</span>
-          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_daily)}</span>
+          <span style="font-size:20px;font-weight:800;color:#e8432c;">{pct(share_daily_gdn)}</span>
         </div>
       </div>
 
