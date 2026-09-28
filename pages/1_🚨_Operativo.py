@@ -543,12 +543,13 @@ SHARED_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
+SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 
 def get_shared_bytes(shared_path):
-    """Esta pestaña ya no tiene uploader propio: el "Reporte diario.xlsx",
-    "Pedidos" y "Faltantes" se suben en la pestaña "app". Acá solo se lee la
-    última copia que haya quedado guardada ahí (misma carpeta compartida que
-    usan también Productividad Pickers y Resumen)."""
+    """Esta pestaña ya no tiene uploader propio: "Pedidos", "Reclamos
+    Operativos" y "Faltantes" se suben en la pestaña "app". Acá solo se lee
+    la última copia que haya quedado guardada ahí (misma carpeta compartida
+    que usan también Productividad Pickers y Resumen)."""
     if shared_path.exists():
         try:
             return shared_path.read_bytes()
@@ -921,12 +922,14 @@ def load_cancelados_from_xl(xl, required=True):
         )
     return None
 
-def load_reclamos_from_xl(xl):
+def load_reclamos_from_xl(xl, required=True):
     """Carga Reclamos desde la hoja ya traducida ('Data Reclamos': Reclamo/Pedido/
     Tienda/Tipo/Estado/Fecha) o desde el export crudo del sistema de reclamos
     (ej. 'claim-page-1.xlsx': displayId/typeName/orderCommerceSequentialId/
     storeName/statusName/dateCreated). En el export crudo, sólo se toman las
-    filas cuyo typeName contiene la palabra 'reclamo'."""
+    filas cuyo typeName contiene la palabra 'reclamo'. Con required=False no
+    muestra error si no la encuentra (para cuando se intenta como respaldo,
+    ej. la hoja vieja dentro del Reporte diario)."""
     if xl is None:
         return None
 
@@ -939,20 +942,22 @@ def load_reclamos_from_xl(xl):
     raw_cols = ["displayId", "typeName", "orderCommerceSequentialId", "storeName", "statusName", "dateCreated"]
     name, raw = find_sheet(xl, raw_cols)
     if raw is None:
-        st.error(
-            "No encontré una hoja con las columnas esperadas de Reclamos "
-            "(Reclamo/Pedido/Tienda/Tipo/Estado/Fecha, o el export crudo con "
-            "displayId/typeName/orderCommerceSequentialId/storeName/statusName/dateCreated) "
-            "en el archivo subido."
-        )
+        if required:
+            st.error(
+                "No encontré una hoja con las columnas esperadas de Reclamos "
+                "(Reclamo/Pedido/Tienda/Tipo/Estado/Fecha, o el export crudo con "
+                "displayId/typeName/orderCommerceSequentialId/storeName/statusName/dateCreated) "
+                "en el archivo subido."
+            )
         return None
 
     raw = raw[raw["typeName"].apply(norm_txt).str.lower().str.contains("reclamo", na=False)].copy()
     return pd.DataFrame({
         "Reclamo": raw["displayId"].apply(norm_txt),
-        "Pedido": raw["orderCommerceSequentialId"].apply(
-            lambda v: "" if pd.isna(v) else str(int(v))
-        ),
+        # norm_codigo (no int() a secas): la mayoría son ids numéricos, pero
+        # algunos pedidos con más de un reclamo vienen con sufijo, ej.
+        # "11404682-1", y forzar int() ahí rompía toda la carga.
+        "Pedido": raw["orderCommerceSequentialId"].apply(norm_codigo),
         "Tienda": raw["storeName"].apply(norm_txt),
         "Tipo": raw["typeName"].apply(norm_txt),
         "Estado": raw["statusName"].apply(norm_txt),
@@ -1522,8 +1527,9 @@ st.markdown(f"""
 reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
 faltantes_bytes = get_shared_bytes(SHARED_FALTANTES_PATH)
 pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
+reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
 
-if reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None:
+if reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None or reclamos_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
         '● Mostrando los reportes subidos en la pestaña app — no hace falta subir nada acá.</div>',
@@ -1537,7 +1543,7 @@ else:
         TODAVÍA NO HAY REPORTES CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí "Pedidos", el "Reporte diario.xlsx" y "Faltantes" en la pestaña <b>app</b>
+        Subí "Pedidos", "Reclamos Operativos" y "Faltantes" en la pestaña <b>app</b>
         (menú de la izquierda) para ver acá las alertas operativas.
       </div>
     </div>
@@ -1557,7 +1563,12 @@ xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes)) if reporte_bytes is not 
 # hoja puede faltar sin que sea un error — queda solo como respaldo mientras
 # se termina de migrar.
 df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"], required=False)
-df_reclamos_raw = load_reclamos_from_xl(xl_reporte)
+xl_reclamos = safe_open_excel(io.BytesIO(reclamos_bytes)) if reclamos_bytes is not None else None
+df_reclamos_raw = load_reclamos_from_xl(xl_reclamos)
+if df_reclamos_raw is None:
+    # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
+    # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
+    df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
 df_fr_raw = load_fr_from_xl(xl_reporte)
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
@@ -2054,6 +2065,29 @@ if any_data_loaded:
         unsafe_allow_html=True
     )
     if reclamos_f is not None:
+        # Filtro de fecha propio de esta sección — el archivo de Reclamos
+        # Operativos ahora trae varios meses de historial en un solo archivo
+        # (no solo "la foto de hoy"), así que conviene poder acotar el rango
+        # sin tener que esperar a subir un archivo distinto.
+        _rmin, _rmax = reclamos_f["Fecha"].min(), reclamos_f["Fecha"].max()
+        if pd.notna(_rmin) and pd.notna(_rmax):
+            col_desde, col_hasta = st.columns(2)
+            with col_desde:
+                st.markdown('<div class="field-label">Desde</div>', unsafe_allow_html=True)
+                fecha_desde = st.date_input(
+                    "Desde", value=_rmin.date(), min_value=_rmin.date(), max_value=_rmax.date(),
+                    key="reclamos_desde", label_visibility="collapsed"
+                )
+            with col_hasta:
+                st.markdown('<div class="field-label">Hasta</div>', unsafe_allow_html=True)
+                fecha_hasta = st.date_input(
+                    "Hasta", value=_rmax.date(), min_value=_rmin.date(), max_value=_rmax.date(),
+                    key="reclamos_hasta", label_visibility="collapsed"
+                )
+            reclamos_f = reclamos_f[
+                (reclamos_f["Fecha"].dt.date >= fecha_desde) & (reclamos_f["Fecha"].dt.date <= fecha_hasta)
+            ]
+
         solo_abiertos = st.checkbox("Mostrar solo abiertos (Nuevo / En proceso)", value=True, key="chk_reclamos")
         show = reclamos_f.copy()
         if solo_abiertos:
@@ -2076,6 +2110,20 @@ if any_data_loaded:
                 Cantidad=("Pedido", "count")
             ).reset_index().sort_values("Cantidad", ascending=False)
 
+            # Reclamos por mes y tienda — cuántos va llevando cada tienda mes
+            # a mes, dentro del rango de fechas elegido arriba.
+            base_mes = base.copy()
+            base_mes["Mes"] = base_mes["Fecha"].dt.strftime("%Y-%m")
+            piv_mes = base_mes.pivot_table(
+                index="Tienda", columns="Mes", values="Reclamo", aggfunc="count", fill_value=0
+            )
+            _meses_cols = list(piv_mes.columns)
+            piv_mes["Total"] = piv_mes[_meses_cols].sum(axis=1)
+            piv_mes = piv_mes.sort_values("Total", ascending=False).reset_index()
+            for _c in _meses_cols + ["Total"]:
+                piv_mes[_c] = piv_mes[_c].astype(int)
+            piv_mes_html = table_html(piv_mes)
+
             resumen_html = resumen_table_html(
                 agg, "Tienda",
                 {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
@@ -2091,6 +2139,8 @@ if any_data_loaded:
             )
             export_body = (
                 resumen_side_by_side +
+                '<div class="resumen-title" style="margin-top:18px;">Reclamos por mes y tienda</div>'
+                + piv_mes_html +
                 '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
                 + table_html(show[detail_cols])
             )
@@ -2120,6 +2170,10 @@ if any_data_loaded:
             with col_tipo:
                 st.markdown('<div class="resumen-title">Resumen por tipo</div>', unsafe_allow_html=True)
                 st.write(resumen_tipo_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver reclamos por mes y tienda ({len(piv_mes)} tiendas)"):
+                with st.container(height=380):
+                    st.write(piv_mes_html, unsafe_allow_html=True)
 
             with st.expander(f"Ver detalle de reclamos ({len(show)})"):
                 with st.container(height=380):
