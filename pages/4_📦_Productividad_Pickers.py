@@ -256,8 +256,8 @@ def kpi_link_wrap(inner_html, html_doc, filename):
 
 # ---------------------------------------------------------------------
 # Archivo compartido: esta pestaña NO tiene uploader propio. Usa el último
-# Reporte diario.xlsx que se haya subido en la pestaña Operativo (misma
-# carpeta compartida que usan Operativo y Resumen).
+# Reporte diario.xlsx que se haya subido en la pestaña app (misma carpeta
+# compartida que usan Operativo y Resumen).
 # ---------------------------------------------------------------------
 
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
@@ -421,7 +421,7 @@ reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
 if reporte_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
-        '● Mostrando el último Reporte diario subido en la pestaña Operativo — no hace falta subir nada acá.</div>',
+        '● Mostrando el último Reporte diario subido en la pestaña app — no hace falta subir nada acá.</div>',
         unsafe_allow_html=True
     )
 else:
@@ -432,7 +432,7 @@ else:
         TODAVÍA NO HAY DATOS CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí el "Reporte diario.xlsx" en la pestaña <b>Operativo</b> (tiene que incluir la hoja
+        Subí el "Reporte diario.xlsx" en la pestaña <b>app</b> (tiene que incluir la hoja
         "Data Picker"). Esta página va a mostrar el ranking automáticamente con esos mismos datos.
       </div>
     </div>
@@ -529,11 +529,11 @@ if fecha_dia_sel is None:
     if reporte_bytes is not None:
         st.markdown(
             '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
-            'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+            'que subas un Reporte diario con la hoja "Data Picker" en app.</div>',
             unsafe_allow_html=True
         )
     else:
-        st.markdown('<div class="empty-box">Subí un Reporte diario en Operativo para ver esta sección.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="empty-box">Subí un Reporte diario en app para ver esta sección.</div>', unsafe_allow_html=True)
 else:
     dia_df = log_df[log_df["FechaDt"].dt.normalize() == fecha_dia_sel].copy()
     if filtro_tienda != "Todas":
@@ -745,7 +745,7 @@ if filtro_tienda == "Todas":
     elif log_df is None:
         st.markdown(
             '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
-            'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+            'que subas un Reporte diario con la hoja "Data Picker" en app.</div>',
             unsafe_allow_html=True
         )
     else:
@@ -820,7 +820,7 @@ if log_filtrado is not None and len(log_filtrado) and log_filtrado["FechaDt"].no
 elif log_df is None:
     st.markdown(
         '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
-        'que subas un Reporte diario con la hoja "Data Picker" en Operativo.</div>',
+        'que subas un Reporte diario con la hoja "Data Picker" en app.</div>',
         unsafe_allow_html=True
     )
 else:
@@ -832,7 +832,7 @@ else:
 
 st.markdown(
     '<div class="section">📈 Evolución día a día</div>'
-    '<div class="section-desc">Se arma solo, con cada Reporte diario que se suba en Operativo '
+    '<div class="section-desc">Se arma solo, con cada Reporte diario que se suba en app '
     '(una fila por picker, por día). Respeta el filtro de tienda de arriba.</div>',
     unsafe_allow_html=True
 )
@@ -845,7 +845,7 @@ if log_df is None:
     )
     st.markdown(
         '<div class="empty-box">Todavía no hay historial conectado — se activa solo la próxima vez '
-        'que subas un Reporte diario con la hoja "Data Picker" en Operativo.' + _debug_html + '</div>',
+        'que subas un Reporte diario con la hoja "Data Picker" en app.' + _debug_html + '</div>',
         unsafe_allow_html=True
     )
 elif not len(log_df):
@@ -898,6 +898,6 @@ else:
 st.markdown(
     '<div style="color:#6b7280;font-size:11.5px;text-align:center;margin-top:18px;">'
     'Productividad Pickers · datos de la hoja "Data Picker" del Reporte diario · '
-    'no tiene uploader propio: se actualiza sola con lo que subas en Operativo.</div>',
+    'no tiene uploader propio: se actualiza sola con lo que subas en app.</div>',
     unsafe_allow_html=True
 )
