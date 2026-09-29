@@ -432,6 +432,8 @@ def pct_change(v):
 def intfmt(v):
     return f"{int(v):,}".replace(",", ".")
 
+share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
     brand_html = (
@@ -450,6 +452,9 @@ st.markdown(f"""
   <div class="hero-date">
     Septiembre 2026
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -804,6 +809,9 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
   <div class="hero-date">
     Septiembre 2026
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+    </div>
   </div>
 </div>
 
