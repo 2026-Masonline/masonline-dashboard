@@ -211,9 +211,12 @@ f_pickers = upload_box_reporte(
 
 st.markdown(
     '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
-    'Reclamos Operativos, On-Time, Delivery, Fill Rate y Pickers todavía '
-    'guardan el archivo pero no arman la sección — eso lo vamos conectando a '
-    'medida que tengamos un archivo de ejemplo de cada uno.</div>',
+    'Delivery y Fill Rate todavía guardan el archivo pero no arman la sección '
+    '— eso lo vamos conectando a medida que tengamos un archivo de ejemplo de '
+    'cada uno. La tarjeta ON-TIME funciona igual que PICKERS: si subís ahí el '
+    'archivo de Productividad Pickers, también arma "Tiempo promedio de '
+    'preparación por tienda" en Operativo — pero todavía no hay un % on time '
+    'real (con meta de minutos) hasta que tengamos ese archivo aparte.</div>',
     unsafe_allow_html=True
 )
 
