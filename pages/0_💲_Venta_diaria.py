@@ -320,23 +320,25 @@ else:
     finde_vs_anterior = None
 
 def money(v):
-    """Número completo, sin abreviar a millones — el mismo que se ve en el
-    Excel de origen (ej. $2.659.657.583, no $2.659,66 M)."""
+    """Número completo mientras esté por debajo del millón (ej. $213.945).
+    De ahí en más, redondea y abrevia: 'M' (millones) entre 1 millón y
+    999 millones, 'MM' (miles de millones) a partir de los mil millones.
+    Así no queda ni un número gigante sin abreviar, ni una fracción de
+    millón rara como '$0,21 M'."""
     try:
         v = float(v)
     except (TypeError, ValueError):
         return "$0"
-    return f"${v:,.0f}".replace(",", ".")
-
-def money_compact(v):
-    """Versión abreviada en millones — se usa solo para las etiquetas del
-    gráfico de línea, donde el número completo no entra sin superponerse."""
-    return (
-       f"${v/1_000_000:,.2f} M"
-        .replace(",", "X")
-        .replace(".", ",")
-        .replace("X", ".")
-    )
+    av = abs(v)
+    if av < 1_000_000:
+        return f"${v:,.0f}".replace(",", ".")
+    # Si al redondear a "M" el número llega a 1.000, mejor mostrarlo ya
+    # como "MM" (ej. 999.999.999 -> "$1.000,00 M" se ve raro; "$1,00 MM" no).
+    if av < 1_000_000_000 and round(av / 1_000_000, 2) < 1000:
+        txt = f"${v/1_000_000:,.2f} M"
+    else:
+        txt = f"${v/1_000_000_000:,.2f} MM"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
 
 def pct(v):
     return f"{v*100:.2f}%".replace(".", ",")
@@ -414,7 +416,7 @@ def build_standalone_html():
         circles += (
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#2f9e66"/>'
             f'<text x="{x:.1f}" y="{y-12:.1f}" text-anchor="middle" '
-            f'font-size="11" fill="#59636e">{money_compact(value)}</text>'
+            f'font-size="11" fill="#59636e">{money(value)}</text>'
         )
 
     xlabels = ""
@@ -434,7 +436,7 @@ def build_standalone_html():
             f'<line x1="{left}" y1="{y:.1f}" x2="{chart_w-right}" y2="{y:.1f}" '
             'stroke="#e8ebef" stroke-width="1"/>'
             f'<text x="{left-10}" y="{y+4:.1f}" text-anchor="end" '
-            f'font-size="11" fill="#697386">{html.escape(money_compact(value))}</text>'
+            f'font-size="11" fill="#697386">{html.escape(money(value))}</text>'
         )
 
     svg = f"""
