@@ -263,6 +263,8 @@ def kpi_link_wrap(inner_html, html_doc, filename):
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
+SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
+SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 
 def get_shared_bytes(shared_path):
     if shared_path.exists():
@@ -416,12 +418,14 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
+ontime_bytes = get_shared_bytes(SHARED_ONTIME_PATH)
 reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
 
-if reporte_bytes is not None:
+if pickers_bytes is not None or ontime_bytes is not None or reporte_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
-        '● Mostrando el último Reporte diario subido en la pestaña app — no hace falta subir nada acá.</div>',
+        '● Mostrando el último archivo de Pickers subido en la pestaña app — no hace falta subir nada acá.</div>',
         unsafe_allow_html=True
     )
 else:
@@ -432,23 +436,35 @@ else:
         TODAVÍA NO HAY DATOS CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí el "Reporte diario.xlsx" en la pestaña <b>app</b> (tiene que incluir la hoja
-        "Data Picker"). Esta página va a mostrar el ranking automáticamente con esos mismos datos.
+        Subí el archivo de Pickers en la pestaña <b>app</b> (tarjeta "PICKERS"). Esta página
+        va a mostrar el ranking automáticamente con esos mismos datos.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
-# Parse "Data Picker" (ranking de hoy, sin filtrar todavía)
+# Parse Pickers (ranking de hoy, sin filtrar todavía) — preferimos el
+# archivo nuevo (aparte); si todavía no se subió ninguno, seguimos leyendo
+# la vieja hoja "Data Picker" del Reporte diario mientras se migra.
 # ---------------------------------------------------------------------
 
 pickers_all = None
-if reporte_bytes is not None:
-    xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes))
+xl_pickers_src = None
+if pickers_bytes is not None:
+    xl_pickers_src = safe_open_excel(io.BytesIO(pickers_bytes))
+elif ontime_bytes is not None:
+    # Por si el archivo de Productividad Pickers se subió por error en la
+    # tarjeta "ON-TIME" (quedan una al lado de la otra en "app") — lo
+    # tomamos igual desde acá si las columnas coinciden.
+    xl_pickers_src = safe_open_excel(io.BytesIO(ontime_bytes))
+elif reporte_bytes is not None:
+    xl_pickers_src = safe_open_excel(io.BytesIO(reporte_bytes))
+
+if xl_pickers_src is not None:
     name, df_picker_raw = find_sheet(
-        xl_reporte,
+        xl_pickers_src,
         ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
-    ) if xl_reporte is not None else (None, None)
+    )
     if df_picker_raw is not None:
         d = df_picker_raw.copy()
         d["Picker"] = (d["firstName"].apply(norm_txt) + " " + d["lastName"].apply(norm_txt)).str.strip()
@@ -467,10 +483,10 @@ if reporte_bytes is not None:
             "Picker", "Tienda", "Deposito", "Pedidos", "Unidades",
             "Rendimiento", "Rend. picking", "Found Rate", "Fill Rate"
         ]].sort_values("Unidades", ascending=False)
-    elif xl_reporte is not None:
+    else:
         st.markdown(
-            '<div class="empty-box">El Reporte diario subido no tiene una hoja "Data Picker" '
-            'con las columnas esperadas.</div>',
+            '<div class="empty-box">El archivo subido no tiene las columnas esperadas de Pickers '
+            '(firstName/lastName/warehouseRefId/orders/items/performance).</div>',
             unsafe_allow_html=True
         )
 
