@@ -566,6 +566,7 @@ SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
+SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 
 def get_shared_bytes(shared_path):
     """Esta pestaña ya no tiene uploader propio: "Pedidos", "Reclamos
@@ -1618,10 +1619,11 @@ faltantes_bytes = get_shared_bytes(SHARED_FALTANTES_PATH)
 pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
 reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
 pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
+ontime_bytes = get_shared_bytes(SHARED_ONTIME_PATH)
 
 if (
     reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None
-    or reclamos_bytes is not None or pickers_bytes is not None
+    or reclamos_bytes is not None or pickers_bytes is not None or ontime_bytes is not None
 ):
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
@@ -1671,19 +1673,20 @@ df_faltantes_raw = load_section_from_xl(
     ["warehouseName", "refName", "missingQuantity", "substitutedQuantity", "noSubstitutedQuantity"]
 )
 xl_pickers = safe_open_excel(io.BytesIO(pickers_bytes)) if pickers_bytes is not None else None
-df_picker_raw = load_section_from_xl(
-    xl_pickers,
-    ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"],
-    required=False
-)
+_PICKERS_COLS = ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
+df_picker_raw = load_section_from_xl(xl_pickers, _PICKERS_COLS, required=False)
+if df_picker_raw is None:
+    # Todavía no se subió nada en la tarjeta "PICKERS" — probamos con lo que
+    # haya en la tarjeta "ON-TIME": si Emi subió ahí el mismo archivo de
+    # Productividad Pickers (confusión entendible, las dos tarjetas están
+    # una al lado de la otra), lo tomamos igual desde acá, porque es el que
+    # alimenta "Tiempo promedio de preparación por tienda".
+    xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes)) if ontime_bytes is not None else None
+    df_picker_raw = load_section_from_xl(xl_ontime, _PICKERS_COLS, required=False)
 if df_picker_raw is None:
     # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
     # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
-    df_picker_raw = load_section_from_xl(
-        xl_reporte,
-        ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"],
-        required=False
-    )
+    df_picker_raw = load_section_from_xl(xl_reporte, _PICKERS_COLS, required=False)
 xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes)) if pedidos_bytes is not None else None
 df_pedidos_raw = load_section_from_xl(
     xl_pedidos,
@@ -2048,10 +2051,13 @@ if faltantes_historial_completo is not None and len(faltantes_historial_completo
 # ---- Acumular Productividad de Pickers de hoy en el historial (Google Sheets) ----
 # Mismo criterio que Faltantes: se agrega una sola vez por archivo realmente
 # subido (hash del archivo de origen en session_state), no en cada re-render.
-# Pickers ahora se sube aparte (pickers_bytes); reporte_bytes queda de
-# respaldo solo mientras alguien todavía suba el Reporte diario viejo.
+# Pickers ahora se sube aparte (pickers_bytes); si en vez de eso se subió en
+# la tarjeta "ON-TIME" (ontime_bytes) lo tomamos de ahí; reporte_bytes queda
+# de respaldo solo mientras alguien todavía suba el Reporte diario viejo.
 if pickers is not None and len(pickers):
-    _pickers_source_bytes = pickers_bytes if pickers_bytes is not None else reporte_bytes
+    _pickers_source_bytes = pickers_bytes if pickers_bytes is not None else (
+        ontime_bytes if ontime_bytes is not None else reporte_bytes
+    )
     _pickers_hash = hashlib.md5(_pickers_source_bytes).hexdigest()
     if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
         if replace_pickers_meses_en_sheet(pickers):
