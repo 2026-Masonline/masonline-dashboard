@@ -334,10 +334,10 @@ def money(v):
         return f"${v:,.0f}".replace(",", ".")
     # Si al redondear a "M" el número llega a 1.000, mejor mostrarlo ya
     # como "MM" (ej. 999.999.999 -> "$1.000,00 M" se ve raro; "$1,00 MM" no).
-    if av < 1_000_000_000 and round(av / 1_000_000, 2) < 1000:
-        txt = f"${v/1_000_000:,.2f} M"
+    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
+        txt = f"${v/1_000_000:,.3f} M"
     else:
-        txt = f"${v/1_000_000_000:,.2f} MM"
+        txt = f"${v/1_000_000_000:,.3f} MM"
     return txt.replace(",", "X").replace(".", ",").replace("X", ".")
 
 def pct(v):
