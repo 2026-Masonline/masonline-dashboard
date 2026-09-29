@@ -504,6 +504,27 @@ def ar_pct(v):
     except ValueError:
         return None
 
+def hhmm_to_minutes(v):
+    """Parsea un tiempo del archivo de Pickers en formato 'HH:MM' (ej.
+    'orderAverage' = '00:22' -> 22 minutos, '01:15' -> 75 minutos) a minutos
+    totales. Devuelve NaN si no se puede leer."""
+    s = norm_txt(v)
+    if not s or ":" not in s:
+        return np.nan
+    partes = s.split(":")
+    try:
+        h = int(partes[0])
+        m = int(partes[1])
+        return float(h * 60 + m)
+    except (ValueError, IndexError):
+        return np.nan
+
+def fmt_minutos(v):
+    """Minutos -> texto legible, ej. 22.4 -> '22,4 min'."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "-"
+    return f"{v:.1f} min".replace(".", ",")
+
 def find_sheet(xl, required_cols):
     """Return the (sheet_name, df) whose normalized columns cover required_cols."""
     required = {c.lower() for c in required_cols}
@@ -1226,6 +1247,62 @@ def html_doc_prepa(prepa_f):
     b = prepa_bundle(prepa_f)
     return b["html_doc"] if b else None
 
+def tiempo_prep_bundle(pickers_f):
+    """Tiempo promedio de preparación por tienda, a partir de 'orderAverage'
+    del archivo de Pickers (tiempo promedio por pedido, por picker). No es
+    un % on time — el archivo no trae ninguna meta de minutos definida —
+    es un promedio ponderado por cantidad de pedidos, para ver qué tiendas
+    tardan más en armar los pedidos."""
+    if pickers_f is None or not len(pickers_f):
+        return None
+    d = pickers_f.dropna(subset=["TiempoPromedioPedidoMin"])
+    d = d[d["Pedidos"] > 0]
+    if not len(d):
+        return None
+
+    agg = (
+        d.groupby("Tienda")
+        .apply(lambda g: pd.Series({
+            "Pedidos": g["Pedidos"].sum(),
+            "TiempoPromedioMin": (g["TiempoPromedioPedidoMin"] * g["Pedidos"]).sum() / g["Pedidos"].sum(),
+        }))
+        .reset_index()
+        .sort_values("TiempoPromedioMin", ascending=False)
+    )
+    agg["Pedidos"] = agg["Pedidos"].astype(int)
+
+    ped_tot = int(agg["Pedidos"].sum())
+    tiempo_prom_gral = (agg["TiempoPromedioMin"] * agg["Pedidos"]).sum() / ped_tot if ped_tot else 0
+
+    show = agg.copy()
+    show["Tiempo promedio"] = show["TiempoPromedioMin"].apply(fmt_minutos)
+    detail_cols = ["Tienda", "Pedidos", "Tiempo promedio"]
+
+    top10 = show.head(10)[detail_cols]
+    top10_html = table_html(top10)
+    resumen_html = table_html(show[detail_cols])
+
+    body = (
+        f'<div class="resumen-title">Promedio general — {fmt_minutos(tiempo_prom_gral)} por pedido '
+        f'({ped_tot} pedidos)</div>'
+        '<div class="resumen-title" style="margin-top:18px;">Top 10 tiendas más lentas</div>' + top10_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo por tienda</div>' + resumen_html
+    )
+    html_doc = export_section_html(
+        "⏱️ Tiempo promedio de preparación por tienda",
+        "Tiempo promedio que tarda cada tienda en armar un pedido, según el archivo de Pickers (columna 'orderAverage').",
+        body
+    )
+    return {
+        "show": show, "detail_cols": detail_cols, "top10_html": top10_html,
+        "ped_tot": ped_tot, "tiempo_prom_gral": tiempo_prom_gral,
+        "html_doc": html_doc, "body": body,
+    }
+
+def html_doc_tiempo_prep(pickers_f):
+    b = tiempo_prep_bundle(pickers_f)
+    return b["html_doc"] if b else None
+
 FR_OBJETIVO = 98
 
 def _body_fr(fr_f):
@@ -1352,16 +1429,18 @@ def html_doc_faltantes(falt_f):
         body
     )
 
-def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f, filtro_activo=False):
+def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
     """Arma un único HTML con las tarjetas KPI de arriba + todas las secciones
     que tengan datos cargados, para bajar de un solo golpe y mandarlo
     (ej. por WhatsApp/mail al jefe)."""
     prepa_b = prepa_bundle(prepa_f)
     can_b = cancelados_bundle(can_f)
+    tprep_b = tiempo_prep_bundle(pickers_f)
     sections = [
         ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
         ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
         ("⏱️ On Time Preparación", "Porcentaje de pedidos preparados en horario, por tienda.", prepa_b["body"] if prepa_b else None),
+        ("⏱️ Tiempo promedio de preparación por tienda", "Tiempo promedio que tarda cada tienda en armar un pedido, según el archivo de Pickers.", tprep_b["body"] if tprep_b else None),
         ("🚚 On Time Delivery — por método", "De los pedidos fuera de horario, cuántos correspondieron a cada método de entrega.", _body_delivery(deliv_f)),
         ("🧩 Fill Rate — con y sin sustituto", "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.", _body_fr(fr_f)),
         ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
@@ -1371,7 +1450,7 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f
     if not sections:
         return None
 
-    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo)
+    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo, pickers_f=pickers_f)
     kpi_row_html = f'<div class="kpi-row">{"".join(kpis)}</div>' if kpis else ""
 
     corte_html = ""
@@ -1421,7 +1500,7 @@ def kpi_link_wrap(inner_html, html_doc, filename):
         'title="Descargar esta sección como HTML">' + inner_html + '</a>'
     )
 
-def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=False):
+def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
     """Arma las tarjetas KPI de arriba de todo (clickeables para bajar el HTML
     de esa sección). Se usa tanto para la fila en pantalla como para incluirlas
     arriba del HTML combinado."""
@@ -1453,6 +1532,15 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
             "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
         )
         kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
+    if pickers_f is not None:
+        tprep_b = tiempo_prep_bundle(pickers_f)
+        if tprep_b is not None:
+            peor = tprep_b["show"].iloc[0]
+            card = kpi_card(
+                "Tiempo prep. promedio", fmt_minutos(tprep_b["tiempo_prom_gral"]),
+                f"Más lenta: {peor['Tienda']} ({peor['Tiempo promedio']})"
+            )
+            kpis.append(kpi_link_wrap(card, tprep_b["html_doc"], "operativo_tiempo_preparacion.html"))
     if fr_f is not None and len(fr_f):
         if fr_total_declared is not None and not filtro_activo:
             # Usamos el % de FR que ya viene calculado en la fila "TOTAL" de la
@@ -1897,17 +1985,23 @@ if df_picker_raw is not None:
     d = df_picker_raw.copy()
     d["Picker"] = (d["firstName"].apply(norm_txt) + " " + d["lastName"].apply(norm_txt)).str.strip()
     d["Deposito"] = d["warehouseRefId"].apply(norm_txt)
+    d["Tienda"] = d["warehouseRefId"].apply(warehouse_to_tienda)
     d["Pedidos"] = pd.to_numeric(d["orders"], errors="coerce").fillna(0)
     d["Unidades"] = pd.to_numeric(d["items"], errors="coerce").fillna(0)
     d["Rendimiento"] = pd.to_numeric(d["performance"], errors="coerce")
     d["RendimientoPicking"] = pd.to_numeric(d.get("pickingPerformance"), errors="coerce")
     d["FoundRate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
     d["FillRate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
+    # Tiempo promedio de preparación por pedido, para la sección "Tiempo
+    # promedio de preparación por tienda" (no viene ninguna meta de minutos
+    # en el archivo, así que esto no es un % on time, solo un promedio).
+    d["TiempoPromedioPedidoMin"] = d.get("orderAverage").apply(hhmm_to_minutes)
     d["FechaArchivo"] = pd.Timestamp(fecha_hoy)
     d = d[d["Picker"] != ""]
     pickers = d[[
-        "Picker", "Deposito", "Pedidos", "Unidades",
-        "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "FechaArchivo"
+        "Picker", "Deposito", "Tienda", "Pedidos", "Unidades",
+        "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate",
+        "TiempoPromedioPedidoMin", "FechaArchivo"
     ]]
 
 # ---------------------------------------------------------------------
@@ -1916,7 +2010,7 @@ if df_picker_raw is not None:
 # ---------------------------------------------------------------------
 
 _canon_map = build_tienda_canon_map(
-    [pedidos_72h, reclamos, ontime_prepa, ontime_delivery, fill_rate, cancelados, faltantes]
+    [pedidos_72h, reclamos, ontime_prepa, ontime_delivery, fill_rate, cancelados, faltantes, pickers]
 )
 pedidos_72h = apply_tienda_canon(pedidos_72h, _canon_map)
 reclamos = apply_tienda_canon(reclamos, _canon_map)
@@ -1925,6 +2019,7 @@ ontime_delivery = apply_tienda_canon(ontime_delivery, _canon_map)
 fill_rate = apply_tienda_canon(fill_rate, _canon_map)
 cancelados = apply_tienda_canon(cancelados, _canon_map)
 faltantes = apply_tienda_canon(faltantes, _canon_map)
+pickers = apply_tienda_canon(pickers, _canon_map)
 
 # El archivo ahora trae el mes completo (desde el día 1, con fecha real por
 # fila) en vez de una sola foto del día. Para las secciones EN VIVO de esta
@@ -2017,18 +2112,23 @@ if any_data_loaded:
     fr_f = ftr(fill_rate)
     can_f = ftr(cancelados)
     falt_f = ftr(faltantes)
+    pickers_f = ftr(pickers)
 
     filtro_activo = filtro_tienda is not None or filtro_auditor is not None
 
     # ---- KPI row ----
-    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo)
+    kpis = build_kpis(
+        pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
+        filtro_activo=filtro_activo, pickers_f=pickers_f
+    )
 
     if kpis:
         st.markdown(f'<div class="kpi-row">{"".join(kpis)}</div>', unsafe_allow_html=True)
 
     # ---- Descargar todo junto (para mandar al jefe) ----
     _full_report_html = export_full_report_html(
-        pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo
+        pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f,
+        filtro_activo=filtro_activo, pickers_f=pickers_f
     )
     if _full_report_html:
         st.download_button(
@@ -2247,6 +2347,33 @@ if any_data_loaded:
         section_download_button(html_doc, "operativo_ontime_preparacion.html", "dl_prepa")
     else:
         st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
+
+    # ---- Tiempo promedio de preparación por tienda (a partir de Pickers) ----
+    st.markdown(
+        '<div class="section">⏱️ Tiempo promedio de preparación por tienda</div>'
+        '<div class="section-desc">Tiempo promedio que tarda cada tienda en armar un pedido, '
+        'según el archivo de Pickers (no es un % on time — el archivo no trae una meta de minutos).</div>',
+        unsafe_allow_html=True
+    )
+    _tprep_b = tiempo_prep_bundle(pickers_f)
+    if _tprep_b is not None:
+        st.markdown(
+            f'<div class="resumen-title">Promedio general — {fmt_minutos(_tprep_b["tiempo_prom_gral"])} '
+            f'por pedido ({_tprep_b["ped_tot"]} pedidos)</div>',
+            unsafe_allow_html=True
+        )
+        st.markdown('<div class="resumen-title" style="margin-top:14px;">Top 10 tiendas más lentas</div>', unsafe_allow_html=True)
+        st.write(_tprep_b["top10_html"], unsafe_allow_html=True)
+
+        section_download_button(
+            _tprep_b["html_doc"], "operativo_tiempo_preparacion.html", "dl_tiempo_prep"
+        )
+    else:
+        st.markdown(
+            '<div class="empty-box">Subí el archivo de Pickers en la pestaña app '
+            '(tarjeta "PICKERS") para ver esta sección.</div>',
+            unsafe_allow_html=True
+        )
 
     # ---- On Time Delivery (por método) ----
     st.markdown(
