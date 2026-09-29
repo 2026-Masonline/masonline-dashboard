@@ -544,10 +544,11 @@ SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
+SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
 
 def get_shared_bytes(shared_path):
     """Esta pestaña ya no tiene uploader propio: "Pedidos", "Reclamos
-    Operativos" y "Faltantes" se suben en la pestaña "app". Acá solo se lee
+    Operativos", "Pickers" y "Faltantes" se suben en la pestaña "app". Acá solo se lee
     la última copia que haya quedado guardada ahí (misma carpeta compartida
     que usan también Productividad Pickers y Resumen)."""
     if shared_path.exists():
@@ -1528,8 +1529,12 @@ reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
 faltantes_bytes = get_shared_bytes(SHARED_FALTANTES_PATH)
 pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
 reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
+pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
 
-if reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None or reclamos_bytes is not None:
+if (
+    reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None
+    or reclamos_bytes is not None or pickers_bytes is not None
+):
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
         '● Mostrando los reportes subidos en la pestaña app — no hace falta subir nada acá.</div>',
@@ -1543,7 +1548,7 @@ else:
         TODAVÍA NO HAY REPORTES CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí "Pedidos", "Reclamos Operativos" y "Faltantes" en la pestaña <b>app</b>
+        Subí "Pedidos", "Reclamos Operativos", "Pickers" y "Faltantes" en la pestaña <b>app</b>
         (menú de la izquierda) para ver acá las alertas operativas.
       </div>
     </div>
@@ -1577,10 +1582,20 @@ df_faltantes_raw = load_section_from_xl(
     xl_faltantes,
     ["warehouseName", "refName", "missingQuantity", "substitutedQuantity", "noSubstitutedQuantity"]
 )
+xl_pickers = safe_open_excel(io.BytesIO(pickers_bytes)) if pickers_bytes is not None else None
 df_picker_raw = load_section_from_xl(
-    xl_reporte,
-    ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
+    xl_pickers,
+    ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"],
+    required=False
 )
+if df_picker_raw is None:
+    # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
+    # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
+    df_picker_raw = load_section_from_xl(
+        xl_reporte,
+        ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"],
+        required=False
+    )
 xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes)) if pedidos_bytes is not None else None
 df_pedidos_raw = load_section_from_xl(
     xl_pedidos,
@@ -1596,6 +1611,12 @@ if df_pedidos_raw is not None:
     # fila. Lo llevamos al mismo esquema Pedido/Tienda/Fecha/Estado/Monto
     # que ya usa el resto de esta sección, para no tocar nada más abajo.
     d = df_pedidos_raw.copy()
+    # Excluir Pick&Mix (salesChannelPrefix = "PM") y devoluciones/RMA
+    # (commerceId con "RMA"): no son pedidos "sin mover" reales para
+    # este reporte.
+    _sales_prefix = get_col_ci(d, "salesChannelPrefix").apply(norm_txt).str.upper()
+    _commerce_id_raw = d.get("commerceId", "").apply(norm_txt).str.upper()
+    d = d[(_sales_prefix != "PM") & (~_commerce_id_raw.str.contains("RMA"))]
     d["Pedido"] = d.get("commerceId", "").apply(norm_txt)
     tienda_loc = d.get("shippingLocationName", "").apply(clean_shipping_location)
     tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
@@ -1864,10 +1885,13 @@ if df_faltantes_raw is not None:
     )
 
 # ---- Productividad de Pickers ----
-# Viene de la hoja "Data Picker" del mismo Reporte diario.xlsx (no tiene
-# uploader propio, es parte de este mismo archivo). Se usa acá para armar
-# el historial día a día; la tabla en sí se muestra en la pestaña aparte
-# "Productividad Pickers".
+# Viene del archivo nuevo de Pickers (aparte, subido en "app"); si todavía no
+# se subió ninguno, sigue leyendo la vieja hoja "Data Picker" del Reporte
+# diario mientras se termina de migrar. Se usa acá para armar el historial
+# día a día; la tabla en sí se muestra en la pestaña aparte "Productividad
+# Pickers". Ninguno de los dos formatos trae una fecha por fila (es una foto
+# del día, no un historial dentro del archivo como Faltantes) — se estampa
+# con la fecha de hoy.
 pickers = None
 if df_picker_raw is not None:
     d = df_picker_raw.copy()
@@ -1879,7 +1903,7 @@ if df_picker_raw is not None:
     d["RendimientoPicking"] = pd.to_numeric(d.get("pickingPerformance"), errors="coerce")
     d["FoundRate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
     d["FillRate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
-    d["FechaArchivo"] = pd.to_datetime(d.get("Fecha"), errors="coerce")
+    d["FechaArchivo"] = pd.Timestamp(fecha_hoy)
     d = d[d["Picker"] != ""]
     pickers = d[[
         "Picker", "Deposito", "Pedidos", "Unidades",
@@ -1928,9 +1952,12 @@ if faltantes_historial_completo is not None and len(faltantes_historial_completo
 
 # ---- Acumular Productividad de Pickers de hoy en el historial (Google Sheets) ----
 # Mismo criterio que Faltantes: se agrega una sola vez por archivo realmente
-# subido (hash del Reporte diario en session_state), no en cada re-render.
+# subido (hash del archivo de origen en session_state), no en cada re-render.
+# Pickers ahora se sube aparte (pickers_bytes); reporte_bytes queda de
+# respaldo solo mientras alguien todavía suba el Reporte diario viejo.
 if pickers is not None and len(pickers):
-    _pickers_hash = hashlib.md5(reporte_bytes).hexdigest()
+    _pickers_source_bytes = pickers_bytes if pickers_bytes is not None else reporte_bytes
+    _pickers_hash = hashlib.md5(_pickers_source_bytes).hexdigest()
     if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
         if replace_pickers_meses_en_sheet(pickers):
             st.session_state["_pickers_logged_hash"] = _pickers_hash
