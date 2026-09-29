@@ -2333,13 +2333,9 @@ if any_data_loaded:
             st.markdown('<div class="resumen-title">Top 10 tiendas con más cancelados</div>', unsafe_allow_html=True)
             st.write(b["top10_html"], unsafe_allow_html=True)
 
-            with st.expander(f"Ver resumen completo por tienda ({len(b['agg'])} tiendas)"):
-                st.write(b["resumen_html"], unsafe_allow_html=True)
-
-            with st.expander(f"Ver detalle de pedidos cancelados ({len(b['det'])})"):
-                with st.container(height=380):
-                    st.write(table_html(b["det"][b["detail_cols"]]), unsafe_allow_html=True)
-
+            # El resumen completo por tienda y el detalle pedido a pedido ya
+            # no se muestran acá abajo (solo el Top 10) — quedan disponibles
+            # completos en el HTML descargable.
             section_download_button(b["html_doc"], "operativo_cancelados.html", "dl_cancelados")
         else:
             st.markdown('<div class="empty-box">Sin cancelaciones para esta selección 🎉</div>', unsafe_allow_html=True)
