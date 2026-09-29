@@ -320,6 +320,17 @@ else:
     finde_vs_anterior = None
 
 def money(v):
+    """Número completo, sin abreviar a millones — el mismo que se ve en el
+    Excel de origen (ej. $2.659.657.583, no $2.659,66 M)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "$0"
+    return f"${v:,.0f}".replace(",", ".")
+
+def money_compact(v):
+    """Versión abreviada en millones — se usa solo para las etiquetas del
+    gráfico de línea, donde el número completo no entra sin superponerse."""
     return (
        f"${v/1_000_000:,.2f} M"
         .replace(",", "X")
@@ -403,7 +414,7 @@ def build_standalone_html():
         circles += (
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#2f9e66"/>'
             f'<text x="{x:.1f}" y="{y-12:.1f}" text-anchor="middle" '
-            f'font-size="11" fill="#59636e">{money(value)}</text>'
+            f'font-size="11" fill="#59636e">{money_compact(value)}</text>'
         )
 
     xlabels = ""
@@ -423,7 +434,7 @@ def build_standalone_html():
             f'<line x1="{left}" y1="{y:.1f}" x2="{chart_w-right}" y2="{y:.1f}" '
             'stroke="#e8ebef" stroke-width="1"/>'
             f'<text x="{left-10}" y="{y+4:.1f}" text-anchor="end" '
-            f'font-size="11" fill="#697386">{html.escape(money(value))}</text>'
+            f'font-size="11" fill="#697386">{html.escape(money_compact(value))}</text>'
         )
 
     svg = f"""
