@@ -211,13 +211,25 @@ detalle_dia["rango"] = detalle_dia["finde_inicio"].apply(
 )
 
 def money(v):
-    """Número completo, sin abreviar a millones — el mismo que se ve en el
-    Excel de origen (ej. $2.659.657.583, no $2.659,66 M)."""
+    """Número completo mientras esté por debajo del millón (ej. $213.945).
+    De ahí en más, redondea y abrevia: 'M' (millones) entre 1 millón y
+    999 millones, 'MM' (miles de millones) a partir de los mil millones.
+    Así no queda ni un número gigante sin abreviar, ni una fracción de
+    millón rara como '$0,21 M'."""
     try:
         v = float(v)
     except (TypeError, ValueError):
         return "$0"
-    return f"${v:,.0f}".replace(",", ".")
+    av = abs(v)
+    if av < 1_000_000:
+        return f"${v:,.0f}".replace(",", ".")
+    # Si al redondear a "M" el número llega a 1.000, mejor mostrarlo ya
+    # como "MM" (ej. 999.999.999 -> "$1.000,00 M" se ve raro; "$1,00 MM" no).
+    if av < 1_000_000_000 and round(av / 1_000_000, 2) < 1000:
+        txt = f"${v/1_000_000:,.2f} M"
+    else:
+        txt = f"${v/1_000_000_000:,.2f} MM"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
 
 def pct(v):
     return f"{v*100:.2f}%".replace(".", ",")
