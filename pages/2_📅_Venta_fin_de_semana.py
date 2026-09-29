@@ -211,12 +211,13 @@ detalle_dia["rango"] = detalle_dia["finde_inicio"].apply(
 )
 
 def money(v):
-    return (
-       f"${v/1_000_000:,.2f} M"
-        .replace(",", "X")
-        .replace(".", ",")
-        .replace("X", ".")
-    )
+    """Número completo, sin abreviar a millones — el mismo que se ve en el
+    Excel de origen (ej. $2.659.657.583, no $2.659,66 M)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "$0"
+    return f"${v:,.0f}".replace(",", ".")
 
 def pct(v):
     return f"{v*100:.2f}%".replace(".", ",")
