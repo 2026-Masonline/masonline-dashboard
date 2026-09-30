@@ -1437,26 +1437,6 @@ def html_doc_fr(fr_f):
         body
     )
 
-def _body_delivery(deliv_f):
-    if deliv_f is None or not len(deliv_f):
-        return None
-    tot_retiro = deliv_f["Retiro"].sum()
-    tot_pickup = deliv_f["Pickup"].sum()
-    tot_delivery = deliv_f["Delivery"].sum()
-    tot_fuera = deliv_f["Fuera"].sum()
-    resumen = ""
-    for label, val in [("Retiro", tot_retiro), ("Pickup", tot_pickup), ("Delivery", tot_delivery)]:
-        share = (val / tot_fuera * 100) if tot_fuera else 0
-        resumen += f'<div class="resumen-title" style="margin-top:0;">{label}: {int(val)} ({pct1(share)} del total fuera)</div>'
-    show = deliv_f.copy().sort_values("Fuera", ascending=False)
-    for c in ["Pedidos", "Retiro", "Pickup", "Delivery", "Fuera"]:
-        show[c] = show[c].astype(int)
-    show["% Retiro"] = show["% Retiro"].apply(pct1)
-    show["% Pickup"] = show["% Pickup"].apply(pct1)
-    show["% Delivery"] = show["% Delivery"].apply(pct1)
-    detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera", "Retiro", "% Retiro", "Pickup", "% Pickup", "Delivery", "% Delivery"]
-    return resumen + table_html(show[detail_cols])
-
 def cancelados_bundle(can_f):
     """Arma el Top 10 de tiendas con más cancelados, el resumen completo por
     tienda y el detalle pedido a pedido, para la sección y para el HTML."""
@@ -1536,7 +1516,7 @@ def html_doc_faltantes(falt_f):
         body
     )
 
-def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
+def export_full_report_html(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
     """Arma un único HTML con las tarjetas KPI de arriba + todas las secciones
     que tengan datos cargados, para bajar de un solo golpe y mandarlo
     (ej. por WhatsApp/mail al jefe)."""
@@ -1550,7 +1530,6 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f
         ("⏱️ On Time Preparación", "Porcentaje de pedidos preparados en horario, por tienda.", prepa_b["body"] if prepa_b else None),
         ("⏱️ Tiempo promedio de preparación por tienda", "Tiempo promedio que tarda cada tienda en armar un pedido, según el archivo de Pickers.", tprep_b["body"] if tprep_b else None),
         ("⏱️ On Time Preparación (Pickers) — acumulado del mes", f"% de pedidos preparados en menos de {PICKERS_ONTIME_OBJETIVO_MIN} minutos, acumulado desde el día 1 del mes.", ontime_pickers_b["body"] if ontime_pickers_b else None),
-        ("🚚 On Time Delivery — por método", "De los pedidos fuera de horario, cuántos correspondieron a cada método de entrega.", _body_delivery(deliv_f)),
         ("🧩 Fill Rate — con y sin sustituto", "Unidades faltantes por tienda: cubiertas con reemplazo vs. no entregadas.", _body_fr(fr_f)),
         ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
         ("📉 Faltantes ECOM", "Unidades faltantes por tienda y producto, según el Reporte de Faltantes mensual.", _body_faltantes(falt_f)),
@@ -1915,9 +1894,8 @@ if reclamos is not None:
         lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"])), axis=1
     )
 
-# ---- On Time (Preparación directo + Delivery por método) ----
+# ---- On Time (Preparación directo) ----
 ontime_prepa = None
-ontime_delivery = None
 if df_ontime_raw is not None:
     d = df_ontime_raw.copy()
     for c in ["Pedifod", "Retiro", "Pickup", "Delivery", "Fuera"]:
@@ -1944,13 +1922,6 @@ if df_ontime_raw is not None:
     prepa = d[["Tienda", "Formato", "Pedidos", "Fuera", "OntimePct"]].copy()
     prepa[["Sev", "SevLabel"]] = prepa["OntimePct"].apply(lambda p: pd.Series(sev_ontime(p)))
     ontime_prepa = prepa
-
-    # Delivery: pedidos fuera de horario, discriminados por método de entrega
-    deliv = d[["Tienda", "Formato", "Pedidos", "Retiro", "Pickup", "Delivery", "Fuera"]].copy()
-    deliv["% Retiro"] = np.where(deliv["Fuera"] > 0, deliv["Retiro"] / deliv["Fuera"] * 100, 0)
-    deliv["% Pickup"] = np.where(deliv["Fuera"] > 0, deliv["Pickup"] / deliv["Fuera"] * 100, 0)
-    deliv["% Delivery"] = np.where(deliv["Fuera"] > 0, deliv["Delivery"] / deliv["Fuera"] * 100, 0)
-    ontime_delivery = deliv
 
 # ---- Fill Rate ----
 fill_rate = None
@@ -2129,12 +2100,11 @@ if df_picker_raw is not None:
 # ---------------------------------------------------------------------
 
 _canon_map = build_tienda_canon_map(
-    [pedidos_72h, reclamos, ontime_prepa, ontime_delivery, fill_rate, cancelados, faltantes, pickers]
+    [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes, pickers]
 )
 pedidos_72h = apply_tienda_canon(pedidos_72h, _canon_map)
 reclamos = apply_tienda_canon(reclamos, _canon_map)
 ontime_prepa = apply_tienda_canon(ontime_prepa, _canon_map)
-ontime_delivery = apply_tienda_canon(ontime_delivery, _canon_map)
 fill_rate = apply_tienda_canon(fill_rate, _canon_map)
 cancelados = apply_tienda_canon(cancelados, _canon_map)
 faltantes = apply_tienda_canon(faltantes, _canon_map)
@@ -2230,7 +2200,6 @@ if any_data_loaded:
     pedidos_f = ftr(pedidos_72h)
     reclamos_f = ftr(reclamos)
     prepa_f = ftr(ontime_prepa)
-    deliv_f = ftr(ontime_delivery)
     fr_f = ftr(fill_rate)
     can_f = ftr(cancelados)
     falt_f = ftr(faltantes)
@@ -2249,7 +2218,7 @@ if any_data_loaded:
 
     # ---- Descargar todo junto (para mandar al jefe) ----
     _full_report_html = export_full_report_html(
-        pedidos_f, reclamos_f, prepa_f, deliv_f, fr_f, can_f, falt_f,
+        pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
         filtro_activo=filtro_activo, pickers_f=pickers_f
     )
     if _full_report_html:
@@ -2538,45 +2507,6 @@ if any_data_loaded:
             'Pickers para que empiece a sumar al historial.</div>',
             unsafe_allow_html=True
         )
-
-    # ---- On Time Delivery (por método) ----
-    st.markdown(
-        f'<div class="section">🚚 On Time Delivery — por método '
-        f'<span class="count-pill">{len(deliv_f) if deliv_f is not None else 0}</span></div>'
-        '<div class="section-desc">De los pedidos fuera de horario, cuántos correspondieron a cada método de entrega.</div>',
-        unsafe_allow_html=True
-    )
-    if deliv_f is not None and len(deliv_f):
-        tot_retiro = deliv_f["Retiro"].sum()
-        tot_pickup = deliv_f["Pickup"].sum()
-        tot_delivery = deliv_f["Delivery"].sum()
-        tot_fuera = deliv_f["Fuera"].sum()
-        c1, c2, c3 = st.columns(3)
-        for col, label, val in zip(
-            [c1, c2, c3],
-            ["Retiro", "Pickup", "Delivery"],
-            [tot_retiro, tot_pickup, tot_delivery]
-        ):
-            share = (val / tot_fuera * 100) if tot_fuera else 0
-            with col:
-                st.markdown(kpi_card(f"FUERA DE HORARIO · {label.upper()}", f"{int(val)}", f"{pct1(share)} del total fuera"), unsafe_allow_html=True)
-        show = deliv_f.copy().sort_values("Fuera", ascending=False)
-        for c in ["Pedidos", "Retiro", "Pickup", "Delivery", "Fuera"]:
-            show[c] = show[c].astype(int)
-        show["% Retiro"] = show["% Retiro"].apply(pct1)
-        show["% Pickup"] = show["% Pickup"].apply(pct1)
-        show["% Delivery"] = show["% Delivery"].apply(pct1)
-        detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera", "Retiro", "% Retiro", "Pickup", "% Pickup", "Delivery", "% Delivery"]
-        with st.container(height=380):
-            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
-        html_doc = export_section_html(
-            "🚚 On Time Delivery — por método",
-            "De los pedidos fuera de horario, cuántos correspondieron a cada método de entrega.",
-            table_html(show[detail_cols])
-        )
-        section_download_button(html_doc, "operativo_ontime_delivery.html", "dl_delivery")
-    else:
-        st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
 
     # ---- Fill Rate ----
     fr_below = fr_f[(fr_f["Unidades"] > 0) & (fr_f["FRPct"] < FR_OBJETIVO)] if fr_f is not None else None
