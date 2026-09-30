@@ -358,7 +358,7 @@ def tienda_nombre_row(codigo, picker=None):
 
 PICKER_LOG_HEADERS = [
     "Fecha", "Picker", "Deposito", "Pedidos", "Unidades",
-    "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"
+    "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "TiempoPromedioMin"
 ]
 
 def _pickers_log_ws():
@@ -400,7 +400,7 @@ def load_pickers_log():
         df["Tienda"] = [
             tienda_nombre_row(dep, pic) for dep, pic in zip(df["Deposito"], pickers_col)
         ]
-    for c in ["Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate"]:
+    for c in ["Pedidos", "Unidades", "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "TiempoPromedioMin"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
