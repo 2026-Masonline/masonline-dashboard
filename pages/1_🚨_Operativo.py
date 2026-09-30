@@ -567,6 +567,7 @@ SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
 SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
+SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 
 def get_shared_bytes(shared_path):
     """Esta pestaña ya no tiene uploader propio: "Pedidos", "Reclamos
@@ -947,6 +948,47 @@ def load_fr_from_xl(xl):
         "en el archivo subido."
     )
     return None
+
+def fillrate_wh_df(df_fillrate_wh_raw):
+    """Arma el mismo esquema que usa el resto del dashboard para Fill Rate
+    (Tienda/Unidades/SinSustituto/ConSustituto/MontoFaltante/FRPct) a partir
+    del archivo 'Faltantes por depósito' (missing-item-by-wh): trae, por
+    depósito, totalPickedQuantity (unidades entregadas tal cual se pidieron),
+    totalMissingQuantity (unidades que faltaron al picking) y
+    totalSubstitutedQuantity (de esas, cuántas se cubrieron con reemplazo).
+    Entonces: Unidades (total pedido) = picked + missing; ConSustituto =
+    substituted; SinSustituto (no entregado) = missing - substituted; y FR%
+    queda igual que en el resto del dashboard: (Unidades - SinSustituto) /
+    Unidades. No trae un monto $ de lo faltante (esa columna queda vacía y
+    se oculta sola en el detalle)."""
+    d = df_fillrate_wh_raw.copy()
+    d["Tienda"] = d["warehouseName"].apply(warehouse_to_tienda)
+    d = d[d["Tienda"] != ""]
+    if not len(d):
+        return None
+    picked = pd.to_numeric(d.get("totalPickedQuantity"), errors="coerce").fillna(0)
+    missing = pd.to_numeric(d.get("totalMissingQuantity"), errors="coerce").fillna(0)
+    sustituido = pd.to_numeric(d.get("totalSubstitutedQuantity"), errors="coerce").fillna(0)
+    d["Unidades"] = picked + missing
+    d["ConSustituto"] = sustituido
+    d["SinSustituto"] = (missing - sustituido).clip(lower=0)
+    d["MontoFaltante"] = np.nan
+
+    # Puede haber más de una fila por tienda (depósitos con un prefijo que
+    # warehouse_to_tienda no reconoce, ej. "WM-PICKUP-3608", caen todos con
+    # el mismo nombre de respaldo) — se suman para no duplicar tiendas.
+    fr_df = d.groupby("Tienda", as_index=False).agg(
+        Unidades=("Unidades", "sum"), SinSustituto=("SinSustituto", "sum"),
+        ConSustituto=("ConSustituto", "sum")
+    )
+    fr_df["MontoFaltante"] = np.nan
+    fr_df["FRPct"] = np.where(
+        fr_df["Unidades"] > 0, 100 * (fr_df["Unidades"] - fr_df["SinSustituto"]) / fr_df["Unidades"], 0.0
+    )
+    fr_df[["Sev", "SevLabel"]] = fr_df.apply(
+        lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
+    )
+    return fr_df
 
 def load_cancelados_from_xl(xl, required=True):
     """Carga Pedidos cancelados. Cuando la hoja no trae la columna 'Total $'
@@ -1412,19 +1454,29 @@ def pickers_ontime_bundle():
 
 FR_OBJETIVO = 98
 
+def _fr_prep_show(show):
+    """Arma las columnas de detalle de Fill Rate en 'show' (in place) y
+    devuelve el orden de columnas a mostrar. 'Monto faltante' solo viene del
+    Reporte diario (planilla vieja) — el archivo de 'Faltantes por depósito'
+    no trae un monto $, así que esa columna se oculta sola cuando no hay
+    ningún valor cargado."""
+    show["Unidades"] = show["Unidades"].astype(int)
+    show["Sin sustituto"] = show["SinSustituto"].astype(int)
+    show["Con sustituto"] = show["ConSustituto"].astype(int)
+    show["FR %"] = show["FRPct"].apply(pct1)
+    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    if show["MontoFaltante"].notna().any():
+        show["Monto faltante"] = show["MontoFaltante"].apply(money)
+        return ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
+    return ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "FR %", "Estado"]
+
 def _body_fr(fr_f):
     if fr_f is None or not len(fr_f):
         return None
     show = fr_f[(fr_f["Unidades"] > 0) & (fr_f["FRPct"] < FR_OBJETIVO)].copy().sort_values("FRPct")
     if not len(show):
         return '<div class="empty-box">Todas las tiendas con venta llegan al objetivo (98%) 🎉</div>'
-    show["Unidades"] = show["Unidades"].astype(int)
-    show["Sin sustituto"] = show["SinSustituto"].astype(int)
-    show["Con sustituto"] = show["ConSustituto"].astype(int)
-    show["Monto faltante"] = show["MontoFaltante"].apply(money)
-    show["FR %"] = show["FRPct"].apply(pct1)
-    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-    detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
+    detail_cols = _fr_prep_show(show)
     return table_html(show[detail_cols])
 
 def html_doc_fr(fr_f):
@@ -1654,14 +1706,15 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
             sin_tot = fr_f["SinSustituto"].iloc[0]
             fr_pct_tot = fr_f["FRPct"].iloc[0]
         else:
-            # Varias tiendas juntas (ej. las de un auditor): no hay una fila
-            # de "TOTAL" de ese subconjunto en la planilla, así que estimamos
-            # ponderando por unidades. Puede no coincidir 100% con un cálculo
-            # manual de ese grupo en la planilla.
+            # Varias tiendas juntas (ej. las de un auditor, o el archivo de
+            # Faltantes por depósito que no trae una fila de "TOTAL"): no hay
+            # un total ya declarado, así que estimamos ponderando por
+            # unidades — mismo criterio que el FR% de cada tienda (lo
+            # sustituido SÍ cuenta como entregado). Puede no coincidir 100%
+            # con un cálculo manual de ese grupo en la planilla.
             unid_tot = fr_f["Unidades"].sum()
             sin_tot = fr_f["SinSustituto"].sum()
-            con_tot = fr_f["ConSustituto"].sum()
-            fr_pct_tot = 100 * (1 - (sin_tot + con_tot) / unid_tot) if unid_tot else 0
+            fr_pct_tot = 100 * (unid_tot - sin_tot) / unid_tot if unid_tot else 0
         card = kpi_card(
             "Fill rate (con+sin sust.)", pct1(fr_pct_tot),
             f"{int(sin_tot)} unid. sin sustituto",
@@ -1715,10 +1768,12 @@ pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
 reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
 pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
 ontime_bytes = get_shared_bytes(SHARED_ONTIME_PATH)
+fillrate_bytes = get_shared_bytes(SHARED_FILLRATE_PATH)
 
 if (
     reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None
     or reclamos_bytes is not None or pickers_bytes is not None or ontime_bytes is not None
+    or fillrate_bytes is not None
 ):
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
@@ -1760,7 +1815,17 @@ if df_reclamos_raw is None:
     # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
     df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
 df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
-df_fr_raw = load_fr_from_xl(xl_reporte)
+xl_fillrate = safe_open_excel(io.BytesIO(fillrate_bytes)) if fillrate_bytes is not None else None
+# Archivo nuevo "Faltantes por depósito" (missing-item-by-wh), tarjeta
+# "FILL RATE" de la pestaña app: trae unidades pickeadas/faltantes/
+# sustituidas por depósito. Si está, lo usamos en vez de la hoja de FR del
+# Reporte diario (required=False porque puede no estar todavía).
+df_fillrate_wh_raw = load_section_from_xl(
+    xl_fillrate,
+    ["warehouseName", "totalPickedQuantity", "totalMissingQuantity", "totalSubstitutedQuantity"],
+    required=False
+)
+df_fr_raw = load_fr_from_xl(xl_reporte) if df_fillrate_wh_raw is None else None
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
 xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
@@ -1926,7 +1991,9 @@ if df_ontime_raw is not None:
 # ---- Fill Rate ----
 fill_rate = None
 fr_total_declared = None
-if df_fr_raw is not None:
+if df_fillrate_wh_raw is not None:
+    fill_rate = fillrate_wh_df(df_fillrate_wh_raw)
+elif df_fr_raw is not None:
     d = df_fr_raw.copy()
     fr_cols = list(d.columns)
     unidades_plus_col = "Unidades +" if "Unidades +" in d.columns else None
@@ -2520,13 +2587,7 @@ if any_data_loaded:
     if fr_f is not None and len(fr_f):
         if len(fr_below):
             show = fr_below.copy().sort_values("FRPct")
-            show["Unidades"] = show["Unidades"].astype(int)
-            show["Sin sustituto"] = show["SinSustituto"].astype(int)
-            show["Con sustituto"] = show["ConSustituto"].astype(int)
-            show["Monto faltante"] = show["MontoFaltante"].apply(money)
-            show["FR %"] = show["FRPct"].apply(pct1)
-            show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-            detail_cols = ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
+            detail_cols = _fr_prep_show(show)
             with st.container(height=380):
                 st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
             html_doc = export_section_html(
