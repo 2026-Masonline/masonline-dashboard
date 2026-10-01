@@ -22,7 +22,7 @@ st.markdown("""
         background: #ffffff;
         margin: -1rem -1.2rem 1.2rem;
         padding: 22px 28px;
-        color: #20252b;
+        color: #000000;
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -35,12 +35,12 @@ st.markdown("""
         background: #fafaf8; border: 1px solid #e8ebef; border-radius: 12px;
         padding: 10px 16px; text-align: right;
     }
-    .periodo-badge .lbl { color: #6b7280; font-size: 11px; font-weight: 700; letter-spacing:.03em; }
-    .periodo-badge .val { color: #20252b; font-size: 16px; font-weight: 800; margin-top: 2px; }
-    .periodo-badge small { display:block; color:#9aa1ab; font-size:11px; margin-top:3px; }
+    .periodo-badge .lbl { color: #000000; font-size: 11px; font-weight: 700; letter-spacing:.03em; }
+    .periodo-badge .val { color: #000000; font-size: 16px; font-weight: 800; margin-top: 2px; }
+    .periodo-badge small { display:block; color:#000000; font-size:11px; margin-top:3px; }
 
-    .section { font-size: 20px; font-weight: 800; color: #20252b; margin: 26px 0 2px; }
-    .section-desc { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
+    .section { font-size: 20px; font-weight: 800; color: #000000; margin: 26px 0 2px; }
+    .section-desc { color: #000000; font-size: 13px; margin: 0 0 14px; }
 
     .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
     .kpi-card {
@@ -56,13 +56,13 @@ st.markdown("""
     .kpi-icon.red { background: #fde9e9; }
     .kpi-icon.green { background: #e6f5ea; }
     .kpi-icon.orange { background: #fdf0e0; }
-    .kpi-label { color: #6b7280; font-size: 13px; font-weight: 700; }
-    .kpi-value { color: #20252b; font-size: 26px; font-weight: 800; margin-top: 4px; }
+    .kpi-label { color: #000000; font-size: 13px; font-weight: 700; }
+    .kpi-value { color: #000000; font-size: 26px; font-weight: 800; margin-top: 4px; }
     .kpi-delta { font-size: 13px; font-weight: 700; margin-top: 8px; }
-    .kpi-delta .sub { color: #9aa1ab; font-weight: 400; }
+    .kpi-delta .sub { color: #000000; font-weight: 400; }
     .positive { color: #208653; }
     .negative { color: #d64545; }
-    .neutral { color: #9aa1ab; font-weight: 400; }
+    .neutral { color: #000000; font-weight: 400; }
 
     .cmp-table-wrap {
         background: white; border-radius: 14px; overflow: hidden;
@@ -75,7 +75,7 @@ st.markdown("""
     }
     table.cmp-table thead th:not(:first-child) { text-align: center; }
     table.cmp-table td {
-        padding: 13px 16px; border-top: 1px solid #f1f3f5; color: #20252b;
+        padding: 13px 16px; border-top: 1px solid #f1f3f5; color: #000000;
     }
     table.cmp-table td:not(:first-child) { text-align: center; font-weight: 700; }
     table.cmp-table td:first-child { display:flex; align-items:center; gap:8px; font-weight:700; }
@@ -116,10 +116,10 @@ if vsventas_bytes is None:
     st.markdown("""
     <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
     padding:12px 16px;margin-bottom:14px;">
-      <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+      <div style="font-size:13px;font-weight:800;color:#000000;margin-bottom:5px;">
         TODAVÍA NO HAY ARCHIVO CARGADO
       </div>
-      <div style="font-size:12px;color:#6b7280;">
+      <div style="font-size:12px;color:#000000;">
         Subí el Excel "Vs de ventas" (con una hoja por año, ej. "2025" y "2026")
         en la pestaña <b>app</b> (menú de la izquierda), tarjeta "COMPARATIVO".
       </div>
@@ -128,7 +128,7 @@ if vsventas_bytes is None:
     st.stop()
 
 st.markdown(
-    '<div style="color:#6b7280;font-size:12px;margin:-6px 0 14px;">'
+    '<div style="color:#000000;font-size:12px;margin:-6px 0 14px;">'
     'Los datos se cargan desde la pestaña <b>app</b> (menú de la izquierda) — subí '
     'ahí el Excel "Vs de ventas" cuando quieras actualizarlos.'
     '</div>',
@@ -377,7 +377,7 @@ table_html = f"""
 st.markdown(table_html, unsafe_allow_html=True)
 
 st.markdown(
-    '<div style="color:#9aa1ab;font-size:11px;margin-top:14px;">'
+    '<div style="color:#000000;font-size:11px;margin-top:14px;">'
     f'"{mes_nombre} {cur_year - 1}" toma el acumulado hasta el mismo día {n} del mes '
     '(la misma cantidad de días que ya pasaron este mes), para que la comparación sea pareja.'
     '</div>',
