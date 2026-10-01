@@ -196,7 +196,7 @@ f_delivery = upload_box_reporte(
     "f_delivery"
 )
 
-r5, r6, r7 = st.columns(3)
+r5, r6, r7, r8 = st.columns(4)
 f_fillrate = upload_box_reporte(
     r5, "FILL RATE",
     "Archivo nuevo de Fill Rate, aparte del Reporte diario.",
@@ -208,6 +208,11 @@ f_pickers = upload_box_reporte(
     "Archivo nuevo de Productividad Pickers, aparte del Reporte diario.",
     "f_pickers"
 )
+f_vsventas = upload_box_reporte(
+    r8, "COMPARATIVO",
+    "Archivo 'Vs de ventas' (hojas 2025/2026) para la pestaña Comparativo.",
+    "f_vsventas"
+)
 
 st.markdown(
     '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
@@ -217,7 +222,9 @@ st.markdown(
     '(missing-item-by-wh). La tarjeta ON-TIME funciona igual que PICKERS: si '
     'subís ahí el archivo de Productividad Pickers, también arma "Tiempo '
     'promedio de preparación por tienda" y el % on time acumulado del mes en '
-    'Operativo.</div>',
+    'Operativo. COMPARATIVO alimenta la pestaña Comparativo (resumen del mes '
+    'vs. mismo período del año anterior) — subí ahí el archivo "Vs de ventas" '
+    'con una hoja por año.</div>',
     unsafe_allow_html=True
 )
 
@@ -230,6 +237,7 @@ SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
 SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
+SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
 
 def save_shared_bytes(uploaded_file, shared_path):
     """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
@@ -250,6 +258,7 @@ reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH)
 ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH)
 delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH)
 fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH)
+vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH)
 
 if pedidos_guardado or faltantes_guardado:
     st.markdown(
