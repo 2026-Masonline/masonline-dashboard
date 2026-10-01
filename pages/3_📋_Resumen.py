@@ -490,10 +490,11 @@ def safe_open_excel(uploaded_file):
 # ---------------------------------------------------------------------
 # Guardado compartido: usa el mismo archivo que se sube en la pestaña
 # Operativo (y viceversa), para que cualquiera que entre con el link vea
-# el último reporte subido sin tener que subir nada. Mientras la app siga
-# "despierta" todos ven la misma copia; si Streamlit la reinicia por
-# inactividad, o subís un cambio nuevo a GitHub, esa copia se borra y hace
-# falta volver a subir el reporte una vez para que se comparta de nuevo.
+# el último reporte subido sin tener que subir nada. Además de la copia
+# local (rápida), cada reporte queda guardado en GitHub (carpeta
+# shared_uploads/), así que aunque Streamlit reinicie la app por
+# inactividad o por una actualización, el último reporte sigue disponible
+# y no hace falta volver a subirlo.
 # ---------------------------------------------------------------------
 
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
@@ -503,10 +504,43 @@ SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 
+def _github_headers():
+    token = st.secrets.get("GITHUB_TOKEN")
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+def fetch_shared_from_github(shared_path):
+    """Trae de GitHub la última copia guardada de este reporte (para cuando
+    el servidor se reinició y la copia local temporal ya no está)."""
+    headers = _github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    import json
+    import base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    try:
+        request_get = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(request_get, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return base64.b64decode(data["content"])
+    except Exception:
+        return None
+
 def get_shared_bytes(uploaded_file, shared_path):
     """Esta pestaña no tiene uploader propio (siempre se llama con
-    uploaded_file=None): solo lee el último Pedidos / Reclamos Operativos /
-    Faltantes que se haya subido en la pestaña "app" (carpeta compartida)."""
+    uploaded_file=None): lee el último reporte subido en la pestaña "app",
+    primero de la copia local y, si no está (reinicio del servidor), de
+    GitHub (donde queda guardado para siempre)."""
     if uploaded_file is not None:
         data = uploaded_file.getvalue()
         try:
@@ -518,7 +552,14 @@ def get_shared_bytes(uploaded_file, shared_path):
         try:
             return shared_path.read_bytes(), False
         except Exception:
-            return None, False
+            pass
+    content = fetch_shared_from_github(shared_path)
+    if content is not None:
+        try:
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content, False
     return None, False
 
 def load_section_from_xl(xl, required_cols, required=True):
