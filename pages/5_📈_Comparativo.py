@@ -57,11 +57,12 @@ CSS_TEXT = """
     .kpi-icon.orange { background: #fdf0e0; }
     .kpi-label { color: #000000; font-size: 13px; font-weight: 700; }
     .kpi-value { color: #000000; font-size: 26px; font-weight: 800; margin-top: 4px; }
-    .kpi-delta { font-size: 13px; font-weight: 700; margin-top: 8px; }
-    .kpi-delta .sub { color: #000000; font-weight: 700; }
-    .positive { color: #208653; }
-    .negative { color: #d64545; }
-    .neutral { color: #000000; font-weight: 700; }
+    .kpi-delta-line { margin-top: 8px; }
+    .kpi-delta-line .kpi-delta { font-size: 13px; font-weight: 700; }
+    .kpi-delta-line .sub { font-size: 13px; font-weight: 700; margin-top: 2px; }
+    .kpi-delta-line.positive, .kpi-delta-line.positive .kpi-delta, .kpi-delta-line.positive .sub { color: #208653; }
+    .kpi-delta-line.negative, .kpi-delta-line.negative .kpi-delta, .kpi-delta-line.negative .sub { color: #d64545; }
+    .kpi-delta-line.neutral, .kpi-delta-line.neutral .kpi-delta, .kpi-delta-line.neutral .sub { color: #000000; font-weight: 700; }
 
     .cmp-table-wrap {
         background: white; border-radius: 14px; overflow: hidden;
@@ -246,14 +247,20 @@ def intfmt(v):
 
 def delta_badge(v, is_money=False):
     if not hay_prev:
-        return '<span class="kpi-delta neutral">Sin datos de ' + str(cur_year - 1) + ' para comparar</span>'
+        return (
+            '<div class="kpi-delta-line neutral">'
+            f'<span class="kpi-delta">Sin datos de {cur_year - 1} para comparar</span>'
+            '</div>'
+        )
     cls = "positive" if v >= 0 else "negative"
     arrow = "▲" if v >= 0 else "▼"
     sign = "+" if v >= 0 else "−"
     body = money(abs(v))[1:] if is_money else intfmt(abs(v))
     return (
-        f'<span class="kpi-delta {cls}">{arrow} {sign} {body}</span>'
-        f'<div class="sub" style="margin-top:2px;">vs mismo período {cur_year - 1}</div>'
+        f'<div class="kpi-delta-line {cls}">'
+        f'<span class="kpi-delta">{arrow} {sign} {body}</span>'
+        f'<div class="sub">vs mismo período {cur_year - 1}</div>'
+        '</div>'
     )
 
 #  El archivo "Vs de ventas" trae, en cada fila, el ACUMULADO del mes hasta
