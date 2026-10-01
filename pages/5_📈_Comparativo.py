@@ -13,8 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("""
-<style>
+CSS_TEXT = """
     .stApp { background: #ffffff; }
     .block-container { max-width: 1300px; padding: 0 1.2rem 1.2rem; }
 
@@ -90,8 +89,14 @@ st.markdown("""
         .section { font-size: 17px; }
         .kpi-value { font-size: 22px; }
     }
-</style>
-""", unsafe_allow_html=True)
+
+    .filtro-row {
+        display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+        margin: -4px 0 4px;
+    }
+    .filtro-row > div[data-testid="stSelectbox"] { min-width: 220px; }
+"""
+st.markdown(f"<style>{CSS_TEXT}</style>", unsafe_allow_html=True)
 
 LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
 
@@ -186,17 +191,25 @@ if df.empty:
     st.error("Todavía no hay datos cargados para un día anterior a hoy.")
     st.stop()
 
-# Período actual: el mes/año del último día con datos cargados — a diferencia
-# de Venta diaria (que todavía tiene "septiembre 2026" fijo en el código),
-# acá lo calculamos solo para que la pestaña siga funcionando sin tocar nada
-# cuando cambie el mes.
-last_date = df["date"].max()
-cur_year, cur_month = last_date.year, last_date.month
+# Filtro de fecha: por default se muestra el último día cerrado cargado,
+# pero se puede elegir cualquier otro día del archivo para ver el acumulado
+# "a esa fecha" (el archivo trae un acumulado del mes por cada fila/día).
+available_dates = sorted(df["date"].unique(), reverse=True)
+date_labels = [pd.Timestamp(d).strftime("%d-%m-%Y") for d in available_dates]
+label_to_date = {lbl: pd.Timestamp(d) for lbl, d in zip(date_labels, available_dates)}
 
-current = df[
-    (df["date"].dt.year == cur_year) & (df["date"].dt.month == cur_month)
-].sort_values("date")
-n = len(current)  # días con datos cargados este mes (acumulado al día n)
+st.markdown('<div class="filtro-row">', unsafe_allow_html=True)
+selected_label = st.selectbox(
+    "📅 Fecha de corte (acumulado hasta ese día)",
+    date_labels,
+    index=0,
+    key="comparativo_fecha_corte",
+)
+st.markdown('</div>', unsafe_allow_html=True)
+
+last_date = label_to_date[selected_label]
+cur_year, cur_month = last_date.year, last_date.month
+n = last_date.day  # día del mes al que se corta (p.ej. 30 = acumulado al 30)
 
 prev = df[
     (df["date"].dt.year == cur_year - 1) &
@@ -245,10 +258,10 @@ def delta_badge(v, is_money=False):
 
 #  El archivo "Vs de ventas" trae, en cada fila, el ACUMULADO del mes hasta
 #  esa fecha (no el valor de ese día puntual) — por eso NO hay que sumar
-#  todas las filas del mes (eso contaba el acumulado una y otra vez, de ahí
+#  varias filas del mes (eso contaba el acumulado una y otra vez, de ahí
 #  salía el 30.360 en vez de 2.086 pedidos). El total del mes-a-la-fecha es
-#  directamente el valor de la última fila cargada.
-last_row = current.sort_values("date").iloc[-1]
+#  directamente el valor de la fila de la fecha elegida en el filtro.
+last_row = df[df["date"] == last_date].iloc[0]
 pedidos_cur = last_row["orders"]
 venta_cur = last_row["ecommerce_tax"]
 unidades_cur = last_row["units"]
@@ -268,43 +281,11 @@ d_venta = venta_cur - venta_prev
 d_unidades = unidades_cur - unidades_prev
 d_ticket = ticket_cur - ticket_prev
 
-# ---------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------
-
-if LOGO_FILE.exists():
-    logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
-    brand_html = (
-        f'<img src="data:image/png;base64,{logo_b64}" '
-        'style="height:50px;max-width:290px;object-fit:contain;">'
-    )
-else:
-    brand_html = '<div class="hero-brand">Más<span>Online</span></div>'
-
-st.markdown(f"""
-<div class="hero">
-  <div>
-    {brand_html}
-    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
-  </div>
-  <div class="periodo-badge">
-    <div class="lbl">📅 PERÍODO</div>
-    <div class="val">{mes_nombre} {cur_year}</div>
-    <small>Datos acumulados al {last_date.strftime('%d/%m')}</small>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------
-# Resultados del período
-# ---------------------------------------------------------------------
-
-st.markdown(
-    '<div class="section">Resultados del período</div>'
-    '<div class="section-desc">Indicadores principales del canal ecommerce — '
-    f'datos tomados al <b>{last_date.strftime("%d-%m-%Y")}</b>.</div>',
-    unsafe_allow_html=True
-)
+col_prev_label = f"{mes_nombre} {cur_year - 1}" if hay_prev else f"{mes_nombre} {cur_year - 1} (sin datos)"
+prev_pedidos_txt = intfmt(pedidos_prev) if hay_prev else "—"
+prev_venta_txt = money(venta_prev) if hay_prev else "—"
+prev_unidades_txt = intfmt(unidades_prev) if hay_prev else "—"
+prev_ticket_txt = money(ticket_prev) if hay_prev else "—"
 
 kpis_html = f"""
 <div class="kpi-row">
@@ -334,24 +315,6 @@ kpis_html = f"""
   </div>
 </div>
 """
-st.markdown(kpis_html, unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------
-# Comparativo vs año anterior
-# ---------------------------------------------------------------------
-
-st.markdown(
-    '<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>'
-    f'<div class="section-desc">Datos acumulados al <b>{last_date.strftime("%d-%m-%Y")}</b>. '
-    'Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>',
-    unsafe_allow_html=True
-)
-
-col_prev_label = f"{mes_nombre} {cur_year - 1}" if hay_prev else f"{mes_nombre} {cur_year - 1} (sin datos)"
-prev_pedidos_txt = intfmt(pedidos_prev) if hay_prev else "—"
-prev_venta_txt = money(venta_prev) if hay_prev else "—"
-prev_unidades_txt = intfmt(unidades_prev) if hay_prev else "—"
-prev_ticket_txt = money(ticket_prev) if hay_prev else "—"
 
 table_html = f"""
 <div class="cmp-table-wrap">
@@ -374,12 +337,128 @@ table_html = f"""
 </div>
 </div>
 """
-st.markdown(table_html, unsafe_allow_html=True)
 
-st.markdown(
+footnote_html = (
     '<div style="color:#000000;font-size:11px;margin-top:14px;">'
     f'"{mes_nombre} {cur_year - 1}" toma el acumulado hasta el mismo día {n} del mes '
     '(la misma cantidad de días que ya pasaron este mes), para que la comparación sea pareja.'
-    '</div>',
+    '</div>'
+)
+
+# ---------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------
+
+if LOGO_FILE.exists():
+    logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
+    brand_html = (
+        f'<img src="data:image/png;base64,{logo_b64}" '
+        'style="height:50px;max-width:290px;object-fit:contain;">'
+    )
+else:
+    brand_html = '<div class="hero-brand">Más<span>Online</span></div>'
+
+st.markdown(f"""
+<div class="hero">
+  <div>
+    {brand_html}
+    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
+  </div>
+  <div class="periodo-badge">
+    <div class="lbl">📅 PERÍODO</div>
+    <div class="val">{mes_nombre} {cur_year}</div>
+    <small>Datos acumulados al {last_date.strftime('%d/%m')}</small>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# HTML descargable: copia independiente de esta pestaña (fecha elegida),
+# sin depender de Streamlit — se puede abrir en cualquier navegador o
+# mandar por mail/WhatsApp.
+# ---------------------------------------------------------------------
+
+def build_standalone_html():
+    if LOGO_FILE.exists():
+        html_logo = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            'style="height:50px;max-width:290px;object-fit:contain;">'
+        )
+    else:
+        html_logo = '<div class="hero-brand">Más<span>Online</span></div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MásOnline | Comparativo</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, sans-serif; }}
+.block-container {{ max-width:1300px; margin:0 auto; padding:24px 20px 40px; }}
+{CSS_TEXT}
+</style>
+</head>
+<body>
+<div class="block-container">
+
+<div class="hero">
+  <div>
+    {html_logo}
+    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
+  </div>
+  <div class="periodo-badge">
+    <div class="lbl">📅 PERÍODO</div>
+    <div class="val">{mes_nombre} {cur_year}</div>
+    <small>Datos acumulados al {last_date.strftime('%d/%m')}</small>
+  </div>
+</div>
+
+<div class="section">Resultados del período</div>
+<div class="section-desc">Indicadores principales del canal ecommerce — datos tomados al <b>{last_date.strftime('%d-%m-%Y')}</b>.</div>
+{kpis_html}
+
+<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
+<div class="section-desc">Datos acumulados al <b>{last_date.strftime('%d-%m-%Y')}</b>. Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>
+{table_html}
+{footnote_html}
+
+</div>
+</body>
+</html>
+"""
+
+st.download_button(
+    "⬇️ Descargar comparativo HTML",
+    data=build_standalone_html(),
+    file_name=f"comparativo_masonline_{last_date.strftime('%Y-%m-%d')}.html",
+    mime="text/html",
+    use_container_width=False,
+)
+
+# ---------------------------------------------------------------------
+# Resultados del período
+# ---------------------------------------------------------------------
+
+st.markdown(
+    '<div class="section">Resultados del período</div>'
+    '<div class="section-desc">Indicadores principales del canal ecommerce — '
+    f'datos tomados al <b>{last_date.strftime("%d-%m-%Y")}</b>.</div>',
     unsafe_allow_html=True
 )
+st.markdown(kpis_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Comparativo vs año anterior
+# ---------------------------------------------------------------------
+
+st.markdown(
+    '<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>'
+    f'<div class="section-desc">Datos acumulados al <b>{last_date.strftime("%d-%m-%Y")}</b>. '
+    'Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>',
+    unsafe_allow_html=True
+)
+st.markdown(table_html, unsafe_allow_html=True)
+
+st.markdown(footnote_html, unsafe_allow_html=True)
