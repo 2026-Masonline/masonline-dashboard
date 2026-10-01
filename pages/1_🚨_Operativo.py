@@ -197,6 +197,21 @@ def get_col_ci(df, name):
             return df[c]
     return pd.Series([""] * len(df), index=df.index)
 
+def get_col_ci_first(df, names):
+    """Como get_col_ci, pero prueba una lista de nombres posibles en orden y
+    devuelve la primera columna que exista de verdad (para cuando el mismo
+    dato viene con un nombre distinto según el archivo, ej. 'ordenes' en el
+    archivo nuevo de la tarjeta ON-TIME vs 'Pedifod' en el viejo Reporte
+    diario)."""
+    if df is None:
+        return pd.Series([], dtype=object)
+    lower_cols = {str(c).strip().lower(): c for c in df.columns}
+    for name in names:
+        key = name.lower()
+        if key in lower_cols:
+            return df[lower_cols[key]]
+    return pd.Series([""] * len(df), index=df.index)
+
 def norm_txt(v):
     if pd.isna(v):
         return ""
@@ -1862,7 +1877,14 @@ if df_reclamos_raw is None:
     # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
     # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
     df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
-df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
+xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes)) if ontime_bytes is not None else None
+# Archivo nuevo de la tarjeta "ON-TIME" (ej. "Ot_Preparacion.xlsx"): trae
+# Tienda, Formato, ordenes, retiro, delivery, entrga, fuera, on time. Si
+# todavía no se subió nada ahí, probamos con la hoja vieja del Reporte
+# diario (Pedifod/ONTIME), por si queda algo cargado de antes.
+df_ontime_raw = load_section_from_xl(xl_ontime, ["Tienda", "ordenes", "fuera", "on time"], required=False)
+if df_ontime_raw is None:
+    df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"], required=False)
 xl_fillrate = safe_open_excel(io.BytesIO(fillrate_bytes)) if fillrate_bytes is not None else None
 # Archivo nuevo "Faltantes por depósito" (missing-item-by-wh), tarjeta
 # "FILL RATE" de la pestaña app: trae unidades pickeadas/faltantes/
@@ -1889,7 +1911,6 @@ if df_picker_raw is None:
     # Productividad Pickers (confusión entendible, las dos tarjetas están
     # una al lado de la otra), lo tomamos igual desde acá, porque es el que
     # alimenta "Tiempo promedio de preparación por tienda".
-    xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes)) if ontime_bytes is not None else None
     df_picker_raw = load_section_from_xl(xl_ontime, _PICKERS_COLS, required=False)
 if df_picker_raw is None:
     # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
@@ -2011,22 +2032,26 @@ if reclamos is not None:
 ontime_prepa = None
 if df_ontime_raw is not None:
     d = df_ontime_raw.copy()
-    for c in ["Pedifod", "Retiro", "Pickup", "Delivery", "Fuera"]:
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
-        else:
-            d[c] = 0
-    d["Tienda"] = d["Tienda"].apply(norm_txt)
+    d["Tienda"] = get_col_ci(d, "Tienda").apply(norm_txt)
     d = d[~d["Tienda"].str.upper().isin(["TOTAL", "TOTA"])]
-    d = d.rename(columns={"Pedifod": "Pedidos"})
+    d["Formato"] = get_col_ci(d, "Formato").apply(norm_txt)
+
+    # "Pedidos" (total de órdenes de la tienda): el archivo nuevo de la
+    # tarjeta ON-TIME lo llama "ordenes"; el viejo Reporte diario lo
+    # llamaba "Pedifod".
+    d["Pedidos"] = pd.to_numeric(
+        get_col_ci_first(d, ["ordenes", "Pedifod"]), errors="coerce"
+    ).fillna(0)
+
+    # "Fuera" (pedidos fuera de horario): mismo nombre en los dos formatos.
+    d["Fuera"] = pd.to_numeric(get_col_ci(d, "Fuera"), errors="coerce").fillna(0)
 
     # ONTIME puede venir como número (fracción 0-1 o ya en %) o como texto con
     # '%' en notación estándar (ej. "50.0%") — algunos días el export cambia
-    # el formato, así que probamos ambas lecturas con ar_pct.
-    if "ONTIME" in d.columns:
-        ontime_parsed = d["ONTIME"].apply(ar_pct)
-    else:
-        ontime_parsed = pd.Series([None] * len(d), index=d.index)
+    # el formato, así que probamos ambas lecturas con ar_pct. El archivo
+    # nuevo de la tarjeta ON-TIME la llama "on time"; el viejo Reporte
+    # diario la llamaba "ONTIME".
+    ontime_parsed = get_col_ci_first(d, ["on time", "ONTIME"]).apply(ar_pct)
     ontime_raw = ontime_parsed.astype(float).fillna(0.0)
     valid_max = ontime_parsed.dropna().max() if ontime_parsed.notna().any() else 0
     d["OntimePct"] = ontime_raw * 100 if (pd.notna(valid_max) and valid_max <= 1.5) else ontime_raw
