@@ -1,7 +1,7 @@
 import streamlit as st
 
 # La carga de reportes se mudó a la pestaña "Cargar Reportes" del menú de
-# la izquierda (archivo pages/00_📤_Cargar_Reportes.py) — ahí sí aparece
+# la izquierda (archivo pages/0_📤_Cargar_Reportes.py) — ahí sí aparece
 # como un ítem más del menú, cosa que esta página "app" (la principal) no
 # hace nunca en Streamlit. Esta pantalla solo te manda para allá.
 
@@ -44,7 +44,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 try:
-    st.page_link("pages/00_📤_Cargar_Reportes.py", label="Ir a Cargar Reportes", icon="📤")
+    st.page_link("pages/0_📤_Cargar_Reportes.py", label="Ir a Cargar Reportes", icon="📤")
 except Exception:
     pass
 
@@ -52,6 +52,6 @@ except Exception:
 # tocar nada — si falla (versión vieja), no pasa nada, ya le dejamos el
 # link de arriba.
 try:
-    st.switch_page("pages/00_📤_Cargar_Reportes.py")
+    st.switch_page("pages/0_📤_Cargar_Reportes.py")
 except Exception:
     pass
