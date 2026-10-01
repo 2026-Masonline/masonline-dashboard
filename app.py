@@ -239,26 +239,123 @@ SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
 SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
 
-def save_shared_bytes(uploaded_file, shared_path):
-    """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
-    compartida para que las demás pestañas lo lean. Devuelve True si había
-    algo (nuevo o ya guardado antes)."""
-    if uploaded_file is not None:
+def _github_headers():
+    token = st.secrets.get("GITHUB_TOKEN")
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+def fetch_shared_from_github(shared_path):
+    """Trae de GitHub la última copia guardada de este reporte (para cuando
+    el servidor se reinició y la copia local temporal ya no está)."""
+    headers = _github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    import json
+    import base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    try:
+        request_get = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(request_get, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return base64.b64decode(data["content"])
+    except Exception:
+        return None
+
+def save_bytes_to_github(shared_path, content_bytes, label):
+    """Guarda este reporte en GitHub (carpeta shared_uploads/) para que
+    quede disponible para siempre, igual que los datos de Venta, y no haga
+    falta volver a subirlo cada vez que la app se reinicia."""
+    headers = _github_headers()
+    if not headers:
+        return False
+    import urllib.request
+    import urllib.error
+    import json
+    import base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+    try:
+        sha = None
+        request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
         try:
-            shared_path.write_bytes(uploaded_file.getvalue())
+            with urllib.request.urlopen(request_get, timeout=30) as response:
+                sha = json.loads(response.read().decode("utf-8"))["sha"]
+        except urllib.error.HTTPError as e_get:
+            if e_get.code != 404:
+                raise
+            # 404 = todavía no existe ese archivo en el repo; se crea solo,
+            # sin mandar "sha" en el payload.
+
+        payload = {
+            "message": f"Actualizar reporte - {label}",
+            "content": base64.b64encode(content_bytes).decode("utf-8"),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+
+        request_put = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urllib.request.urlopen(request_put, timeout=30) as response:
+            response.read()
+        return True
+    except Exception:
+        return False
+
+def save_shared_bytes(uploaded_file, shared_path, label="reporte"):
+    """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
+    compartida (para esta misma sesión) Y lo sube a GitHub, para que quede
+    guardado para siempre y no haya que volver a subirlo cada vez que la
+    app se reinicia o se actualiza — igual que ya pasa con los datos de
+    Venta. Si no se subió nada nuevo, usa la copia local si existe, o si no
+    la trae de GitHub. Devuelve True si hay algo disponible (nuevo, local o
+    de GitHub)."""
+    if uploaded_file is not None:
+        content = uploaded_file.getvalue()
+        try:
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        save_bytes_to_github(shared_path, content, label)
+        return True
+
+    if shared_path.exists():
+        return True
+
+    content = fetch_shared_from_github(shared_path)
+    if content is not None:
+        try:
+            shared_path.write_bytes(content)
         except Exception:
             pass
         return True
-    return shared_path.exists()
 
-faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
-pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH)
-pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH)
-reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH)
-ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH)
-delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH)
-fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH)
-vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH)
+    return False
+
+faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH, "Faltantes")
+pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH, "Pickers")
+reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH, "Reclamos Operativos")
+ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time")
+delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH, "Delivery")
+fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate")
+vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH, "Comparativo (vs ventas)")
 
 if pedidos_guardado or faltantes_guardado:
     st.markdown(
