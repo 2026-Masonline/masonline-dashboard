@@ -243,14 +243,24 @@ def delta_badge(v, is_money=False):
         f'<div class="sub" style="margin-top:2px;">vs mismo período {cur_year - 1}</div>'
     )
 
-pedidos_cur = current["orders"].sum()
-venta_cur = current["ecommerce_tax"].sum()
-unidades_cur = current["units"].sum()
+#  El archivo "Vs de ventas" trae, en cada fila, el ACUMULADO del mes hasta
+#  esa fecha (no el valor de ese día puntual) — por eso NO hay que sumar
+#  todas las filas del mes (eso contaba el acumulado una y otra vez, de ahí
+#  salía el 30.360 en vez de 2.086 pedidos). El total del mes-a-la-fecha es
+#  directamente el valor de la última fila cargada.
+last_row = current.sort_values("date").iloc[-1]
+pedidos_cur = last_row["orders"]
+venta_cur = last_row["ecommerce_tax"]
+unidades_cur = last_row["units"]
 ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
 
-pedidos_prev = prev["orders"].sum() if hay_prev else 0
-venta_prev = prev["ecommerce_tax"].sum() if hay_prev else 0
-unidades_prev = prev["units"].sum() if hay_prev else 0
+if hay_prev:
+    prev_last_row = prev.sort_values("date").iloc[-1]
+    pedidos_prev = prev_last_row["orders"]
+    venta_prev = prev_last_row["ecommerce_tax"]
+    unidades_prev = prev_last_row["units"]
+else:
+    pedidos_prev = venta_prev = unidades_prev = 0
 ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
 
 d_pedidos = pedidos_cur - pedidos_prev
@@ -291,7 +301,8 @@ st.markdown(f"""
 
 st.markdown(
     '<div class="section">Resultados del período</div>'
-    '<div class="section-desc">Indicadores principales del canal ecommerce.</div>',
+    '<div class="section-desc">Indicadores principales del canal ecommerce — '
+    f'datos tomados al <b>{last_date.strftime("%d-%m-%Y")}</b>.</div>',
     unsafe_allow_html=True
 )
 
@@ -331,7 +342,7 @@ st.markdown(kpis_html, unsafe_allow_html=True)
 
 st.markdown(
     '<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>'
-    f'<div class="section-desc">Datos acumulados al {last_date.strftime("%d/%m")}. '
+    f'<div class="section-desc">Datos acumulados al <b>{last_date.strftime("%d-%m-%Y")}</b>. '
     'Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>',
     unsafe_allow_html=True
 )
@@ -367,7 +378,7 @@ st.markdown(table_html, unsafe_allow_html=True)
 
 st.markdown(
     '<div style="color:#9aa1ab;font-size:11px;margin-top:14px;">'
-    f'"{mes_nombre} {cur_year - 1}" toma los mismos primeros {n} días del mes '
+    f'"{mes_nombre} {cur_year - 1}" toma el acumulado hasta el mismo día {n} del mes '
     '(la misma cantidad de días que ya pasaron este mes), para que la comparación sea pareja.'
     '</div>',
     unsafe_allow_html=True
