@@ -1016,6 +1016,52 @@ def fillrate_wh_df(df_fillrate_wh_raw):
     )
     return fr_df
 
+def fillrate_tiendas_df(df_fr_tiendas_raw):
+    """Arma el mismo esquema que usa el resto del dashboard para Fill Rate
+    (Tienda/Unidades/SinSustituto/ConSustituto/MontoFaltante/FRPct) a partir
+    del archivo nuevo de la tarjeta FILL RATE (hoja con columnas Tiendas /
+    Unidades perdidas / No entregados / Remplazos / Monto entregado / Fill
+    rate). Cada celda viene como texto con el valor + flecha + variación vs
+    el mes anterior (ej. '36.950 ▲ 10.2%vs MA') y el nombre de tienda trae un
+    '▾' de desplegable al lado — usamos ar_number/ar_pct (que ya saben leer
+    ese formato) y solo nos quedamos con el valor, no con la variación.
+    'Unidades perdidas' es en realidad el total de unidades pedidas (la base
+    sobre la que se calculan los % de 'No entregados' y 'Remplazos', no
+    unidades perdidas en sí). 'Monto entregado' es la facturación de la
+    tienda, no un monto de lo faltante — este archivo no trae esa columna,
+    así que MontoFaltante queda vacía y se oculta sola en el detalle, igual
+    que con 'Faltantes por depósito'. El % de Fill Rate se toma directo de
+    la columna 'Fill rate' del archivo (no se recalcula), para que coincida
+    siempre con lo que Emi ve ahí."""
+    d = df_fr_tiendas_raw.copy()
+
+    def _clean_tienda(v):
+        s = norm_txt(v)
+        return re.sub(r"[▾▼▲]+\s*$", "", s).strip()
+
+    d["Tienda"] = get_col_ci(d, "Tiendas").apply(_clean_tienda)
+    d = d[~d["Tienda"].str.upper().isin(["TOTAL", "TOTA", ""])]
+    if not len(d):
+        return None
+
+    d["Unidades"] = get_col_ci(d, "Unidades perdidas").apply(ar_number)
+    d["SinSustituto"] = get_col_ci(d, "No entregados").apply(ar_number)
+    d["ConSustituto"] = get_col_ci(d, "Remplazos").apply(ar_number)
+    d["FRPct"] = get_col_ci(d, "Fill rate").apply(ar_pct)
+    d["FRPct"] = d["FRPct"].fillna(0.0)
+
+    # Puede venir más de una fila por tienda (ej. si el export repite algún
+    # nombre) — se suman unidades y se promedia el % declarado.
+    fr_df = d.groupby("Tienda", as_index=False).agg(
+        Unidades=("Unidades", "sum"), SinSustituto=("SinSustituto", "sum"),
+        ConSustituto=("ConSustituto", "sum"), FRPct=("FRPct", "mean")
+    )
+    fr_df["MontoFaltante"] = np.nan
+    fr_df[["Sev", "SevLabel"]] = fr_df.apply(
+        lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
+    )
+    return fr_df
+
 def load_cancelados_from_xl(xl, required=True):
     """Carga Pedidos cancelados. Cuando la hoja no trae la columna 'Total $'
     (pasa algunos días), tiene exactamente las mismas columnas base que
@@ -1707,16 +1753,27 @@ df_ontime_raw = load_section_from_xl(xl_ontime, ["Tienda", "ordenes", "fuera", "
 if df_ontime_raw is None:
     df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"], required=False)
 xl_fillrate = safe_open_excel(io.BytesIO(fillrate_bytes)) if fillrate_bytes is not None else None
-# Archivo nuevo "Faltantes por depósito" (missing-item-by-wh), tarjeta
-# "FILL RATE" de la pestaña app: trae unidades pickeadas/faltantes/
-# sustituidas por depósito. Si está, lo usamos en vez de la hoja de FR del
-# Reporte diario (required=False porque puede no estar todavía).
+# Archivo actual de la tarjeta "FILL RATE": una fila por tienda con Tiendas /
+# Unidades perdidas / No entregados / Remplazos / Monto entregado / Fill
+# rate (texto con flechas y variación vs el mes anterior en cada celda).
+df_fr_tiendas_raw = load_section_from_xl(
+    xl_fillrate,
+    ["Tiendas", "Unidades perdidas", "No entregados", "Remplazos", "Fill rate"],
+    required=False
+)
+# Formato viejo "Faltantes por depósito" (missing-item-by-wh): trae unidades
+# pickeadas/faltantes/sustituidas por depósito. Solo se usa si en la tarjeta
+# FILL RATE no se subió el archivo nuevo de arriba.
 df_fillrate_wh_raw = load_section_from_xl(
     xl_fillrate,
     ["warehouseName", "totalPickedQuantity", "totalMissingQuantity", "totalSubstitutedQuantity"],
     required=False
+) if df_fr_tiendas_raw is None else None
+df_fr_raw = (
+    load_fr_from_xl(xl_reporte)
+    if df_fr_tiendas_raw is None and df_fillrate_wh_raw is None
+    else None
 )
-df_fr_raw = load_fr_from_xl(xl_reporte) if df_fillrate_wh_raw is None else None
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
 xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
@@ -1885,7 +1942,9 @@ if df_ontime_raw is not None:
 # ---- Fill Rate ----
 fill_rate = None
 fr_total_declared = None
-if df_fillrate_wh_raw is not None:
+if df_fr_tiendas_raw is not None:
+    fill_rate = fillrate_tiendas_df(df_fr_tiendas_raw)
+elif df_fillrate_wh_raw is not None:
     fill_rate = fillrate_wh_df(df_fillrate_wh_raw)
 elif df_fr_raw is not None:
     d = df_fr_raw.copy()
