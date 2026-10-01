@@ -58,10 +58,10 @@ CSS_TEXT = """
     .kpi-label { color: #000000; font-size: 13px; font-weight: 700; }
     .kpi-value { color: #000000; font-size: 26px; font-weight: 800; margin-top: 4px; }
     .kpi-delta { font-size: 13px; font-weight: 700; margin-top: 8px; }
-    .kpi-delta .sub { color: #000000; font-weight: 400; }
+    .kpi-delta .sub { color: #000000; font-weight: 700; }
     .positive { color: #208653; }
     .negative { color: #d64545; }
-    .neutral { color: #000000; font-weight: 400; }
+    .neutral { color: #000000; font-weight: 700; }
 
     .cmp-table-wrap {
         background: white; border-radius: 14px; overflow: hidden;
