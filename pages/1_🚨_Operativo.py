@@ -651,19 +651,12 @@ FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Producto", "SKU", "CantidadFaltante
 # de Google Sheets que Faltantes (una hoja aparte, "HistorialPickers"), para
 # poder armar la evolución día a día en la pestaña "Productividad Pickers".
 # TiempoPromedioMin (minutos por pedido, "orderAverage" del archivo de
-# Pickers) se agregó para poder calcular el % on time preparación acumulado
-# del mes contra PICKERS_ONTIME_OBJETIVO_MIN — filas viejas de la planilla
-# que no lo tienen quedan vacías en esa columna y simplemente no entran en
-# ese cálculo.
+# Pickers) se guarda ahí para que la pestaña "Productividad Pickers" pueda
+# calcular su propio % on time preparación acumulado del mes.
 PICKER_LOG_HEADERS = [
     "Fecha", "Picker", "Deposito", "Pedidos", "Unidades",
     "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "TiempoPromedioMin"
 ]
-
-# Meta de minutos por pedido para considerar un pedido "a tiempo" en el % on
-# time preparación calculado a partir del archivo de Pickers (Emi la definió
-# en 15 minutos — el archivo de Pickers no trae una meta propia).
-PICKERS_ONTIME_OBJETIVO_MIN = 15
 
 # Guarda el motivo puntual por el que no se pudo conectar (para mostrarlo en
 # pantalla mientras estamos activando esto por primera vez). No es sensible
@@ -869,28 +862,6 @@ def replace_pickers_meses_en_sheet(pickers_df):
         return True
     except Exception:
         return False
-
-@st.cache_data(ttl=180, show_spinner=False)
-def load_pickers_log_ontime():
-    """Lee el historial acumulado de Pickers (hoja 'HistorialPickers',
-    cacheado 3 minutos) para calcular el % on time preparación acumulado del
-    mes. None = todavía no conectado. DataFrame vacío = conectado pero sin
-    filas cargadas aún."""
-    ws = _pickers_log_ws()
-    if ws is None:
-        return None
-    try:
-        records = ws.get_all_records()
-    except Exception:
-        return None
-    if not records:
-        return pd.DataFrame(columns=PICKER_LOG_HEADERS)
-    df = pd.DataFrame(records)
-    df["FechaDt"] = pd.to_datetime(df.get("Fecha"), format="%d/%m/%Y", errors="coerce")
-    df["Tienda"] = df.get("Deposito", "").apply(warehouse_to_tienda)
-    df["Pedidos"] = pd.to_numeric(df.get("Pedidos"), errors="coerce")
-    df["TiempoPromedioMin"] = pd.to_numeric(df.get("TiempoPromedioMin"), errors="coerce")
-    return df
 
 @st.cache_data(ttl=180, show_spinner=False)
 def load_faltantes_log():
@@ -1378,135 +1349,6 @@ def html_doc_prepa(prepa_f):
     b = prepa_bundle(prepa_f)
     return b["html_doc"] if b else None
 
-def tiempo_prep_bundle(pickers_f):
-    """Tiempo promedio de preparación por tienda, a partir de 'orderAverage'
-    del archivo de Pickers (tiempo promedio por pedido, por picker). No es
-    un % on time — el archivo no trae ninguna meta de minutos definida —
-    es un promedio ponderado por cantidad de pedidos, para ver qué tiendas
-    tardan más en armar los pedidos."""
-    if pickers_f is None or not len(pickers_f):
-        return None
-    d = pickers_f.dropna(subset=["TiempoPromedioPedidoMin"])
-    d = d[d["Pedidos"] > 0]
-    if not len(d):
-        return None
-
-    agg = (
-        d.groupby("Tienda")
-        .apply(lambda g: pd.Series({
-            "Pedidos": g["Pedidos"].sum(),
-            "TiempoPromedioMin": (g["TiempoPromedioPedidoMin"] * g["Pedidos"]).sum() / g["Pedidos"].sum(),
-        }))
-        .reset_index()
-        .sort_values("TiempoPromedioMin", ascending=False)
-    )
-    agg["Pedidos"] = agg["Pedidos"].astype(int)
-
-    ped_tot = int(agg["Pedidos"].sum())
-    tiempo_prom_gral = (agg["TiempoPromedioMin"] * agg["Pedidos"]).sum() / ped_tot if ped_tot else 0
-
-    show = agg.copy()
-    show["Tiempo promedio"] = show["TiempoPromedioMin"].apply(fmt_minutos)
-    detail_cols = ["Tienda", "Pedidos", "Tiempo promedio"]
-
-    top10 = show.head(10)[detail_cols]
-    top10_html = table_html(top10)
-    resumen_html = table_html(show[detail_cols])
-
-    body = (
-        f'<div class="resumen-title">Promedio general — {fmt_minutos(tiempo_prom_gral)} por pedido '
-        f'({ped_tot} pedidos)</div>'
-        '<div class="resumen-title" style="margin-top:18px;">Top 10 tiendas más lentas</div>' + top10_html +
-        '<div class="resumen-title" style="margin-top:18px;">Detalle completo por tienda</div>' + resumen_html
-    )
-    html_doc = export_section_html(
-        "⏱️ Tiempo promedio de preparación por tienda",
-        "Tiempo promedio que tarda cada tienda en armar un pedido, según el archivo de Pickers (columna 'orderAverage').",
-        body
-    )
-    return {
-        "show": show, "detail_cols": detail_cols, "top10_html": top10_html,
-        "ped_tot": ped_tot, "tiempo_prom_gral": tiempo_prom_gral,
-        "html_doc": html_doc, "body": body,
-    }
-
-def html_doc_tiempo_prep(pickers_f):
-    b = tiempo_prep_bundle(pickers_f)
-    return b["html_doc"] if b else None
-
-def pickers_ontime_bundle():
-    """% on time preparación acumulado del mes en curso, a partir del
-    historial de Pickers en Google Sheets (hoja 'HistorialPickers'), contra
-    la meta de PICKERS_ONTIME_OBJETIVO_MIN minutos por pedido. El archivo de
-    Pickers no trae el tiempo de cada pedido individual — cada fila es un
-    picker en un día, con el promedio de sus pedidos de ese día — así que
-    consideramos "a tiempo" a todos los pedidos de esa fila cuando el
-    promedio del día quedó por debajo de la meta, ponderando por la cantidad
-    de pedidos de esa fila. A diferencia de 'Tiempo promedio de preparación
-    por tienda' (que solo mira el último archivo subido), esto es acumulado
-    desde el día 1 del mes."""
-    log = load_pickers_log_ontime()
-    if log is None or not len(log):
-        return None
-    hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-    mes_inicio = pd.Timestamp(year=hoy.year, month=hoy.month, day=1)
-    d = log.dropna(subset=["FechaDt", "Pedidos", "TiempoPromedioMin"])
-    d = d[(d["FechaDt"] >= mes_inicio) & (d["Pedidos"] > 0)]
-    d = d[d["Tienda"].apply(norm_txt) != ""]
-    if not len(d):
-        return None
-
-    d = d.copy()
-    d["EnTiempo"] = d["TiempoPromedioMin"] <= PICKERS_ONTIME_OBJETIVO_MIN
-    d["PedidosOnTime"] = np.where(d["EnTiempo"], d["Pedidos"], 0)
-
-    agg = d.groupby("Tienda", as_index=False).agg(
-        Pedidos=("Pedidos", "sum"), PedidosOnTime=("PedidosOnTime", "sum")
-    )
-    agg["Fuera"] = agg["Pedidos"] - agg["PedidosOnTime"]
-    agg["OntimePct"] = 100 * agg["PedidosOnTime"] / agg["Pedidos"]
-    sev = agg["OntimePct"].apply(sev_ontime)
-    agg["Sev"] = sev.apply(lambda t: t[0])
-    agg["SevLabel"] = sev.apply(lambda t: t[1])
-    agg = agg.sort_values("OntimePct")
-    agg["Pedidos"] = agg["Pedidos"].astype(int)
-    agg["Fuera"] = agg["Fuera"].astype(int)
-
-    ped_tot = int(agg["Pedidos"].sum())
-    fuera_tot = int(agg["Fuera"].sum())
-    ot_pct_tot = 100 * (ped_tot - fuera_tot) / ped_tot if ped_tot else 0
-
-    show = agg.copy()
-    show["Ontime %"] = show["OntimePct"].apply(pct1)
-    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-    show["Fuera de tiempo"] = show["Fuera"]
-    detail_cols = ["Tienda", "Pedidos", "Fuera de tiempo", "Ontime %", "Estado"]
-
-    peores = show[show["OntimePct"] < 95].head(10)
-    if len(peores):
-        peores_html = table_html(peores[detail_cols])
-    else:
-        peores_html = '<div class="empty-box">Ninguna tienda por debajo del 95% 🎉</div>'
-
-    body = (
-        f'<div class="resumen-title">Acumulado del mes — {ped_tot} pedidos · {fuera_tot} '
-        f'fuera de los {PICKERS_ONTIME_OBJETIVO_MIN} min · {pct1(ot_pct_tot)} on time</div>'
-        '<div class="resumen-title" style="margin-top:18px;">Top 10 tiendas con % on time &lt; 95%</div>'
-        + peores_html +
-        '<div class="resumen-title" style="margin-top:18px;">Detalle completo por tienda</div>'
-        + table_html(show[detail_cols])
-    )
-    html_doc = export_section_html(
-        "⏱️ On Time Preparación (Pickers) — acumulado del mes",
-        f"% de pedidos preparados en menos de {PICKERS_ONTIME_OBJETIVO_MIN} minutos, acumulado desde "
-        "el día 1 del mes según el historial de Pickers.",
-        body
-    )
-    return {
-        "show": show, "detail_cols": detail_cols, "ped_tot": ped_tot, "fuera_tot": fuera_tot,
-        "ot_pct_tot": ot_pct_tot, "peores_html": peores_html, "html_doc": html_doc, "body": body,
-    }
-
 FR_OBJETIVO = 98
 
 def _fr_prep_show(show):
@@ -1637,14 +1479,10 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
     (ej. por WhatsApp/mail al jefe)."""
     prepa_b = prepa_bundle(prepa_f)
     can_b = cancelados_bundle(can_f)
-    tprep_b = tiempo_prep_bundle(pickers_f)
-    ontime_pickers_b = pickers_ontime_bundle()
     sections = [
         ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
         ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
         ("⏱️ On Time Preparación", "Porcentaje de pedidos preparados en horario, por tienda.", prepa_b["body"] if prepa_b else None),
-        ("⏱️ Tiempo promedio de preparación por tienda", "Tiempo promedio que tarda cada tienda en armar un pedido, según el archivo de Pickers.", tprep_b["body"] if tprep_b else None),
-        ("⏱️ On Time Preparación (Pickers) — acumulado del mes", f"% de pedidos preparados en menos de {PICKERS_ONTIME_OBJETIVO_MIN} minutos, acumulado desde el día 1 del mes.", ontime_pickers_b["body"] if ontime_pickers_b else None),
         ("🧩 Fill Rate — con y sin sustituto", f"Todas las tiendas con venta — en rojo/amarillo, las que no llegan al objetivo ({FR_OBJETIVO}%).", _body_fr(fr_f)),
         ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
         ("📉 Faltantes ECOM", "Unidades faltantes por tienda y producto, según el Reporte de Faltantes mensual.", _body_faltantes(falt_f)),
@@ -1735,23 +1573,6 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
             "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
         )
         kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
-    if pickers_f is not None:
-        tprep_b = tiempo_prep_bundle(pickers_f)
-        if tprep_b is not None:
-            peor = tprep_b["show"].iloc[0]
-            card = kpi_card(
-                "Tiempo prep. promedio", fmt_minutos(tprep_b["tiempo_prom_gral"]),
-                f"Más lenta: {peor['Tienda']} ({peor['Tiempo promedio']})"
-            )
-            kpis.append(kpi_link_wrap(card, tprep_b["html_doc"], "operativo_tiempo_preparacion.html"))
-    ontime_pickers_b = pickers_ontime_bundle()
-    if ontime_pickers_b is not None:
-        card = kpi_card(
-            "On time prep. (Pickers)", pct1(ontime_pickers_b["ot_pct_tot"]),
-            f"Meta: {PICKERS_ONTIME_OBJETIVO_MIN} min · Mes en curso — {ontime_pickers_b['ped_tot']} pedidos",
-            "good" if ontime_pickers_b["ot_pct_tot"] >= 95 else ("warn" if ontime_pickers_b["ot_pct_tot"] >= 90 else "crit")
-        )
-        kpis.append(kpi_link_wrap(card, ontime_pickers_b["html_doc"], "operativo_ontime_pickers_mes.html"))
     if fr_f is not None and len(fr_f):
         if fr_total_declared is not None and not filtro_activo:
             # Usamos el % de FR que ya viene calculado en la fila "TOTAL" de la
@@ -2579,75 +2400,6 @@ if any_data_loaded:
     else:
         st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
 
-    # ---- Tiempo promedio de preparación por tienda (a partir de Pickers) ----
-    st.markdown(
-        '<div class="section">⏱️ Tiempo promedio de preparación por tienda</div>'
-        '<div class="section-desc">Tiempo promedio que tarda cada tienda en armar un pedido, '
-        'según el archivo de Pickers (no es un % on time — el archivo no trae una meta de minutos).</div>',
-        unsafe_allow_html=True
-    )
-    _tprep_b = tiempo_prep_bundle(pickers_f)
-    if _tprep_b is not None:
-        st.markdown(
-            f'<div class="resumen-title">Promedio general — {fmt_minutos(_tprep_b["tiempo_prom_gral"])} '
-            f'por pedido ({_tprep_b["ped_tot"]} pedidos)</div>',
-            unsafe_allow_html=True
-        )
-        st.markdown('<div class="resumen-title" style="margin-top:14px;">Top 10 tiendas más lentas</div>', unsafe_allow_html=True)
-        st.write(_tprep_b["top10_html"], unsafe_allow_html=True)
-
-        section_download_button(
-            _tprep_b["html_doc"], "operativo_tiempo_preparacion.html", "dl_tiempo_prep"
-        )
-    else:
-        st.markdown(
-            '<div class="empty-box">Subí el archivo de Pickers en la pestaña app '
-            '(tarjeta "PICKERS") para ver esta sección.</div>',
-            unsafe_allow_html=True
-        )
-
-    # ---- On Time Preparación (Pickers) — acumulado del mes ----
-    st.markdown(
-        '<div class="section">⏱️ On Time Preparación (Pickers) — acumulado del mes</div>'
-        f'<div class="section-desc">% de pedidos preparados en menos de {PICKERS_ONTIME_OBJETIVO_MIN} minutos, '
-        'acumulado desde el día 1 del mes, según el historial de archivos de Pickers ya subidos '
-        '(no depende solo del archivo de hoy).</div>',
-        unsafe_allow_html=True
-    )
-    _ontime_pk_b = pickers_ontime_bundle()
-    if _ontime_pk_b is not None:
-        mini_card = kpi_card(
-            "On time prep. (Pickers)", pct1(_ontime_pk_b["ot_pct_tot"]),
-            f"Meta: {PICKERS_ONTIME_OBJETIVO_MIN} min · {_ontime_pk_b['ped_tot']} pedidos · "
-            f"{_ontime_pk_b['fuera_tot']} fuera de tiempo — clickeá para bajar el HTML",
-            "good" if _ontime_pk_b["ot_pct_tot"] >= 95 else ("warn" if _ontime_pk_b["ot_pct_tot"] >= 90 else "crit")
-        )
-        st.markdown(
-            f'<div class="kpi-row" style="margin:4px 0 14px; grid-template-columns: minmax(230px, 340px);">'
-            f'{kpi_link_wrap(mini_card, _ontime_pk_b["html_doc"], "operativo_ontime_pickers_mes.html")}</div>',
-            unsafe_allow_html=True
-        )
-
-        st.markdown(
-            '<div class="resumen-title">Top 10 tiendas con % on time &lt; 95%</div>',
-            unsafe_allow_html=True
-        )
-        st.write(_ontime_pk_b["peores_html"], unsafe_allow_html=True)
-
-        st.markdown('<div class="resumen-title" style="margin-top:14px;">Detalle completo por tienda</div>', unsafe_allow_html=True)
-        with st.container(height=380):
-            st.write(table_html(_ontime_pk_b["show"][_ontime_pk_b["detail_cols"]]), unsafe_allow_html=True)
-
-        section_download_button(
-            _ontime_pk_b["html_doc"], "operativo_ontime_pickers_mes.html", "dl_ontime_pickers_mes"
-        )
-    else:
-        st.markdown(
-            '<div class="empty-box">Todavía no hay datos acumulados este mes — subí el archivo de '
-            'Pickers para que empiece a sumar al historial.</div>',
-            unsafe_allow_html=True
-        )
-
     # ---- Fill Rate ----
     fr_show_all = fr_f[fr_f["Unidades"] > 0] if fr_f is not None else None
     st.markdown(
@@ -2774,7 +2526,8 @@ if any_data_loaded:
     # ---- Ranking del mes — tiendas y productos con más faltantes (histórico acumulado) ----
     st.markdown(
         '<div class="section">📈 Ranking del mes — tiendas y productos con más faltantes</div>'
-        '<div class="section-desc">Acumulado de todos los reportes de Faltantes subidos este mes.</div>',
+        '<div class="section-desc">Acumulado de todos los reportes de Faltantes subidos para el mes '
+        'más reciente que haya en el historial (no espera a que llegue el mes calendario actual).</div>',
         unsafe_allow_html=True
     )
     log_df = load_faltantes_log()
@@ -2790,14 +2543,32 @@ if any_data_loaded:
             'mes a mes.' + _debug_html + '</div>',
             unsafe_allow_html=True
         )
-    elif not len(log_df):
+    elif not len(log_df) or not log_df["FechaDt"].notna().any():
         st.markdown(
             '<div class="empty-box">Todavía no hay historial acumulado. Se va a empezar a llenar '
             'con cada archivo de Faltantes que subas de acá en adelante.</div>',
             unsafe_allow_html=True
         )
     else:
-        mes_inicio = pd.Timestamp(fecha_hoy.replace(day=1))
+        # El "mes" de este ranking es el mes del archivo de Faltantes más
+        # reciente que haya en el historial, no necesariamente el mes
+        # calendario de hoy — así el día 1 de octubre, por ejemplo, se sigue
+        # viendo el acumulado de septiembre (el último mes con datos reales)
+        # en vez de aparecer vacío hasta que se suba el primer archivo de
+        # octubre. Apenas entre un archivo de octubre, este ranking pasa solo
+        # a mostrar octubre.
+        _mes_ref = log_df["FechaDt"].dropna().max()
+        mes_inicio = pd.Timestamp(year=_mes_ref.year, month=_mes_ref.month, day=1)
+        _MESES_ES = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+        ]
+        _mes_ref_label = f"{_MESES_ES[mes_inicio.month - 1]} {mes_inicio.year}"
+        st.markdown(
+            f'<div style="font-size:11px;color:#9aa1ab;margin:-6px 0 10px;">Mostrando {_mes_ref_label}</div>',
+            unsafe_allow_html=True
+        )
+
         log_mes_todas = log_df[log_df["FechaDt"] >= mes_inicio].copy()
         log_mes = log_mes_todas
         if filtro_tienda is not None:
