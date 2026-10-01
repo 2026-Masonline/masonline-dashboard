@@ -1,588 +1,471 @@
 import streamlit as st
 import pandas as pd
+import io
 import tempfile
 from pathlib import Path
+import base64
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 st.set_page_config(
-    page_title="MásOnline | Ecommerce",
-    page_icon="📊",
+    page_title="MásOnline | Comparativo",
+    page_icon="📈",
     layout="wide"
 )
 
-st.markdown("""
-<style>
+CSS_TEXT = """
     .stApp { background: #ffffff; }
-    .block-container { max-width: 900px; padding: 2.6rem 1.2rem 1.2rem; }
+    .block-container { max-width: 1300px; padding: 0 1.2rem 1.2rem; }
 
-    .hero-brand { font-size: 28px; font-weight: 800; letter-spacing: -.5px; color:#20252b; margin-bottom: 3px; }
+    .hero {
+        background: #ffffff;
+        margin: -1rem -1.2rem 1.2rem;
+        padding: 22px 28px;
+        color: #000000;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 4px solid #ff5a1f;
+    }
+    .hero-brand { font-size: 26px; font-weight: 800; letter-spacing: -.5px; }
     .hero-brand span { font-weight: 400; }
-    .hero-sub {
-        font-size: 11px; letter-spacing: 3px; margin-bottom: 24px;
-        opacity: .85; color:#20252b;
+    .hero-sub { font-size: 11px; letter-spacing: 3px; margin-top: 3px; opacity: .85; }
+    .periodo-badge {
+        background: #fafaf8; border: 1px solid #e8ebef; border-radius: 12px;
+        padding: 10px 16px; text-align: right;
     }
+    .periodo-badge .lbl { color: #000000; font-size: 11px; font-weight: 700; letter-spacing:.03em; }
+    .periodo-badge .val { color: #000000; font-size: 16px; font-weight: 800; margin-top: 2px; }
+    .periodo-badge small { display:block; color:#000000; font-size:11px; margin-top:3px; }
 
-    .upload-box {
-        background: white; border-radius: 14px; padding: 16px 18px 8px;
-        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.05);
-        margin-bottom: 6px; min-height: 82px;
+    .section { font-size: 20px; font-weight: 800; color: #000000; margin: 26px 0 2px; }
+    .section-desc { color: #000000; font-size: 13px; margin: 0 0 14px; }
+
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+    .kpi-card {
+        background: white; border-radius: 14px; padding: 18px 20px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06); border: 1px solid #e8ebef;
     }
-    .upload-current { border-top: 4px solid #ff5a1f; }
-    .upload-prev { border-top: 4px solid #2f9e66; }
-    .upload-ly { border-top: 4px solid #59636e; }
+    .kpi-icon {
+        width: 36px; height: 36px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 17px; margin-bottom: 10px;
+    }
+    .kpi-icon.blue { background: #e7f0fd; }
+    .kpi-icon.red { background: #fde9e9; }
+    .kpi-icon.green { background: #e6f5ea; }
+    .kpi-icon.orange { background: #fdf0e0; }
+    .kpi-label { color: #000000; font-size: 13px; font-weight: 700; }
+    .kpi-value { color: #000000; font-size: 26px; font-weight: 800; margin-top: 4px; }
+    .kpi-delta-line { margin-top: 8px; }
+    .kpi-delta-line .kpi-delta { font-size: 13px; font-weight: 700; }
+    .kpi-delta-line .sub { font-size: 13px; font-weight: 700; margin-top: 2px; }
+    .kpi-delta-line.positive, .kpi-delta-line.positive .kpi-delta, .kpi-delta-line.positive .sub { color: #208653; }
+    .kpi-delta-line.negative, .kpi-delta-line.negative .kpi-delta, .kpi-delta-line.negative .sub { color: #d64545; }
+    .kpi-delta-line.neutral, .kpi-delta-line.neutral .kpi-delta, .kpi-delta-line.neutral .sub { color: #000000; font-weight: 700; }
 
-    .upload-title { color:#20252b; font-size:14px; font-weight:800; }
-    .upload-text { color:#6b7280; font-size:12px; margin-top:5px; }
+    .cmp-table-wrap {
+        background: white; border-radius: 14px; overflow: hidden;
+        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.06);
+    }
+    table.cmp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    table.cmp-table thead th {
+        background: #20252b; color: #ffffff; font-weight: 700;
+        padding: 12px 16px; text-align: left; white-space: nowrap;
+    }
+    table.cmp-table thead th:not(:first-child) { text-align: center; }
+    table.cmp-table td {
+        padding: 13px 16px; border-top: 1px solid #f1f3f5; color: #000000;
+    }
+    table.cmp-table td:not(:first-child) { text-align: center; font-weight: 700; }
+    table.cmp-table td:first-child { display:flex; align-items:center; gap:8px; font-weight:700; }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
     @media (max-width: 600px) {
-        .block-container { padding: 1.6rem 0.6rem 1rem; }
+        .block-container { padding: 0 0.6rem 1rem; }
+        .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
+        .hero img { max-width: 170px !important; height: 40px !important; }
+        .periodo-badge { text-align: left; }
+        .section { font-size: 17px; }
+        .kpi-value { font-size: 22px; }
     }
-</style>
-""", unsafe_allow_html=True)
 
-DATA_FILE = Path(__file__).resolve().parent / "data.csv"
-DATA_TIENDAS_FILE = Path(__file__).resolve().parent / "data_tiendas.csv"
+    .filtro-row {
+        display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+        margin: -4px 0 4px;
+    }
+    .filtro-row > div[data-testid="stSelectbox"] { min-width: 220px; }
+"""
+st.markdown(f"<style>{CSS_TEXT}</style>", unsafe_allow_html=True)
 
-try:
-    base_df = pd.read_csv(DATA_FILE)
-    base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
-    for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
-        base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
-    base_df = base_df.dropna(subset=["date"])
-except Exception as e:
-    st.error(f"No se pudo leer data.csv: {e}")
+LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
+
+# Esta pestaña no tiene uploader propio: el archivo "Vs de ventas" se sube en
+# la pestaña "app" (tarjeta "COMPARATIVO") y queda guardado en una carpeta
+# compartida en el servidor, igual que Pedidos/Reclamos/Pickers/etc. en
+# Operativo — acá solo se lee la última copia que haya quedado ahí.
+SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
+
+def get_shared_bytes(shared_path):
+    if shared_path.exists():
+        try:
+            return shared_path.read_bytes()
+        except Exception:
+            return None
+    return None
+
+vsventas_bytes = get_shared_bytes(SHARED_VSVENTAS_PATH)
+
+if vsventas_bytes is None:
+    st.markdown("""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:12px 16px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:800;color:#000000;margin-bottom:5px;">
+        TODAVÍA NO HAY ARCHIVO CARGADO
+      </div>
+      <div style="font-size:12px;color:#000000;">
+        Subí el Excel "Vs de ventas" (con una hoja por año, ej. "2025" y "2026")
+        en la pestaña <b>app</b> (menú de la izquierda), tarjeta "COMPARATIVO".
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
-# Desglose por tienda (para "Top 10 tiendas" en Venta diaria). Es un archivo
-# aparte, "data_tiendas.csv", que puede no existir todavía la primera vez.
-TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
-
-def _empty_tiendas_df():
-    """DataFrame vacío con las columnas de data_tiendas.csv, pero con "date"
-    ya tipado como fecha — si no, cualquier filtro con .dt más adelante
-    explota con 'Can only use .dt accessor with datetimelike values' apenas
-    data_tiendas.csv todavía no existe en el repo (primera vez)."""
-    empty = pd.DataFrame(columns=TIENDAS_COLUMNS)
-    empty["date"] = pd.to_datetime(empty["date"])
-    return empty
-
-try:
-    if DATA_TIENDAS_FILE.exists():
-        base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
-        base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
-        base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
-        for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
-            base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
-        base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
-    else:
-        base_df_tiendas = _empty_tiendas_df()
-except Exception:
-    base_df_tiendas = _empty_tiendas_df()
-
-st.markdown("""
-<div class="hero-brand">Más<span>Online</span></div>
-<div class="hero-sub">E-COMMERCE &nbsp;·&nbsp; CARGA DE DATOS</div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-padding:12px 16px;margin-bottom:14px;">
-  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
-    ACTUALIZAR DATOS
-  </div>
-  <div style="font-size:12px;color:#6b7280;">
-    Subí acá el Excel "Venta Con y sin Impuesto". Una vez cargado y guardado, los datos
-    se ven solos en las pestañas Venta diaria y Venta fin de semana — no hace falta
-    subir el archivo de nuevo ahí.
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-u1, u2, u3 = st.columns(3)
-
-with u1:
-    st.markdown("""
-    <div class="upload-box upload-current">
-      <div class="upload-title">MES EN CURSO</div>
-      <div class="upload-text">Subí el Excel de Septiembre 2026</div>
-    </div>
-    """, unsafe_allow_html=True)
-    upload_current = st.file_uploader(
-        "Archivo mes en curso",
-        type=["xlsx", "xls"],
-        key="upload_current",
-        label_visibility="collapsed",
-        help="Reporte Venta Con y sin Impuesto del mes en curso."
-    )
-
-with u2:
-    st.markdown("""
-    <div class="upload-box upload-prev">
-      <div class="upload-title">MES ANTERIOR</div>
-      <div class="upload-text">Subí el Excel de Agosto 2026</div>
-    </div>
-    """, unsafe_allow_html=True)
-    upload_prev = st.file_uploader(
-        "Archivo mes anterior",
-        type=["xlsx", "xls"],
-        key="upload_prev",
-        label_visibility="collapsed",
-        help="Reporte Venta Con y sin Impuesto del mes anterior."
-    )
-
-with u3:
-    st.markdown("""
-    <div class="upload-box upload-ly">
-      <div class="upload-title">MISMO PERÍODO AÑO PASADO</div>
-      <div class="upload-text">Subí el Excel de Septiembre 2025</div>
-    </div>
-    """, unsafe_allow_html=True)
-    upload_ly = st.file_uploader(
-        "Archivo año pasado",
-        type=["xlsx", "xls"],
-        key="upload_ly",
-        label_visibility="collapsed",
-        help="Reporte Venta Con y sin Impuesto del mismo mes del año pasado."
-    )
-
-# ---------------------------------------------------------------------
-# Reporte diario + Faltantes: se suben acá y quedan guardados en una carpeta
-# compartida en el servidor, para que las pestañas Operativo, Productividad
-# Pickers y Resumen los lean directo, sin tener que subirlos de nuevo ahí.
-# ---------------------------------------------------------------------
-
-st.markdown("""
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-padding:12px 16px;margin:22px 0 14px;">
-  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
-    CARGAR REPORTES (Operativo)
-  </div>
-  <div style="font-size:12px;color:#6b7280;">
-    Ya no se sube más el Reporte diario combinado. Cada sección se sube en su
-    propio archivo, aparte: Pedidos +72h, Reclamos Operativos, On Time, Delivery,
-    Fill Rate, Faltantes y Pickers.
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-def upload_box_reporte(col, title, help_text, key):
-    with col:
-        st.markdown(f"""
-        <div class="upload-box">
-          <div class="upload-title">{title}</div>
-          <div class="upload-text">{help_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
-
-r1, r2, r3, r4 = st.columns(4)
-f_pedidos = upload_box_reporte(
-    r1, "PEDIDOS +72H",
-    "Archivo de Pedidos +72h.",
-    "f_pedidos"
-)
-f_reclamos = upload_box_reporte(
-    r2, "RECLAMOS OPERATIVOS",
-    "Archivo nuevo de Reclamos Operativos, aparte del Reporte diario.",
-    "f_reclamos"
-)
-f_ontime = upload_box_reporte(
-    r3, "ON-TIME",
-    "Archivo nuevo de On Time, aparte del Reporte diario.",
-    "f_ontime"
-)
-f_delivery = upload_box_reporte(
-    r4, "DELIVERY",
-    "Archivo nuevo de Delivery, aparte del Reporte diario.",
-    "f_delivery"
-)
-
-r5, r6, r7, r8 = st.columns(4)
-f_fillrate = upload_box_reporte(
-    r5, "FILL RATE",
-    "Archivo nuevo de Fill Rate, aparte del Reporte diario.",
-    "f_fillrate"
-)
-f_faltantes = upload_box_reporte(r6, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
-f_pickers = upload_box_reporte(
-    r7, "PICKERS",
-    "Archivo nuevo de Productividad Pickers, aparte del Reporte diario.",
-    "f_pickers"
-)
-f_vsventas = upload_box_reporte(
-    r8, "COMPARATIVO",
-    "Archivo 'Vs de ventas' (hojas 2025/2026) para la pestaña Comparativo.",
-    "f_vsventas"
-)
-
 st.markdown(
-    '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
-    'Delivery todavía guarda el archivo pero no arma ninguna sección — eso lo '
-    'conectamos cuando tengamos un archivo de ejemplo. FILL RATE ya arma la '
-    'sección de Operativo con el archivo de Faltantes por depósito '
-    '(missing-item-by-wh). La tarjeta ON-TIME funciona igual que PICKERS: si '
-    'subís ahí el archivo de Productividad Pickers, también arma "Tiempo '
-    'promedio de preparación por tienda" y el % on time acumulado del mes en '
-    'Operativo. COMPARATIVO alimenta la pestaña Comparativo (resumen del mes '
-    'vs. mismo período del año anterior) — subí ahí el archivo "Vs de ventas" '
-    'con una hoja por año.</div>',
+    '<div style="color:#000000;font-size:12px;margin:-6px 0 14px;">'
+    'Los datos se cargan desde la pestaña <b>app</b> (menú de la izquierda) — subí '
+    'ahí el Excel "Vs de ventas" cuando quieras actualizarlos.'
+    '</div>',
     unsafe_allow_html=True
 )
 
-SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
-SHARED_DIR.mkdir(parents=True, exist_ok=True)
-SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
-SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
-SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
-SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
-SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
-SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
-SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
-SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
+# El archivo trae una hoja por año (ej. "2025", "2026"), una fila por
+# tienda y por día. Juntamos todas las hojas y sumamos las 4 columnas que
+# necesitamos, por día (across todas las tiendas) — así no importa cómo se
+# llamen las hojas ni cuántos años tenga, ni si el mes cargado cambia.
+COL_VENTA = "Venta - Ecommerce"
+COL_PEDIDOS = "Pedidos Facturados con Venta Operativa - Ecommerce"
+COL_UNIDADES = "Cantidad Venta Operativa - Ecommerce"
+COL_FACTURACION = "Facturacion"
 
-def save_shared_bytes(uploaded_file, shared_path):
-    """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
-    compartida para que las demás pestañas lo lean. Devuelve True si había
-    algo (nuevo o ya guardado antes)."""
-    if uploaded_file is not None:
-        try:
-            shared_path.write_bytes(uploaded_file.getvalue())
-        except Exception:
-            pass
-        return True
-    return shared_path.exists()
+try:
+    xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
+    frames = []
+    for sheet in xl.sheet_names:
+        d = xl.parse(sheet)
+        d.columns = [str(c).strip() for c in d.columns]
+        if "Fecha" not in d.columns:
+            continue
+        d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+        d = d.dropna(subset=["Fecha"])
+        if len(d):
+            frames.append(d)
+    raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+except Exception as e:
+    st.error(f"No se pudo leer el archivo 'Vs de ventas': {e}")
+    st.stop()
 
-faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH)
-pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH)
-pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH)
-reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH)
-ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH)
-delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH)
-fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH)
-vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH)
+if raw.empty:
+    st.error("No encontré filas con fecha válida en el archivo 'Vs de ventas'.")
+    st.stop()
 
-if pedidos_guardado or faltantes_guardado:
-    st.markdown(
-        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
-        '● Listo — ya lo podés ver en la pestaña Operativo.</div>',
-        unsafe_allow_html=True
-    )
+for col in [COL_VENTA, COL_PEDIDOS, COL_UNIDADES, COL_FACTURACION]:
+    if col not in raw.columns:
+        raw[col] = 0
+    raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
 
-# Código de tienda (columna "Tienda" del Excel) -> nombre. Mismo listado que
-# se usa en "Productividad Pickers" (viene del archivo "Picker x tienda").
-TIENDA_MAP = {
-    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
-    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
-    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
-    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
-    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
-    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
-    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
-    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
-    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
-    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
-    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
-    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
-    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
-    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
-    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
-    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
-    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
-    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
-    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
-    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
-    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
-    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
-    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
-    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
-    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
-    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
-    "3613": "Mendoza", "4001": "Campana",
+raw["date"] = raw["Fecha"].dt.normalize()
+df = raw.groupby("date", as_index=False).agg({
+    COL_VENTA: "sum", COL_PEDIDOS: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum"
+}).rename(columns={
+    COL_VENTA: "ecommerce_tax", COL_PEDIDOS: "orders",
+    COL_UNIDADES: "units", COL_FACTURACION: "company_tax"
+})
+
+# Siempre mostramos el último día cerrado en Argentina (igual que Venta diaria).
+arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+df = df[df["date"].dt.date < arg_today].copy()
+
+if df.empty:
+    st.error("Todavía no hay datos cargados para un día anterior a hoy.")
+    st.stop()
+
+# Filtro de fecha: por default se muestra el último día cerrado cargado,
+# pero se puede elegir cualquier otro día del archivo para ver el acumulado
+# "a esa fecha" (el archivo trae un acumulado del mes por cada fila/día).
+available_dates = sorted(df["date"].unique(), reverse=True)
+date_labels = [pd.Timestamp(d).strftime("%d-%m-%Y") for d in available_dates]
+label_to_date = {lbl: pd.Timestamp(d) for lbl, d in zip(date_labels, available_dates)}
+
+st.markdown('<div class="filtro-row">', unsafe_allow_html=True)
+selected_label = st.selectbox(
+    "📅 Fecha de corte (acumulado hasta ese día)",
+    date_labels,
+    index=0,
+    key="comparativo_fecha_corte",
+)
+st.markdown('</div>', unsafe_allow_html=True)
+
+last_date = label_to_date[selected_label]
+cur_year, cur_month = last_date.year, last_date.month
+n = last_date.day  # día del mes al que se corta (p.ej. 30 = acumulado al 30)
+
+prev = df[
+    (df["date"].dt.year == cur_year - 1) &
+    (df["date"].dt.month == cur_month) &
+    (df["date"].dt.day <= n)
+]
+hay_prev = len(prev) > 0
+
+MESES_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
 }
+mes_nombre = MESES_ES.get(cur_month, "").capitalize()
 
-def norm_tienda_code(v):
-    """El Excel trae el código de tienda como número (1002, 1002.0, etc.).
-    Lo normalizamos siempre a texto sin decimales, para que coincida con las
-    claves de TIENDA_MAP y con lo que ya se guarda en data_tiendas.csv."""
+def money(v):
+    """Mismo formato que el resto del dashboard: número completo debajo del
+    millón (ej. $213.945), 'M' entre 1 millón y 999 millones, 'MM' de ahí
+    en más."""
     try:
-        return str(int(float(v)))
+        v = float(v)
     except (TypeError, ValueError):
-        return str(v).strip()
+        return "$0"
+    av = abs(v)
+    if av < 1_000_000:
+        return f"${v:,.0f}".replace(",", ".")
+    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
+        txt = f"${v/1_000_000:,.3f} M"
+    else:
+        txt = f"${v/1_000_000_000:,.3f} MM"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
 
-def tienda_nombre(codigo):
-    return TIENDA_MAP.get(codigo, codigo)
+def intfmt(v):
+    return f"{int(round(v)):,}".replace(",", ".")
 
-def normalize_uploaded_excel(file):
-    raw = pd.read_excel(file, sheet_name=0, header=None)
-    header_row = None
-
-    for i in range(min(10, len(raw))):
-        vals = raw.iloc[i].astype(str).str.strip().tolist()
-        if "Fecha" in vals and "Facturacion" in vals and "Venta - Ecommerce" in vals:
-            header_row = i
-            break
-
-    if header_row is None:
-        raise ValueError(
-            "No encontré las columnas Fecha, Facturacion y Venta - Ecommerce en el archivo."
+def delta_badge(v, is_money=False):
+    if not hay_prev:
+        return (
+            '<div class="kpi-delta-line neutral">'
+            f'<span class="kpi-delta">Sin datos de {cur_year - 1} para comparar</span>'
+            '</div>'
         )
-
-    d = pd.read_excel(file, sheet_name=0, header=header_row)
-
-    required = [
-        "Fecha",
-        "Facturacion",
-        "Venta - Ecommerce",
-        "Cantidad Venta Operativa - Ecommerce",
-        "Pedidos Facturados con Venta Operativa - Ecommerce"
-    ]
-
-    missing = [c for c in required if c not in d.columns]
-    if missing:
-        raise ValueError("Faltan columnas: " + ", ".join(missing))
-
-    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
-
-    for c in required[1:]:
-        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
-
-    d = d.dropna(subset=["Fecha"])
-
-    out = d.groupby("Fecha", as_index=False).agg(
-        company_tax=("Facturacion", "sum"),
-        ecommerce_tax=("Venta - Ecommerce", "sum"),
-        orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
-        units=("Cantidad Venta Operativa - Ecommerce", "sum")
+    cls = "positive" if v >= 0 else "negative"
+    arrow = "▲" if v >= 0 else "▼"
+    sign = "+" if v >= 0 else "−"
+    body = money(abs(v))[1:] if is_money else intfmt(abs(v))
+    return (
+        f'<div class="kpi-delta-line {cls}">'
+        f'<span class="kpi-delta">{arrow} {sign} {body}</span>'
+        f'<div class="sub">vs mismo período {cur_year - 1}</div>'
+        '</div>'
     )
 
-    out = out.rename(columns={"Fecha": "date"})
-    out["source"] = "Reporte subido"
+#  El archivo "Vs de ventas" trae, en cada fila, el ACUMULADO del mes hasta
+#  esa fecha (no el valor de ese día puntual) — por eso NO hay que sumar
+#  varias filas del mes (eso contaba el acumulado una y otra vez, de ahí
+#  salía el 30.360 en vez de 2.086 pedidos). El total del mes-a-la-fecha es
+#  directamente el valor de la fila de la fecha elegida en el filtro.
+last_row = df[df["date"] == last_date].iloc[0]
+pedidos_cur = last_row["orders"]
+venta_cur = last_row["ecommerce_tax"]
+unidades_cur = last_row["units"]
+ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
 
-    # Desglose por tienda, para "Top 10 tiendas" en Venta diaria. Si el
-    # archivo no trae columna "Tienda" (no debería pasar), seguimos igual,
-    # simplemente sin el desglose para ese archivo.
-    out_tiendas = _empty_tiendas_df()
-    if "Tienda" in d.columns:
-        dt = d.copy()
-        dt["Tienda"] = dt["Tienda"].apply(norm_tienda_code)
-        out_tiendas = dt.groupby(["Fecha", "Tienda"], as_index=False).agg(
-            company_tax=("Facturacion", "sum"),
-            ecommerce_tax=("Venta - Ecommerce", "sum"),
-            orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
-            units=("Cantidad Venta Operativa - Ecommerce", "sum")
-        )
-        out_tiendas = out_tiendas.rename(columns={"Fecha": "date"})
-        out_tiendas["Nombre"] = out_tiendas["Tienda"].apply(tienda_nombre)
-        out_tiendas = out_tiendas[TIENDAS_COLUMNS]
+if hay_prev:
+    prev_last_row = prev.sort_values("date").iloc[-1]
+    pedidos_prev = prev_last_row["orders"]
+    venta_prev = prev_last_row["ecommerce_tax"]
+    unidades_prev = prev_last_row["units"]
+else:
+    pedidos_prev = venta_prev = unidades_prev = 0
+ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
 
-    return out, out_tiendas
+d_pedidos = pedidos_cur - pedidos_prev
+d_venta = venta_cur - venta_prev
+d_unidades = unidades_cur - unidades_prev
+d_ticket = ticket_cur - ticket_prev
 
-df = base_df.copy()
-df_tiendas = base_df_tiendas.copy()
+col_prev_label = f"{mes_nombre} {cur_year - 1}" if hay_prev else f"{mes_nombre} {cur_year - 1} (sin datos)"
+prev_pedidos_txt = intfmt(pedidos_prev) if hay_prev else "—"
+prev_venta_txt = money(venta_prev) if hay_prev else "—"
+prev_unidades_txt = intfmt(unidades_prev) if hay_prev else "—"
+prev_ticket_txt = money(ticket_prev) if hay_prev else "—"
 
-def replace_period(uploaded_file, year, month, label):
-    global df, df_tiendas
+kpis_html = f"""
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-icon blue">🛒</div>
+    <div class="kpi-label">Pedidos Facturados</div>
+    <div class="kpi-value">{intfmt(pedidos_cur)}</div>
+    <div>{delta_badge(d_pedidos, is_money=False)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon red">💰</div>
+    <div class="kpi-label">Venta Ecommerce (con impuesto)</div>
+    <div class="kpi-value">{money(venta_cur)}</div>
+    <div>{delta_badge(d_venta, is_money=True)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon green">📦</div>
+    <div class="kpi-label">Unidades</div>
+    <div class="kpi-value">{intfmt(unidades_cur)}</div>
+    <div>{delta_badge(d_unidades, is_money=False)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon orange">🏷️</div>
+    <div class="kpi-label">Ticket promedio</div>
+    <div class="kpi-value">{money(ticket_cur)}</div>
+    <div>{delta_badge(d_ticket, is_money=True)}</div>
+  </div>
+</div>
+"""
 
-    if uploaded_file is None:
-        return
+table_html = f"""
+<div class="cmp-table-wrap">
+<div class="table-scroll">
+<table class="cmp-table">
+  <thead>
+    <tr>
+      <th>Indicador</th>
+      <th>{mes_nombre} {cur_year}</th>
+      <th>{col_prev_label}</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(pedidos_cur)}</td><td>{prev_pedidos_txt}</td></tr>
+    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(venta_cur)}</td><td>{prev_venta_txt}</td></tr>
+    <tr><td>📦 Unidades</td><td>{intfmt(unidades_cur)}</td><td>{prev_unidades_txt}</td></tr>
+    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_cur)}</td><td>{prev_ticket_txt}</td></tr>
+  </tbody>
+</table>
+</div>
+</div>
+"""
 
-    try:
-        incoming, incoming_tiendas = normalize_uploaded_excel(uploaded_file)
+footnote_html = (
+    '<div style="color:#000000;font-size:11px;margin-top:14px;">'
+    f'"{mes_nombre} {cur_year - 1}" toma el acumulado hasta el mismo día {n} del mes '
+    '(la misma cantidad de días que ya pasaron este mes), para que la comparación sea pareja.'
+    '</div>'
+)
 
-        incoming = incoming[
-            (incoming["date"].dt.year == year) &
-            (incoming["date"].dt.month == month)
-        ].copy()
+# ---------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------
 
-        if incoming.empty:
-            st.error(f"{label}: no encontré datos de {month:02d}/{year} en el archivo.")
-            return
-
-        df = df[
-            ~(
-                (df["date"].dt.year == year) &
-                (df["date"].dt.month == month)
-            )
-        ].copy()
-
-        df = pd.concat([df, incoming], ignore_index=True)
-
-        df = (
-            df.sort_values("date")
-            .drop_duplicates(subset=["date"], keep="last")
-            .reset_index(drop=True)
-        )
-
-        if len(incoming_tiendas):
-            incoming_tiendas = incoming_tiendas[
-                (incoming_tiendas["date"].dt.year == year) &
-                (incoming_tiendas["date"].dt.month == month)
-            ].copy()
-
-            df_tiendas = df_tiendas[
-                ~(
-                    (df_tiendas["date"].dt.year == year) &
-                    (df_tiendas["date"].dt.month == month)
-                )
-            ].copy()
-
-            df_tiendas = pd.concat([df_tiendas, incoming_tiendas], ignore_index=True)
-
-            df_tiendas = (
-                df_tiendas.sort_values(["date", "Tienda"])
-                .drop_duplicates(subset=["date", "Tienda"], keep="last")
-                .reset_index(drop=True)
-            )
-
-        # GUARDAR LOS DATOS EN GITHUB
-        try:
-            import urllib.request
-            import urllib.error
-            import json
-            import base64
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-
-            token = st.secrets.get("GITHUB_TOKEN")
-
-            if token:
-                repo = "2026-Masonline/masonline-dashboard"
-                path = "data.csv"
-                branch = "main"
-
-                url = f"https://api.github.com/repos/{repo}/contents/{path}"
-
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                    "User-Agent": "Masonline-Dashboard"
-                }
-
-                # Obtener SHA actual de data.csv
-                request_get = urllib.request.Request(
-                    f"{url}?ref={branch}",
-                    headers=headers,
-                    method="GET"
-                )
-
-                with urllib.request.urlopen(request_get, timeout=30) as response:
-                    github_file = json.loads(response.read().decode("utf-8"))
-
-                sha = github_file["sha"]
-
-                save_df = df.sort_values("date")
-
-                csv_text = save_df.to_csv(
-                    index=False,
-                    date_format="%Y-%m-%d"
-                )
-
-                content_b64 = base64.b64encode(
-                    csv_text.encode("utf-8")
-                ).decode("utf-8")
-
-                payload = {
-                    "message": f"Actualizar datos ecommerce - {label}",
-                    "content": content_b64,
-                    "sha": sha,
-                    "branch": branch
-                }
-
-                request_put = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={
-                        **headers,
-                        "Content-Type": "application/json"
-                    },
-                    method="PUT"
-                )
-
-                with urllib.request.urlopen(
-                    request_put,
-                    timeout=30
-                ) as response:
-                    response.read()
-
-                # Guardar también el desglose por tienda (data_tiendas.csv),
-                # para "Top 10 tiendas" en Venta diaria. Si esto falla no
-                # queremos tapar el éxito del guardado principal (data.csv),
-                # así que va aparte y en silencio (aviso chiquito nada más).
-                if len(df_tiendas):
-                    try:
-                        path_t = "data_tiendas.csv"
-                        url_t = f"https://api.github.com/repos/{repo}/contents/{path_t}"
-
-                        sha_t = None
-                        request_get_t = urllib.request.Request(
-                            f"{url_t}?ref={branch}",
-                            headers=headers,
-                            method="GET"
-                        )
-                        try:
-                            with urllib.request.urlopen(request_get_t, timeout=30) as response:
-                                sha_t = json.loads(response.read().decode("utf-8"))["sha"]
-                        except urllib.error.HTTPError as e_get:
-                            if e_get.code != 404:
-                                raise
-                            # 404 = todavía no existe data_tiendas.csv en el repo;
-                            # se crea solo, sin mandar "sha" en el payload.
-
-                        save_df_tiendas = df_tiendas.sort_values(["date", "Tienda"])
-                        csv_text_t = save_df_tiendas.to_csv(index=False, date_format="%Y-%m-%d")
-                        content_b64_t = base64.b64encode(csv_text_t.encode("utf-8")).decode("utf-8")
-
-                        payload_t = {
-                            "message": f"Actualizar datos por tienda - {label}",
-                            "content": content_b64_t,
-                            "branch": branch
-                        }
-                        if sha_t:
-                            payload_t["sha"] = sha_t
-
-                        request_put_t = urllib.request.Request(
-                            url_t,
-                            data=json.dumps(payload_t).encode("utf-8"),
-                            headers={**headers, "Content-Type": "application/json"},
-                            method="PUT"
-                        )
-                        with urllib.request.urlopen(request_put_t, timeout=30) as response:
-                            response.read()
-                    except Exception:
-                        st.caption(
-                            "⚠️ El desglose por tienda (Top 10 tiendas) no se pudo guardar esta vez — "
-                            "el resto de los datos sí se guardó bien."
-                        )
-
-                st.success(
-                    f"{label}: datos cargados y guardados correctamente."
-                )
-
-            else:
-                st.warning(
-                    "Los datos se cargaron para esta sesión, "
-                    "pero GITHUB_TOKEN no está configurado."
-                )
-
-        except Exception as github_error:
-            st.error(
-                f"Los datos se cargaron, pero no se pudieron guardar en GitHub: "
-                f"{github_error}"
-            )
-
-    except Exception as e:
-        st.error(f"{label}: no pude procesar el Excel: {e}")
-
-replace_period(upload_current, 2026, 9, "Mes en curso")
-replace_period(upload_prev, 2026, 8, "Mes anterior")
-replace_period(upload_ly, 2025, 9, "Mismo período año pasado")
-
-if not (upload_current or upload_prev or upload_ly):
-    st.markdown(
-        '<div style="color:#6b7280;font-size:12px;margin-top:12px;">'
-        'Todavía no subiste ningún archivo en esta sesión. Para ver los últimos datos '
-        'guardados, andá a <b>Venta diaria</b> o <b>Venta fin de semana</b> en el menú '
-        'de la izquierda.'
-        '</div>',
-        unsafe_allow_html=True
+if LOGO_FILE.exists():
+    logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
+    brand_html = (
+        f'<img src="data:image/png;base64,{logo_b64}" '
+        'style="height:50px;max-width:290px;object-fit:contain;">'
     )
+else:
+    brand_html = '<div class="hero-brand">Más<span>Online</span></div>'
+
+st.markdown(f"""
+<div class="hero">
+  <div>
+    {brand_html}
+    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
+  </div>
+  <div class="periodo-badge">
+    <div class="lbl">📅 PERÍODO</div>
+    <div class="val">{mes_nombre} {cur_year}</div>
+    <small>Datos acumulados al {last_date.strftime('%d/%m')}</small>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# HTML descargable: copia independiente de esta pestaña (fecha elegida),
+# sin depender de Streamlit — se puede abrir en cualquier navegador o
+# mandar por mail/WhatsApp.
+# ---------------------------------------------------------------------
+
+def build_standalone_html():
+    if LOGO_FILE.exists():
+        html_logo = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            'style="height:50px;max-width:290px;object-fit:contain;">'
+        )
+    else:
+        html_logo = '<div class="hero-brand">Más<span>Online</span></div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MásOnline | Comparativo</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, sans-serif; }}
+.block-container {{ max-width:1300px; margin:0 auto; padding:24px 20px 40px; }}
+{CSS_TEXT}
+</style>
+</head>
+<body>
+<div class="block-container">
+
+<div class="hero">
+  <div>
+    {html_logo}
+    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
+  </div>
+  <div class="periodo-badge">
+    <div class="lbl">📅 PERÍODO</div>
+    <div class="val">{mes_nombre} {cur_year}</div>
+    <small>Datos acumulados al {last_date.strftime('%d/%m')}</small>
+  </div>
+</div>
+
+<div class="section">Resultados del período</div>
+<div class="section-desc">Indicadores principales del canal ecommerce — datos tomados al <b>{last_date.strftime('%d-%m-%Y')}</b>.</div>
+{kpis_html}
+
+<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
+<div class="section-desc">Datos acumulados al <b>{last_date.strftime('%d-%m-%Y')}</b>. Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>
+{table_html}
+{footnote_html}
+
+</div>
+</body>
+</html>
+"""
+
+st.download_button(
+    "⬇️ Descargar comparativo HTML",
+    data=build_standalone_html(),
+    file_name=f"comparativo_masonline_{last_date.strftime('%Y-%m-%d')}.html",
+    mime="text/html",
+    use_container_width=False,
+)
+
+# ---------------------------------------------------------------------
+# Resultados del período
+# ---------------------------------------------------------------------
+
+st.markdown(
+    '<div class="section">Resultados del período</div>'
+    '<div class="section-desc">Indicadores principales del canal ecommerce — '
+    f'datos tomados al <b>{last_date.strftime("%d-%m-%Y")}</b>.</div>',
+    unsafe_allow_html=True
+)
+st.markdown(kpis_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Comparativo vs año anterior
+# ---------------------------------------------------------------------
+
+st.markdown(
+    '<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>'
+    f'<div class="section-desc">Datos acumulados al <b>{last_date.strftime("%d-%m-%Y")}</b>. '
+    'Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>',
+    unsafe_allow_html=True
+)
+st.markdown(table_html, unsafe_allow_html=True)
+
+st.markdown(footnote_html, unsafe_allow_html=True)
