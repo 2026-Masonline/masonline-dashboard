@@ -569,16 +569,56 @@ SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
 SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 
+def _github_headers():
+    token = st.secrets.get("GITHUB_TOKEN")
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+def fetch_shared_from_github(shared_path):
+    """Trae de GitHub la última copia guardada de este reporte (para cuando
+    el servidor se reinició y la copia local temporal ya no está)."""
+    headers = _github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    import json
+    import base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    try:
+        request_get = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(request_get, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return base64.b64decode(data["content"])
+    except Exception:
+        return None
+
 def get_shared_bytes(shared_path):
     """Esta pestaña ya no tiene uploader propio: "Pedidos", "Reclamos
-    Operativos", "Pickers" y "Faltantes" se suben en la pestaña "app". Acá solo se lee
-    la última copia que haya quedado guardada ahí (misma carpeta compartida
-    que usan también Productividad Pickers y Resumen)."""
+    Operativos", "Pickers" y "Faltantes" se suben en la pestaña "app". Primero
+    intenta la copia local (rápida); si el servidor se reinició y la copia
+    local se perdió, la trae de GitHub (donde queda guardada para siempre) y
+    la vuelve a dejar en local para la próxima."""
     if shared_path.exists():
         try:
             return shared_path.read_bytes()
         except Exception:
-            return None
+            pass
+    content = fetch_shared_from_github(shared_path)
+    if content is not None:
+        try:
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
     return None
 
 # ---------------------------------------------------------------------
