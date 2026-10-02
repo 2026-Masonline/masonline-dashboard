@@ -203,13 +203,37 @@ if len(df_tiendas):
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df = df[df["date"].dt.date < arg_today].copy()
 
+# Año/mes "en curso", "anterior" y "mismo mes año pasado" calculados solos a
+# partir de la fecha de hoy (hora Argentina) en vez de quedar fijos en el
+# código — así esta página avanza sola al mes siguiente apenas se sube el
+# primer archivo de ese mes, sin que haya que tocar nada acá cada vez.
+REF_YEAR, REF_MONTH = arg_today.year, arg_today.month
+if REF_MONTH == 1:
+    PREV_YEAR, PREV_MONTH = REF_YEAR - 1, 12
+else:
+    PREV_YEAR, PREV_MONTH = REF_YEAR, REF_MONTH - 1
+LY_YEAR = REF_YEAR - 1
+
+_MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+]
+_MESES_ABREV_ES = [
+    "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul",
+    "Ago", "Sep", "Oct", "Nov", "Dic"
+]
+MES_ACTUAL_NOMBRE = _MESES_ES[REF_MONTH - 1].capitalize()
+MES_ACTUAL_LABEL = f"{MES_ACTUAL_NOMBRE} {REF_YEAR}"
+MES_ACTUAL_ABREV = _MESES_ABREV_ES[REF_MONTH - 1]
+MES_ANTERIOR_ABREV = _MESES_ABREV_ES[PREV_MONTH - 1]
+
 current = df[
-    (df["date"].dt.year == 2026) &
-    (df["date"].dt.month == 9)
+    (df["date"].dt.year == REF_YEAR) &
+    (df["date"].dt.month == REF_MONTH)
 ].copy().sort_values("date")
 
 if current.empty:
-    st.error("No hay datos de septiembre 2026.")
+    st.error(f"No hay datos de {MES_ACTUAL_NOMBRE.lower()} {REF_YEAR}.")
     st.stop()
 
 latest = current.iloc[-1]
@@ -261,7 +285,7 @@ if is_monday:
 else:
     sales_value = latest["ecommerce_tax"]
 days_elapsed = len(current)
-days_month = calendar.monthrange(2026, 9)[1]
+days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
@@ -283,14 +307,14 @@ day_change = (
 n = days_elapsed
 
 aug = df[
-    (df["date"].dt.year == 2026) &
-    (df["date"].dt.month == 8) &
+    (df["date"].dt.year == PREV_YEAR) &
+    (df["date"].dt.month == PREV_MONTH) &
     (df["date"].dt.day <= n)
 ].sort_values("date")
 
 sep25 = df[
-    (df["date"].dt.year == 2025) &
-    (df["date"].dt.month == 9) &
+    (df["date"].dt.year == LY_YEAR) &
+    (df["date"].dt.month == REF_MONTH) &
     (df["date"].dt.day <= n)
 ].sort_values("date")
 
@@ -304,8 +328,8 @@ vs_25 = (acc_ecom / sep25_acc - 1) if sep25_acc else None
 current_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
 if len(df_tiendas):
     current_tiendas = df_tiendas[
-        (df_tiendas["date"].dt.year == 2026) &
-        (df_tiendas["date"].dt.month == 9)
+        (df_tiendas["date"].dt.year == REF_YEAR) &
+        (df_tiendas["date"].dt.month == REF_MONTH)
     ].copy()
 
 tiendas_resumen = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders"])
@@ -450,7 +474,7 @@ st.markdown(f"""
     <div class="hero-sub">E-COMMERCE</div>
   </div>
   <div class="hero-date">
-    Septiembre 2026
+    {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
     <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
       Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
@@ -807,7 +831,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
     <div class="hero-sub">E-COMMERCE</div>
   </div>
   <div class="hero-date">
-    Septiembre 2026
+    {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
     <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
       Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
@@ -883,12 +907,12 @@ Variación de ventas e-commerce sobre la misma cantidad de días
 {standalone_compare(
     "VS MES ANTERIOR",
     vs_aug,
-    f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"
+    f"{MES_ACTUAL_ABREV} 1–{n} {REF_YEAR} vs {MES_ANTERIOR_ABREV} 1–{n} {PREV_YEAR}"
 )}
 {standalone_compare(
     "VS MISMO MES AÑO ANTERIOR",
     vs_25,
-    f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
+    f"{MES_ACTUAL_ABREV} 1–{n} {REF_YEAR} vs {MES_ACTUAL_ABREV} 1–{n} {LY_YEAR}"
 )}
 </div>
 
@@ -1032,7 +1056,7 @@ with tab1:
 
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
-          MENSUAL &nbsp;SEPTIEMBRE 2026
+          MENSUAL &nbsp;{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}
         </div>
         <div style="padding:18px 16px;">
           <div style="display:flex;gap:12px;">
@@ -1180,7 +1204,7 @@ with tab1:
                 compare_box(
                     "VS MES ANTERIOR",
                     vs_aug,
-                    f"Sep 1–{n} 2026 vs Ago 1–{n} 2026"
+                    f"{MES_ACTUAL_ABREV} 1–{n} {REF_YEAR} vs {MES_ANTERIOR_ABREV} 1–{n} {PREV_YEAR}"
                 ),
                 unsafe_allow_html=True
             )
@@ -1196,7 +1220,7 @@ with tab1:
                 compare_box(
                     "VS MISMO MES AÑO ANTERIOR",
                     vs_25,
-                    f"Sep 1–{n} 2026 vs Sep 1–{n} 2025"
+                    f"{MES_ACTUAL_ABREV} 1–{n} {REF_YEAR} vs {MES_ACTUAL_ABREV} 1–{n} {LY_YEAR}"
                 ),
                 unsafe_allow_html=True
             )
@@ -1286,7 +1310,7 @@ with tab2:
 
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
-          MENSUAL &nbsp;SEPTIEMBRE 2026
+          MENSUAL &nbsp;{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}
         </div>
         <div style="padding:18px 16px;">
           <div style="display:flex;gap:12px;">
@@ -1372,7 +1396,7 @@ with tab3:
 
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
         <div style="background:#f5a623;color:#20252b;font-weight:800;font-size:15px;padding:12px 16px;">
-          MENSUAL &nbsp;SEPTIEMBRE 2026
+          MENSUAL &nbsp;{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}
         </div>
         <div style="padding:18px 16px;">
           <div style="display:flex;gap:12px;">
