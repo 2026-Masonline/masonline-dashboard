@@ -554,14 +554,18 @@ def find_sheet(xl, required_cols):
             return name, df
     return None, None
 
-def safe_open_excel(uploaded_file):
-    """Abre un archivo subido como pd.ExcelFile, mostrando un error prolijo si falla."""
+def safe_open_excel(uploaded_file, nombre=None):
+    """Abre un archivo subido como pd.ExcelFile, mostrando un error prolijo si
+    falla. 'nombre' identifica qué reporte es (ej. "Reclamos"), para que el
+    mensaje diga cuál archivo hay que volver a subir en vez de un error
+    genérico que obliga a adivinar."""
     if uploaded_file is None:
         return None
     try:
         return pd.ExcelFile(uploaded_file)
     except Exception as e:
-        st.error(f"No pude leer el archivo: {e}")
+        etiqueta = f" de {nombre}" if nombre else ""
+        st.error(f"No pude leer el archivo{etiqueta}: {e}. Volvé a subirlo en la pestaña \"app\".")
         return None
 
 # ---------------------------------------------------------------------
@@ -1732,19 +1736,19 @@ st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 now_ref = None  # se calcula como el máximo timestamp visto en los archivos cargados
 
-xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes)) if reporte_bytes is not None else None
+xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes), "Reporte diario") if reporte_bytes is not None else None
 # "Pedido" adentro del Reporte diario: se deja de requerir (required=False)
 # porque Pedidos ahora se sube en su propio archivo aparte, así que esta
 # hoja puede faltar sin que sea un error — queda solo como respaldo mientras
 # se termina de migrar.
 df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"], required=False)
-xl_reclamos = safe_open_excel(io.BytesIO(reclamos_bytes)) if reclamos_bytes is not None else None
+xl_reclamos = safe_open_excel(io.BytesIO(reclamos_bytes), "Reclamos") if reclamos_bytes is not None else None
 df_reclamos_raw = load_reclamos_from_xl(xl_reclamos)
 if df_reclamos_raw is None:
     # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
     # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
     df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
-xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes)) if ontime_bytes is not None else None
+xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes), "On-Time") if ontime_bytes is not None else None
 # Archivo nuevo de la tarjeta "ON-TIME" (ej. "Ot_Preparacion.xlsx"): trae
 # Tienda, Formato, ordenes, retiro, delivery, entrga, fuera, on time. Si
 # todavía no se subió nada ahí, probamos con la hoja vieja del Reporte
@@ -1752,7 +1756,7 @@ xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes)) if ontime_bytes is not Non
 df_ontime_raw = load_section_from_xl(xl_ontime, ["Tienda", "ordenes", "fuera", "on time"], required=False)
 if df_ontime_raw is None:
     df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"], required=False)
-xl_fillrate = safe_open_excel(io.BytesIO(fillrate_bytes)) if fillrate_bytes is not None else None
+xl_fillrate = safe_open_excel(io.BytesIO(fillrate_bytes), "Fill Rate") if fillrate_bytes is not None else None
 # Archivo actual de la tarjeta "FILL RATE": una fila por tienda con Tiendas /
 # Unidades perdidas / No entregados / Remplazos / Monto entregado / Fill
 # rate (texto con flechas y variación vs el mes anterior en cada celda).
@@ -1775,12 +1779,12 @@ df_fr_raw = (
     else None
 )
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
-xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
+xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes), "Faltantes") if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
     xl_faltantes,
     ["warehouseName", "refName", "missingQuantity", "substitutedQuantity", "noSubstitutedQuantity"]
 )
-xl_pickers = safe_open_excel(io.BytesIO(pickers_bytes)) if pickers_bytes is not None else None
+xl_pickers = safe_open_excel(io.BytesIO(pickers_bytes), "Pickers") if pickers_bytes is not None else None
 _PICKERS_COLS = ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
 df_picker_raw = load_section_from_xl(xl_pickers, _PICKERS_COLS, required=False)
 if df_picker_raw is None:
@@ -1794,7 +1798,7 @@ if df_picker_raw is None:
     # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
     # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
     df_picker_raw = load_section_from_xl(xl_reporte, _PICKERS_COLS, required=False)
-xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes)) if pedidos_bytes is not None else None
+xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes), "Pedidos +72h") if pedidos_bytes is not None else None
 df_pedidos_raw = load_section_from_xl(
     xl_pedidos,
     ["commerceId", "commerceDateCreated", "deliveryFinishDate", "status", "totalAmount", "shippingWarehouseName"],
