@@ -861,7 +861,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 <div class="card" style="border-top:4px solid #f5a623;">
   <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
   <div class="value">{html.escape(pct(share))}</div>
-  <div class="small">Venta e-commerce sobre el total de la tienda</div>
+  <div class="small">Venta e-commerce sobre el total de la compañía</div>
 </div>
 
 <div class="card" style="border-top:4px solid #e8432c;">
@@ -895,7 +895,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
       </div>
       <div class="progress-row">
         <span>Venta acumulada: {html.escape(money(acc_ecom))}</span>
-        <span>Objetivo: {html.escape(money(objetivo_ecom_mes))}</span>
+        <span>Objetivo: {html.escape(money(objetivo_ecom_mes))} (+{target*100:.0f}%)</span>
       </div>
     </div>
     <div class="progress-target">
@@ -977,7 +977,7 @@ with tab1:
         <div class="card" style="border-top:4px solid #f5a623;">
           <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
           <div class="value">{pct(share)}</div>
-          <div class="small">Venta e-commerce sobre el total de la tienda</div>
+          <div class="small">Venta e-commerce sobre el total de la compañía</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1017,7 +1017,7 @@ with tab1:
           </div>
           <div class="progress-row">
             <span>Venta acumulada: {money(acc_ecom)}</span>
-            <span>Objetivo: {money(objetivo_ecom_mes)}</span>
+            <span>Objetivo: {money(objetivo_ecom_mes)} (+{target*100:.0f}%)</span>
           </div>
         </div>
         <div class="progress-target">
