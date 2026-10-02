@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import tempfile
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 st.set_page_config(
     page_title="MásOnline | Ecommerce",
@@ -318,14 +320,20 @@ def save_bytes_to_github(shared_path, content_bytes, label):
     except Exception:
         return False
 
-def save_shared_bytes(uploaded_file, shared_path, label="reporte"):
+def save_shared_bytes(uploaded_file, shared_path, label="reporte", stamp_date=False):
     """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
     compartida (para esta misma sesión) Y lo sube a GitHub, para que quede
     guardado para siempre y no haya que volver a subirlo cada vez que la
     app se reinicia o se actualiza — igual que ya pasa con los datos de
     Venta. Si no se subió nada nuevo, usa la copia local si existe, o si no
     la trae de GitHub. Devuelve True si hay algo disponible (nuevo, local o
-    de GitHub)."""
+    de GitHub).
+
+    Si stamp_date=True, además guarda (local y en GitHub) la fecha de hoy
+    (Argentina) en un archivito aparte "<nombre>.date", para que la página
+    que lee este reporte pueda saber si se subió hoy o es de un día
+    anterior (On-Time y Fill Rate: si no se subió nada hoy, esa tarjeta
+    tiene que mostrarse vacía en vez de arrastrar el dato de ayer)."""
     if uploaded_file is not None:
         content = uploaded_file.getvalue()
         try:
@@ -333,6 +341,14 @@ def save_shared_bytes(uploaded_file, shared_path, label="reporte"):
         except Exception:
             pass
         save_bytes_to_github(shared_path, content, label)
+        if stamp_date:
+            fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
+            date_path = shared_path.with_name(shared_path.name + ".date")
+            try:
+                date_path.write_text(fecha_hoy)
+            except Exception:
+                pass
+            save_bytes_to_github(date_path, fecha_hoy.encode("utf-8"), f"{label} (fecha)")
         return True
 
     if shared_path.exists():
@@ -352,9 +368,9 @@ faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH, "Falt
 pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH, "Pedidos +72h")
 pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH, "Pickers")
 reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH, "Reclamos Operativos")
-ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time")
+ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time", stamp_date=True)
 delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH, "Delivery")
-fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate")
+fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate", stamp_date=True)
 vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH, "Comparativo (vs ventas)")
 
 if pedidos_guardado or faltantes_guardado:
