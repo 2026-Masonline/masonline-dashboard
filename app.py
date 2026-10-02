@@ -670,9 +670,25 @@ def replace_period(uploaded_file, year, month, label):
     except Exception as e:
         st.error(f"{label}: no pude procesar el Excel: {e}")
 
-replace_period(upload_current, 2026, 9, "Mes en curso")
-replace_period(upload_prev, 2026, 8, "Mes anterior")
-replace_period(upload_ly, 2025, 9, "Mismo período año pasado")
+# Año/mes de cada tarjeta, calculados solos a partir de la fecha de hoy (hora
+# Argentina) en vez de quedar fijos en el código — así en Venta diaria no
+# hace falta tocar nada acá cuando empieza un mes nuevo: "Mes en curso" es
+# siempre el mes calendario actual, "Mes anterior" el inmediato anterior (con
+# el cambio de año bien resuelto en diciembre/enero), y "Mismo período año
+# pasado" el mismo mes pero del año anterior.
+from datetime import datetime as _datetime_hoy
+from zoneinfo import ZoneInfo as _ZoneInfo_hoy
+
+_hoy_ar = _datetime_hoy.now(_ZoneInfo_hoy("America/Argentina/Buenos_Aires")).date()
+_anio_actual, _mes_actual = _hoy_ar.year, _hoy_ar.month
+if _mes_actual == 1:
+    _anio_anterior, _mes_anterior = _anio_actual - 1, 12
+else:
+    _anio_anterior, _mes_anterior = _anio_actual, _mes_actual - 1
+
+replace_period(upload_current, _anio_actual, _mes_actual, "Mes en curso")
+replace_period(upload_prev, _anio_anterior, _mes_anterior, "Mes anterior")
+replace_period(upload_ly, _anio_actual - 1, _mes_actual, "Mismo período año pasado")
 
 if not (upload_current or upload_prev or upload_ly):
     st.markdown(
