@@ -308,6 +308,7 @@ objetivo_ecom_mes = prev_month_ecom_full * (1 + target)
 avance_objetivo = (
     acc_ecom / objetivo_ecom_mes if objetivo_ecom_mes else None
 )
+avance_objetivo_barra = min(avance_objetivo, 1.0) * 100 if avance_objetivo is not None else 0
 
 day_change = (
     (latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1
@@ -713,6 +714,26 @@ body {{
     font-weight: 800;
     margin: 26px 0 12px;
 }}
+.progress-wrap {{ padding: 20px 22px; }}
+.progress-layout {{
+    display: flex;
+    align-items: center;
+    gap: 28px;
+}}
+.progress-main {{ flex: 1; }}
+.progress-track {{
+    height: 16px;
+    background: #e6e9ed;
+    border-radius: 20px;
+    overflow: hidden;
+    margin: 10px 0 8px;
+}}
+.progress-fill {{
+    height: 100%;
+    width: {avance_objetivo_barra:.1f}%;
+    background: #2f9e66;
+    border-radius: 20px;
+}}
 .progress-row {{
     display: flex;
     justify-content: space-between;
@@ -866,6 +887,24 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 
         </div>
 
+<div class="progress-wrap">
+  <div class="progress-layout">
+    <div class="progress-main">
+      <div class="progress-track">
+        <div class="progress-fill"></div>
+      </div>
+      <div class="progress-row">
+        <span>Venta acumulada: {html.escape(money(acc_ecom))}</span>
+        <span>Objetivo: {html.escape(money(objetivo_ecom_mes))}</span>
+      </div>
+    </div>
+    <div class="progress-target">
+      {html.escape(pct(avance_objetivo) if avance_objetivo is not None else "—")}
+      <small>del objetivo</small>
+    </div>
+  </div>
+</div>
+
 <div class="section">Top 5 tiendas eCommerce</div>
 <div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">
 Ranking por venta ecommerce, con pedidos de cada tienda.
@@ -968,6 +1007,26 @@ with tab1:
           <div class="small">{objetivo_caption}</div>
         </div>
         """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="progress-wrap">
+      <div class="progress-layout">
+        <div class="progress-main">
+          <div class="progress-track">
+            <div class="progress-fill" style="width:{avance_objetivo_barra:.1f}%;"></div>
+          </div>
+          <div class="progress-row">
+            <span>Venta acumulada: {money(acc_ecom)}</span>
+            <span>Objetivo: {money(objetivo_ecom_mes)}</span>
+          </div>
+        </div>
+        <div class="progress-target">
+          {pct(avance_objetivo) if avance_objetivo is not None else "—"}
+          <small>del objetivo</small>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ---- Resumen visual: Compañía vs Ecommerce (Diario / Mensual) ----
     share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
