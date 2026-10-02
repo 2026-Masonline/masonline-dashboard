@@ -1892,9 +1892,18 @@ if pedidos_72h is not None:
     pedidos_72h = pedidos_72h[pedidos_72h["Dias"] >= 3].copy()
     pedidos_72h["MontoNum"] = pedidos_72h["Monto"].apply(ar_number)
     pedidos_72h["Tienda"] = pedidos_72h["Tienda"].apply(norm_txt)
-    pedidos_72h[["Sev", "SevLabel"]] = pedidos_72h["Dias"].apply(
-        lambda d: pd.Series(sev_pedido_72h(d))
-    )
+    if len(pedidos_72h):
+        pedidos_72h[["Sev", "SevLabel"]] = pedidos_72h["Dias"].apply(
+            lambda d: pd.Series(sev_pedido_72h(d))
+        )
+    else:
+        # Sin esto, cuando no hay NINGÚN pedido con 3+ días (día bueno, o
+        # recién arrancando el mes) pandas no puede inferir que esta
+        # columna debería tener 2 columnas (Sev/SevLabel) a partir de un
+        # .apply() sobre cero filas, y la asignación de abajo explota con
+        # un ValueError que tira abajo toda la página.
+        pedidos_72h["Sev"] = pd.Series(dtype=object)
+        pedidos_72h["SevLabel"] = pd.Series(dtype=object)
 
 # ---- Reclamos ----
 if reclamos is not None:
@@ -1902,9 +1911,13 @@ if reclamos is not None:
     reclamos["Tienda"] = reclamos["Tienda"].apply(norm_txt)
     reclamos["Estado"] = reclamos["Estado"].apply(norm_txt)
     reclamos["Tipo"] = reclamos["Tipo"].apply(norm_txt)
-    reclamos[["Sev", "SevLabel"]] = reclamos.apply(
-        lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"])), axis=1
-    )
+    if len(reclamos):
+        reclamos[["Sev", "SevLabel"]] = reclamos.apply(
+            lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"])), axis=1
+        )
+    else:
+        reclamos["Sev"] = pd.Series(dtype=object)
+        reclamos["SevLabel"] = pd.Series(dtype=object)
 
 # ---- On Time (Preparación directo) ----
 ontime_prepa = None
@@ -1936,7 +1949,11 @@ if df_ontime_raw is not None:
 
     # Preparación: % on time directo, por tienda
     prepa = d[["Tienda", "Formato", "Pedidos", "Fuera", "OntimePct"]].copy()
-    prepa[["Sev", "SevLabel"]] = prepa["OntimePct"].apply(lambda p: pd.Series(sev_ontime(p)))
+    if len(prepa):
+        prepa[["Sev", "SevLabel"]] = prepa["OntimePct"].apply(lambda p: pd.Series(sev_ontime(p)))
+    else:
+        prepa["Sev"] = pd.Series(dtype=object)
+        prepa["SevLabel"] = pd.Series(dtype=object)
     ontime_prepa = prepa
 
 # ---- Fill Rate ----
@@ -2020,9 +2037,13 @@ elif df_fr_raw is not None:
             "ConSustituto": con_sustituto, "MontoFaltante": monto_faltante, "FRPct": fr_pct
         })
     fr_df = pd.DataFrame(rows)
-    fr_df[["Sev", "SevLabel"]] = fr_df.apply(
-        lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
-    )
+    if len(fr_df):
+        fr_df[["Sev", "SevLabel"]] = fr_df.apply(
+            lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
+        )
+    else:
+        fr_df["Sev"] = pd.Series(dtype=object)
+        fr_df["SevLabel"] = pd.Series(dtype=object)
     fill_rate = fr_df
 
 # ---- Cancelados ----
