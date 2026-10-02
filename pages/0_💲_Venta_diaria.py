@@ -296,7 +296,23 @@ share = acc_ecom / acc_company if acc_company else 0
 target = 0.03
 gap = target - share
 
-projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
+# "Venta necesaria para el objetivo": en vez de proyectar cuánto vamos a
+# vender si seguimos al ritmo actual, mostramos cuánta venta e-commerce hace
+# falta en el mes para llegar al objetivo fijo de 3% de participación —
+# puesto en contexto contra lo que se vendió en el mismo mes el año pasado,
+# para saber si ese número implica crecer o no respecto del año anterior.
+proj_company_mes = acc_company / days_elapsed * days_month if days_elapsed else 0
+objetivo_ecom_mes = target * proj_company_mes
+
+ly_mes_completo = df[
+    (df["date"].dt.year == LY_YEAR) &
+    (df["date"].dt.month == REF_MONTH)
+]["ecommerce_tax"].sum()
+
+vs_ly_objetivo = (
+    (objetivo_ecom_mes / ly_mes_completo) - 1
+    if ly_mes_completo else None
+)
 
 day_change = (
     (latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1
@@ -457,6 +473,11 @@ def intfmt(v):
     return f"{int(v):,}".replace(",", ".")
 
 share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+
+if vs_ly_objetivo is not None:
+    objetivo_caption = f"{pct_change(vs_ly_objetivo)} vs {MES_ACTUAL_NOMBRE} {LY_YEAR}"
+else:
+    objetivo_caption = f"Sin datos de {MES_ACTUAL_NOMBRE} {LY_YEAR} para comparar"
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -860,9 +881,9 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 </div>
 
 <div class="card" style="border-top:4px solid #2f9e66;">
-  <div class="label" style="color:#208653;">PROYECCIÓN DE CIERRE</div>
-  <div class="value" style="color:#208653;">{html.escape(money(projection))}</div>
-  <div class="small">Promedio diario × {days_month} días</div>
+  <div class="label" style="color:#208653;">VENTA NECESARIA (3%)</div>
+  <div class="value" style="color:#208653;">{html.escape(money(objetivo_ecom_mes))}</div>
+  <div class="small">{html.escape(objetivo_caption)}</div>
 </div>
 
 </div>
@@ -986,9 +1007,9 @@ with tab1:
     with c4:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #2f9e66;">
-          <div class="label" style="color:#208653;">PROYECCIÓN DE CIERRE</div>
-          <div class="value" style="color:#208653;">{money(projection)}</div>
-          <div class="small">Promedio diario × {days_month} días</div>
+          <div class="label" style="color:#208653;">VENTA NECESARIA (3%)</div>
+          <div class="value" style="color:#208653;">{money(objetivo_ecom_mes)}</div>
+          <div class="small">{objetivo_caption}</div>
         </div>
         """, unsafe_allow_html=True)
 
