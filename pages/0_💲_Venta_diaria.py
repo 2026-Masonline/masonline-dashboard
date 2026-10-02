@@ -564,7 +564,7 @@ def build_standalone_html():
     """
 
     progress = min(share / target, 1.0) * 100
-    progress_label = f"{share/target:.0%}"
+    progress_label = f"{share/target:.2f}".replace(".", ",")
 
     def standalone_compare(title, value, base_text):
         if value is None:
@@ -1007,7 +1007,7 @@ with tab1:
           </div>
         </div>
         <div class="progress-target">
-          {share/target:.0%}
+          {f"{share/target:.2f}".replace(".", ",")}
           <small>del objetivo</small>
         </div>
       </div>
