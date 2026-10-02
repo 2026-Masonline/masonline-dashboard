@@ -895,7 +895,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
       </div>
       <div class="progress-row">
         <span>Venta acumulada: {html.escape(money(acc_ecom))}</span>
-        <span>Objetivo: {html.escape(money(objetivo_ecom_mes))} (+{target*100:.0f}%)</span>
+        <span>Objetivo: {html.escape(money(objetivo_ecom_mes))}</span>
       </div>
     </div>
     <div class="progress-target">
@@ -1017,7 +1017,7 @@ with tab1:
           </div>
           <div class="progress-row">
             <span>Venta acumulada: {money(acc_ecom)}</span>
-            <span>Objetivo: {money(objetivo_ecom_mes)} (+{target*100:.0f}%)</span>
+            <span>Objetivo: {money(objetivo_ecom_mes)}</span>
           </div>
         </div>
         <div class="progress-target">
