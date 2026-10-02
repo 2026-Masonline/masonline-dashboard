@@ -640,6 +640,25 @@ def get_shared_bytes(shared_path):
         return content
     return None
 
+def get_shared_date(shared_path):
+    """Lee la fecha (Argentina) con la que se guardó este reporte la última
+    vez que se subió uno nuevo (ver stamp_date en app.py). None si ese
+    reporte nunca se subió con este control, o es de antes de que existiera."""
+    date_path = shared_path.with_name(shared_path.name + ".date")
+    if date_path.exists():
+        try:
+            return date_path.read_text().strip()
+        except Exception:
+            pass
+    content = fetch_shared_from_github(date_path)
+    if content is not None:
+        try:
+            date_path.write_text(content.decode("utf-8"))
+        except Exception:
+            pass
+        return content.decode("utf-8").strip()
+    return None
+
 # ---------------------------------------------------------------------
 # Historial mensual de Faltantes: cada vez que subís un archivo de Faltantes
 # nuevo, se agregan sus filas (con la fecha de hoy) a un Google Sheet, para
@@ -1703,6 +1722,15 @@ reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
 pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
 ontime_bytes = get_shared_bytes(SHARED_ONTIME_PATH)
 fillrate_bytes = get_shared_bytes(SHARED_FILLRATE_PATH)
+
+# On-Time y Fill Rate se suben todos los días en un archivo aparte: si el
+# último que se subió no es de hoy (Argentina), no lo mostramos — mejor
+# "sin datos" que arrastrar el número de un día anterior sin que se note.
+_hoy_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
+if get_shared_date(SHARED_ONTIME_PATH) != _hoy_ar:
+    ontime_bytes = None
+if get_shared_date(SHARED_FILLRATE_PATH) != _hoy_ar:
+    fillrate_bytes = None
 
 if (
     reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None
