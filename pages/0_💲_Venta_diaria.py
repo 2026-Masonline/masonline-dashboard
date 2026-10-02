@@ -294,21 +294,9 @@ acc_units = current["units"].sum()
 
 share = acc_ecom / acc_company if acc_company else 0
 target = 0.03
+gap = target - share
 
-# Objetivo: vender este mes un 3% más de e-commerce que TODO el mes anterior
-# ya cerrado — un objetivo de crecimiento mes a mes, no una participación
-# fija sobre el total de la tienda.
-prev_month_ecom_full = df[
-    (df["date"].dt.year == PREV_YEAR) &
-    (df["date"].dt.month == PREV_MONTH)
-]["ecommerce_tax"].sum()
-
-objetivo_ecom_mes = prev_month_ecom_full * (1 + target)
-
-avance_objetivo = (
-    acc_ecom / objetivo_ecom_mes if objetivo_ecom_mes else None
-)
-avance_objetivo_barra = min(avance_objetivo, 1.0) * 100 if avance_objetivo is not None else 0
+projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
 
 day_change = (
     (latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1
@@ -470,14 +458,6 @@ def intfmt(v):
 
 share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
-if avance_objetivo is not None:
-    objetivo_caption = (
-        f"{pct(avance_objetivo)} del objetivo "
-        f"(+{target*100:.0f}% vs {MES_ANTERIOR_ABREV.lower()})"
-    )
-else:
-    objetivo_caption = f"Sin datos de {MES_ANTERIOR_ABREV.lower()} para calcular el objetivo"
-
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
     brand_html = (
@@ -516,6 +496,8 @@ def build_standalone_html():
         )
     else:
         html_logo = '<div class="brand">Más<span>Online</span></div>'
+
+    progress = min(share / target, 1.0) * 100
 
     # Datos para el gráfico.
     chart_w = 1120
@@ -730,7 +712,7 @@ body {{
 }}
 .progress-fill {{
     height: 100%;
-    width: {avance_objetivo_barra:.1f}%;
+    width: {progress:.1f}%;
     background: #2f9e66;
     border-radius: 20px;
 }}
@@ -861,7 +843,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 <div class="card" style="border-top:4px solid #f5a623;">
   <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
   <div class="value">{html.escape(pct(share))}</div>
-  <div class="small">Venta e-commerce sobre el total de la compañía</div>
+  <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
 </div>
 
 <div class="card" style="border-top:4px solid #e8432c;">
@@ -877,9 +859,9 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 </div>
 
 <div class="card" style="border-top:4px solid #2f9e66;">
-  <div class="label" style="color:#208653;">VENTA NECESARIA (3%)</div>
-  <div class="value" style="color:#208653;">{html.escape(money(objetivo_ecom_mes))}</div>
-  <div class="small">{html.escape(objetivo_caption)}</div>
+  <div class="label" style="color:#208653;">PROYECCIÓN DE CIERRE</div>
+  <div class="value" style="color:#208653;">{html.escape(money(projection))}</div>
+  <div class="small">Promedio diario × {days_month} días</div>
 </div>
 
 </div>
@@ -887,6 +869,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 
         </div>
 
+<div class="section">Avance de participación</div>
 <div class="progress-wrap">
   <div class="progress-layout">
     <div class="progress-main">
@@ -894,12 +877,12 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
         <div class="progress-fill"></div>
       </div>
       <div class="progress-row">
-        <span>Venta acumulada: {html.escape(money(acc_ecom))}</span>
-        <span>Objetivo: {html.escape(money(objetivo_ecom_mes))}</span>
+        <span>Participación actual: {html.escape(pct(share))}</span>
+        <span>Objetivo: 3,00%</span>
       </div>
     </div>
     <div class="progress-target">
-      {html.escape(pct(avance_objetivo) if avance_objetivo is not None else "—")}
+      {html.escape(f"{share/target:.0%}")}
       <small>del objetivo</small>
     </div>
   </div>
@@ -977,7 +960,7 @@ with tab1:
         <div class="card" style="border-top:4px solid #f5a623;">
           <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
           <div class="value">{pct(share)}</div>
-          <div class="small">Venta e-commerce sobre el total de la compañía</div>
+          <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1002,26 +985,29 @@ with tab1:
     with c4:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #2f9e66;">
-          <div class="label" style="color:#208653;">VENTA NECESARIA (3%)</div>
-          <div class="value" style="color:#208653;">{money(objetivo_ecom_mes)}</div>
-          <div class="small">{objetivo_caption}</div>
+          <div class="label" style="color:#208653;">PROYECCIÓN DE CIERRE</div>
+          <div class="value" style="color:#208653;">{money(projection)}</div>
+          <div class="small">Promedio diario × {days_month} días</div>
         </div>
         """, unsafe_allow_html=True)
 
+    progress = min(share / target, 1.0) * 100
+
+    st.markdown('<div class="section">Avance de participación</div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="progress-wrap">
       <div class="progress-layout">
         <div class="progress-main">
           <div class="progress-track">
-            <div class="progress-fill" style="width:{avance_objetivo_barra:.1f}%;"></div>
+            <div class="progress-fill" style="width:{progress:.1f}%;"></div>
           </div>
           <div class="progress-row">
-            <span>Venta acumulada: {money(acc_ecom)}</span>
-            <span>Objetivo: {money(objetivo_ecom_mes)}</span>
+            <span>Participación actual: {pct(share)}</span>
+            <span>Objetivo: {pct(target)}</span>
           </div>
         </div>
         <div class="progress-target">
-          {pct(avance_objetivo) if avance_objetivo is not None else "—"}
+          {f"{share/target:.0%}"}
           <small>del objetivo</small>
         </div>
       </div>
