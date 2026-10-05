@@ -145,6 +145,8 @@ latest = current.iloc[-1]
 days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 days_elapsed = len(current)
 
+share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
 acc_orders = current["orders"].sum()
@@ -329,6 +331,9 @@ st.markdown(f"""
   <div class="hero-date">
     {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -465,6 +470,9 @@ body {{
   <div class="hero-date">
     {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+    </div>
   </div>
 </div>
 
