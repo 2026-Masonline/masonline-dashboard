@@ -2475,10 +2475,21 @@ if any_data_loaded:
         1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
         7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
     }
+    # Filtro de sanidad: alguno de los archivos de origen a veces trae alguna
+    # fecha mal cargada (de años muy anteriores) que no tiene nada que ver
+    # con la operación real — sin este filtro, esas fechas sueltas
+    # terminaban agregando años viejos sueltos al desplegable de Mes. Se
+    # descarta todo lo que quede fuera de una ventana razonable alrededor de
+    # la fecha de referencia real (now_ref): hasta 24 meses atrás y hasta 2
+    # meses adelante.
+    _mes_piso = (now_ref - pd.DateOffset(months=24)).to_period("M")
+    _mes_techo = (now_ref + pd.DateOffset(months=2)).to_period("M")
     _meses_disponibles = set()
     for d, _col in [(pedidos_72h, "Fecha"), (reclamos, "Fecha"), (cancelados, "Fecha"), (faltantes, "FechaArchivo")]:
         if d is not None and _col in d.columns:
-            _meses_disponibles.update(d[_col].dropna().dt.to_period("M").astype(str).unique())
+            _periodos = d[_col].dropna().dt.to_period("M")
+            _periodos = _periodos[(_periodos >= _mes_piso) & (_periodos <= _mes_techo)]
+            _meses_disponibles.update(_periodos.astype(str).unique())
     _meses_ordenados = sorted(_meses_disponibles, reverse=True)
     _meses_labels = {m: f"{_MESES_ES[int(m.split('-')[1])]} {m.split('-')[0]}" for m in _meses_ordenados}
     with col_mes:
