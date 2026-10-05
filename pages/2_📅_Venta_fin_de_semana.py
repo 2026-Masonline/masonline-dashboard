@@ -155,40 +155,37 @@ target = 0.03
 share = acc_ecom / acc_company if acc_company else 0
 progress = min(share / target, 1.0) * 100 if target else 0
 
-# Buscamos el Sábado más reciente con datos cargados (y el Viernes/Domingo
-# alrededor), sin asumir que "hoy" es un día en particular.
+# Buscamos el Sábado más reciente con datos cargados (y el Viernes
+# anterior), sin asumir que "hoy" es un día en particular. El domingo no
+# se usa para nada en esta página: "fin de semana" acá es Viernes +
+# Sábado únicamente.
 last_data_date = current["date"].max()
 days_since_saturday = (last_data_date.weekday() - 5) % 7  # Monday=0 ... Saturday=5, Sunday=6
 last_saturday = last_data_date - pd.Timedelta(days=days_since_saturday)
 last_friday = last_saturday - pd.Timedelta(days=1)
-last_sunday = last_saturday + pd.Timedelta(days=1)
 
 friday_sales = current[current["date"] == last_friday]["ecommerce_tax"].sum()
 saturday_sales = current[current["date"] == last_saturday]["ecommerce_tax"].sum()
-sunday_sales = current[current["date"] == last_sunday]["ecommerce_tax"].sum()
 
 friday_units = current[current["date"] == last_friday]["units"].sum()
 saturday_units = current[current["date"] == last_saturday]["units"].sum()
-sunday_units = current[current["date"] == last_sunday]["units"].sum()
 
 friday_orders = current[current["date"] == last_friday]["orders"].sum()
 saturday_orders = current[current["date"] == last_saturday]["orders"].sum()
-sunday_orders = current[current["date"] == last_sunday]["orders"].sum()
 
 friday_company = current[current["date"] == last_friday]["company_tax"].sum()
 saturday_company = current[current["date"] == last_saturday]["company_tax"].sum()
-sunday_company = current[current["date"] == last_sunday]["company_tax"].sum()
 
-# Fin de semana = Viernes + Sábado + Domingo (los tres días).
-weekend_full_ecom = friday_sales + saturday_sales + sunday_sales
-weekend_full_units = friday_units + saturday_units + sunday_units
-weekend_full_orders = friday_orders + saturday_orders + sunday_orders
-weekend_full_company = friday_company + saturday_company + sunday_company
+# Fin de semana = Viernes + Sábado (el domingo no se toma).
+weekend_full_ecom = friday_sales + saturday_sales
+weekend_full_units = friday_units + saturday_units
+weekend_full_orders = friday_orders + saturday_orders
+weekend_full_company = friday_company + saturday_company
 weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_company else 0
-weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_sunday.strftime('%d-%m')}"
+weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_saturday.strftime('%d-%m')}"
 
 # ---- Venta por fin de semana del mes en curso ----
-finde_rows = current[current["date"].dt.weekday.isin([4, 5, 6])].copy()
+finde_rows = current[current["date"].dt.weekday.isin([4, 5])].copy()
 finde_rows["finde_inicio"] = finde_rows["date"] - pd.to_timedelta(
     (finde_rows["date"].dt.weekday - 4) % 7, unit="D"
 )
@@ -203,36 +200,19 @@ finde_tabla = (
     .reset_index(drop=True)
 )
 finde_tabla["rango"] = finde_tabla["finde_inicio"].apply(
-    lambda d: f"Vie {d.strftime('%d/%m')} – Dom {(d + pd.Timedelta(days=2)).strftime('%d/%m')}"
+    lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
 )
 finde_tabla["participacion"] = (
     finde_tabla["venta"] / acc_ecom if acc_ecom else 0
 )
 
 # ---- Mismo período, abierto día por día (Viernes/Sábado) ----
-# El domingo no se muestra como fila aparte: se suma al sábado del mismo
-# fin de semana (la venta del domingo queda reflejada junto con la del
-# sábado, en vez de en una línea propia).
-DIA_NOMBRE = {4: "Viernes", 5: "Sábado", 6: "Domingo"}
+DIA_NOMBRE = {4: "Viernes", 5: "Sábado"}
 detalle_dia = finde_rows.copy().sort_values("date")
 detalle_dia["dia_nombre"] = detalle_dia["date"].dt.weekday.map(DIA_NOMBRE)
 detalle_dia["rango"] = detalle_dia["finde_inicio"].apply(
-    lambda d: f"Vie {d.strftime('%d/%m')} – Dom {(d + pd.Timedelta(days=2)).strftime('%d/%m')}"
+    lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
 )
-
-_domingo_sums = (
-    detalle_dia[detalle_dia["dia_nombre"] == "Domingo"]
-    .groupby("finde_inicio")[["ecommerce_tax", "orders", "units"]]
-    .sum()
-    .rename(columns=lambda c: f"{c}_dom")
-)
-detalle_dia = detalle_dia[detalle_dia["dia_nombre"] != "Domingo"].merge(
-    _domingo_sums, on="finde_inicio", how="left"
-)
-_es_sabado = detalle_dia["dia_nombre"] == "Sábado"
-for _col in ["ecommerce_tax", "orders", "units"]:
-    detalle_dia[_col] = detalle_dia[_col] + detalle_dia[f"{_col}_dom"].fillna(0) * _es_sabado
-detalle_dia = detalle_dia.drop(columns=["ecommerce_tax_dom", "orders_dom", "units_dom"])
 
 def money(v):
     """Número completo mientras esté por debajo del millón (ej. $213.945).
@@ -263,12 +243,11 @@ def intfmt(v):
 
 def render_finde_cards_html(finde_tabla, detalle_dia):
     """Una tarjeta por fin de semana: arriba el rango de fechas, abajo la
-    info de Viernes y después Sábado (la venta del domingo ya viene sumada
-    al sábado, no se muestra como fila aparte)."""
+    info de Viernes y después Sábado (no se toma el domingo)."""
     if not len(finde_tabla):
         return (
             '<div class="upload-box"><div class="upload-text">'
-            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+            'Todavía no hay ningún fin de semana (viernes y sábado) cargado este mes.'
             '</div></div>'
         )
     orden_dia = {"Viernes": 0, "Sábado": 1}
@@ -283,12 +262,11 @@ def render_finde_cards_html(finde_tabla, detalle_dia):
 
         filas_dias = ""
         for _, d in dias_finde.iterrows():
-            etiqueta_dia = d["dia_nombre"] + (" + domingo" if d["dia_nombre"] == "Sábado" else "")
             filas_dias += (
                 '<div style="display:flex;justify-content:space-between;align-items:baseline;'
                 'padding:9px 0;border-top:1px solid #eef0ef;">'
                 f'<span style="font-weight:700;color:#20252b;font-size:13.5px;">'
-                f'{etiqueta_dia} <span style="font-weight:400;color:#6b7280;">{d["date"].strftime("%d/%m")}</span></span>'
+                f'{d["dia_nombre"]} <span style="font-weight:400;color:#6b7280;">{d["date"].strftime("%d/%m")}</span></span>'
                 f'<span style="font-size:13px;color:#20252b;">'
                 f'<b style="color:#e8432c;">{money(d["ecommerce_tax"])}</b>'
                 f' · {intfmt(d["orders"])} pedidos · {intfmt(d["units"])} unidades</span>'
@@ -366,7 +344,7 @@ def build_standalone_html():
     else:
         tabla_html = (
             '<div class="upload-box"><div class="upload-text">'
-            'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+            'Todavía no hay ningún fin de semana (viernes y sábado) cargado este mes.'
             '</div></div>'
         )
 
@@ -460,7 +438,7 @@ body {{
 </div>
 
 <div class="section">Fin de semana vs. acumulado</div>
-<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Fin de semana = Viernes + Sábado + Domingo.</div>
+<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Fin de semana = Viernes + Sábado.</div>
 
 <div class="kpis">
 
@@ -512,7 +490,7 @@ body {{
 {tabla_html}
 
 <div class="section">Detalle por día</div>
-<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Mismo período de arriba, abierto día por día (viernes, sábado y domingo de cada fin de semana).</div>
+<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">Mismo período de arriba, abierto día por día (viernes y sábado de cada fin de semana).</div>
 {detalle_tabla_html}
 
 <div class="footer">
@@ -539,7 +517,7 @@ st.download_button(
 st.markdown('<div class="section">Fin de semana vs. acumulado</div>', unsafe_allow_html=True)
 st.markdown(
     '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
-    'Fin de semana = Viernes + Sábado + Domingo.'
+    'Fin de semana = Viernes + Sábado.'
     '</div>',
     unsafe_allow_html=True
 )
@@ -636,7 +614,7 @@ if len(finde_tabla):
 else:
     st.markdown(
         '<div class="upload-box"><div class="upload-text">'
-        'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
+        'Todavía no hay ningún fin de semana (viernes y sábado) cargado este mes.'
         '</div></div>',
         unsafe_allow_html=True
     )
@@ -644,7 +622,7 @@ else:
 st.markdown('<div class="section">Detalle por día</div>', unsafe_allow_html=True)
 st.markdown(
     '<div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:16px;">'
-    'Mismo período de arriba, abierto día por día (viernes, sábado y domingo de cada fin de semana).'
+    'Mismo período de arriba, abierto día por día (viernes y sábado de cada fin de semana).'
     '</div>',
     unsafe_allow_html=True
 )
