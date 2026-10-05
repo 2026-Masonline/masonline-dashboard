@@ -125,17 +125,24 @@ except Exception as e:
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df = df[df["date"].dt.date < arg_today].copy()
 
+REF_YEAR, REF_MONTH = arg_today.year, arg_today.month
+
+_MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+MES_ACTUAL_NOMBRE = _MESES_ES[REF_MONTH - 1].capitalize()
+MES_ACTUAL_LABEL = f"{MES_ACTUAL_NOMBRE} {REF_YEAR}"
+
 current = df[
-    (df["date"].dt.year == 2026) &
-    (df["date"].dt.month == 9)
+    (df["date"].dt.year == REF_YEAR) &
+    (df["date"].dt.month == REF_MONTH)
 ].copy().sort_values("date")
 
 if current.empty:
-    st.error("No hay datos de septiembre 2026 todavía. Subilos desde la página del Dashboard de Ventas.")
+    st.error(f"No hay datos de {MES_ACTUAL_NOMBRE.lower()} {REF_YEAR} todavía. Subilos desde la página del Dashboard de Ventas.")
     st.stop()
 
 latest = current.iloc[-1]
-days_month = calendar.monthrange(2026, 9)[1]
+days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 days_elapsed = len(current)
 
 acc_ecom = current["ecommerce_tax"].sum()
@@ -292,7 +299,7 @@ st.markdown(f"""
     <div class="hero-sub">VENTA FIN DE SEMANA</div>
   </div>
   <div class="hero-date">
-    Septiembre 2026
+    {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
   </div>
 </div>
@@ -428,7 +435,7 @@ body {{
     <div class="hero-sub">VENTA FIN DE SEMANA</div>
   </div>
   <div class="hero-date">
-    Septiembre 2026
+    {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
   </div>
 </div>
