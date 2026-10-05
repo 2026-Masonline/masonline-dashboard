@@ -766,6 +766,16 @@ PICKER_LOG_HEADERS = [
     "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "TiempoPromedioMin"
 ]
 
+# Historial diario de Pedidos +72h: misma planilla de Google Sheets que
+# Faltantes/Pickers (hoja aparte, "HistorialPedidos72h"). A diferencia de
+# Faltantes (que trae el mes completo en cada archivo), el archivo de
+# Pedidos +72h es siempre "la foto de ahora" — los pedidos que están
+# atrasados en este momento, no un historial. Por eso acá no se reemplaza
+# por mes: se reemplaza únicamente lo que quedó guardado con la fecha de
+# HOY (por si subís el archivo más de una vez en el día) y se deja intacto
+# todo lo de días anteriores, para que se vaya acumulando real mes a mes.
+PEDIDOS_LOG_HEADERS = ["Fecha", "Pedido", "Tienda", "Estado", "Dias", "Monto"]
+
 # Guarda el motivo puntual por el que no se pudo conectar (para mostrarlo en
 # pantalla mientras estamos activando esto por primera vez). No es sensible
 # — solo dice qué falló, nunca la clave en sí. Va detrás de cache_resource
@@ -984,6 +994,89 @@ def load_faltantes_log():
     except Exception:
         return None
     df = pd.DataFrame(records) if records else pd.DataFrame(columns=FALTANTES_LOG_HEADERS)
+    if "Fecha" in df.columns:
+        df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+    return df
+
+def _pedidos_log_ws():
+    """Abre (o crea si no existe) la hoja 'HistorialPedidos72h' dentro del
+    mismo Google Sheet que Faltantes/Pickers. None si no está conectado."""
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        _gsheets_debug_box()["msg"] = "Falta FALTANTES_SHEET_ID en Secrets."
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        try:
+            ws = sh.worksheet("HistorialPedidos72h")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="HistorialPedidos72h", rows=2000, cols=len(PEDIDOS_LOG_HEADERS))
+            ws.append_row(PEDIDOS_LOG_HEADERS)
+        _gsheets_debug_box()["msg"] = None
+        return ws
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
+        return None
+
+def replace_pedidos_hoy_en_sheet(pedidos_df):
+    """Guarda en el historial los pedidos +72h de HOY. Como el archivo de
+    Pedidos +72h es siempre "la foto de ahora" (no trae un historial dentro
+    del archivo como Faltantes), acá se reemplaza únicamente lo que ya
+    estuviera guardado con la fecha de hoy (por si se sube el archivo más de
+    una vez en el día) y se deja intacto todo lo de días anteriores — así se
+    va acumulando real, día a día, mes a mes. Requiere que pedidos_df tenga
+    las columnas Pedido/Tienda/Estado/Dias/MontoNum. Devuelve True si pudo
+    escribir (o si no había nada para escribir), False si falló la conexión
+    con Google Sheets."""
+    ws = _pedidos_log_ws()
+    if ws is None:
+        return False
+    if pedidos_df is None or not len(pedidos_df):
+        return True
+    hoy_str = fecha_hoy.strftime("%d/%m/%Y")
+
+    try:
+        existing = ws.get_all_records()
+    except Exception:
+        existing = []
+
+    keep_rows = [
+        [r.get(h, "") for h in PEDIDOS_LOG_HEADERS]
+        for r in existing
+        if str(r.get("Fecha", "")) != hoy_str
+    ]
+    new_rows = [
+        [hoy_str, r.get("Pedido", ""), r.get("Tienda", ""), r.get("Estado", ""),
+         round(r["Dias"], 1), r.get("MontoNum", "")]
+        for _, r in pedidos_df.iterrows()
+    ]
+
+    try:
+        ws.clear()
+        ws.append_row(PEDIDOS_LOG_HEADERS)
+        todas = keep_rows + new_rows
+        if todas:
+            ws.append_rows(todas, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
+
+@st.cache_data(ttl=180, show_spinner=False)
+def load_pedidos_log():
+    """Lee todo el historial acumulado de Pedidos +72h (cacheado 3 minutos).
+    None = todavía no conectado. DataFrame vacío = conectado pero sin filas
+    cargadas aún."""
+    ws = _pedidos_log_ws()
+    if ws is None:
+        return None
+    try:
+        records = ws.get_all_records()
+    except Exception:
+        return None
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=PEDIDOS_LOG_HEADERS)
     if "Fecha" in df.columns:
         df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
     return df
@@ -2320,6 +2413,20 @@ if pickers is not None and len(pickers):
         if replace_pickers_meses_en_sheet(pickers):
             st.session_state["_pickers_logged_hash"] = _pickers_hash
 
+# ---- Acumular Pedidos +72h de hoy en el historial (Google Sheets) ----
+# Mismo criterio que Faltantes/Pickers: se agrega una sola vez por archivo
+# realmente subido (hash del archivo de origen en session_state), no en cada
+# re-render. pedidos_bytes es el archivo nuevo de Pedidos; reporte_bytes
+# queda de respaldo solo mientras alguien todavía suba el Reporte diario
+# viejo con la hoja de +72h adentro.
+if pedidos_72h is not None and len(pedidos_72h):
+    _pedidos_source_bytes = pedidos_bytes if pedidos_bytes is not None else reporte_bytes
+    _pedidos_hash = hashlib.md5(_pedidos_source_bytes).hexdigest()
+    if st.session_state.get("_pedidos_logged_hash") != _pedidos_hash:
+        if replace_pedidos_hoy_en_sheet(pedidos_72h):
+            st.session_state["_pedidos_logged_hash"] = _pedidos_hash
+            load_pedidos_log.clear()
+
 all_stores = set()
 for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]:
     if d is not None and "Tienda" in d.columns:
@@ -2906,10 +3013,113 @@ if any_data_loaded:
                 key="dl_faltantes_historial",
             )
 
+    # ---- Ranking del mes — Pedidos +72h acumulados (histórico acumulado) ----
+    # A diferencia de la sección de arriba (que muestra solo "ahora mismo"),
+    # acá se ve, día a día, qué pedidos quedaron atrasados +72hs a lo largo
+    # del mes — útil para saber qué tiendas vienen acumulando más pedidos sin
+    # mover, no solo las que tienen más en este instante.
+    st.markdown(
+        '<div class="section">📈 Pedidos +72h acumulados del mes</div>'
+        '<div class="section-desc">Día a día, todos los pedidos que estuvieron +72hs sin mover según cada '
+        'archivo subido en el mes — no solo la foto de ahora.</div>',
+        unsafe_allow_html=True
+    )
+    pedidos_log_df = load_pedidos_log()
+    if pedidos_log_df is None:
+        _debug_msg = _gsheets_debug_box().get("msg")
+        _debug_html = (
+            f'<div style="font-size:11px;color:#b0413e;margin-top:8px;font-family:monospace;">{_debug_msg}</div>'
+            if _debug_msg else ""
+        )
+        st.markdown(
+            '<div class="empty-box">Este ranking todavía no está conectado — hace falta activar '
+            'el historial en Google Sheets (una configuración única) para que empiece a acumular '
+            'día a día.' + _debug_html + '</div>',
+            unsafe_allow_html=True
+        )
+    elif not len(pedidos_log_df) or not pedidos_log_df["FechaDt"].notna().any():
+        st.markdown(
+            '<div class="empty-box">Todavía no hay historial acumulado. Se va a empezar a llenar '
+            'con cada archivo de Pedidos +72hs que subas de acá en adelante.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        # Igual que Faltantes: el "mes" de este ranking es el del día más
+        # reciente que haya en el historial, no necesariamente el mes
+        # calendario de hoy.
+        _mes_ref_ped = pedidos_log_df["FechaDt"].dropna().max()
+        mes_inicio_ped = pd.Timestamp(year=_mes_ref_ped.year, month=_mes_ref_ped.month, day=1)
+        _MESES_ES_PED = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+        ]
+        _mes_ref_ped_label = f"{_MESES_ES_PED[mes_inicio_ped.month - 1]} {mes_inicio_ped.year}"
+        st.markdown(
+            f'<div style="font-size:11px;color:#9aa1ab;margin:-6px 0 10px;">Mostrando {_mes_ref_ped_label}</div>',
+            unsafe_allow_html=True
+        )
+
+        pedidos_log_mes = pedidos_log_df[pedidos_log_df["FechaDt"] >= mes_inicio_ped].copy()
+        if filtro_tienda is not None:
+            pedidos_log_mes = pedidos_log_mes[pedidos_log_mes["Tienda"] == filtro_tienda]
+        elif filtro_auditor is not None:
+            pedidos_log_mes = pedidos_log_mes[pedidos_log_mes["Tienda"].apply(get_auditor) == filtro_auditor]
+
+        if not len(pedidos_log_mes):
+            st.markdown(
+                '<div class="empty-box">Sin pedidos +72hs acumulados este mes para esta selección.</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            pedidos_log_mes["Dias"] = pd.to_numeric(pedidos_log_mes.get("Dias"), errors="coerce")
+            pedidos_log_mes["Monto"] = pd.to_numeric(pedidos_log_mes.get("Monto"), errors="coerce")
+
+            st.markdown(
+                '<div class="resumen-title">Top 10 tiendas con más pedidos +72hs acumulados</div>',
+                unsafe_allow_html=True
+            )
+            # "Acumulado" cuenta pedidos DISTINTOS (un mismo pedido que sigue
+            # apareciendo varios días seguidos sin resolverse cuenta una sola
+            # vez, no una por cada día que aparece).
+            rank_tiendas_ped = pedidos_log_mes.groupby("Tienda").agg(
+                **{"Pedidos distintos": ("Pedido", "nunique")}
+            ).reset_index().sort_values("Pedidos distintos", ascending=False).head(10)
+            st.write(
+                resumen_table_html(
+                    rank_tiendas_ped, "Tienda",
+                    {"Pedidos distintos": lambda v: f"{int(v)}"},
+                    total_label="Total (top 10)"
+                ),
+                unsafe_allow_html=True
+            )
+
+            with st.expander(f"Ver historial completo del mes ({pedidos_log_mes['Pedido'].nunique()} pedidos distintos)"):
+                with st.container(height=380):
+                    st.write(
+                        table_html(
+                            pedidos_log_mes.sort_values("FechaDt", ascending=False)
+                            [["Fecha", "Pedido", "Tienda", "Estado", "Dias", "Monto"]]
+                        ),
+                        unsafe_allow_html=True
+                    )
+
+            csv_bytes_ped = (
+                pedidos_log_mes.sort_values("FechaDt")
+                [["Fecha", "Pedido", "Tienda", "Estado", "Dias", "Monto"]]
+                .to_csv(index=False).encode("utf-8-sig")
+            )
+            st.download_button(
+                "⬇️ Descargar historial completo del mes (CSV)",
+                data=csv_bytes_ped,
+                file_name=f"pedidos_72h_historial_{fecha_hoy.strftime('%Y-%m')}.csv",
+                mime="text/csv",
+                key="dl_pedidos_historial",
+            )
+
     st.markdown(
         '<div style="color:#6b7280;font-size:11.5px;text-align:center;margin-top:18px;">'
         'Operativo · datos del Reporte diario · la mayoría de las secciones no guardan historial: volvé a subir '
-        'los archivos actualizados para regenerar el panel. Faltantes es la excepción: se va acumulando '
+        'los archivos actualizados para regenerar el panel. Faltantes y Pedidos +72h son la excepción: se van acumulando '
         'mes a mes en el ranking de arriba.</div>',
         unsafe_allow_html=True
     )
