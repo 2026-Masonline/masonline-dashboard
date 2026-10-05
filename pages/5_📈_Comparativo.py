@@ -395,6 +395,98 @@ footnote_html = (
 )
 
 # ---------------------------------------------------------------------
+# Primer fin de semana del mes: Viernes + Sábado + Domingo de la primera
+# semana completa del mes, comparado con el mismo fin de semana (primer
+# finde de ese mismo mes) del año anterior. El archivo trae el ACUMULADO
+# del mes por día, no el valor de cada día suelto — así que para aislar
+# solo esos 3 días hay que restar: acumulado del domingo menos acumulado
+# del día anterior al viernes (0 si el viernes es el día 1 del mes, porque
+# ahí el acumulado recién arranca).
+# ---------------------------------------------------------------------
+
+def primer_finde_fechas(year, month):
+    d1 = pd.Timestamp(year=year, month=month, day=1)
+    offset = (4 - d1.weekday()) % 7  # 4 = viernes
+    friday = d1 + pd.Timedelta(days=offset)
+    saturday = friday + pd.Timedelta(days=1)
+    sunday = friday + pd.Timedelta(days=2)
+    return friday, saturday, sunday
+
+def finde_acumulado(year, month):
+    """Totales (venta, pedidos, unidades, facturación) del primer fin de
+    semana de ese mes/año, aislados del acumulado — o None si los datos
+    cargados todavía no llegan a esa fecha."""
+    friday, saturday, sunday = primer_finde_fechas(year, month)
+    fila_domingo = df[df["date"] == sunday]
+    if fila_domingo.empty:
+        return None
+    cum_sunday = fila_domingo.iloc[0]
+    day_before = friday - pd.Timedelta(days=1)
+    fila_antes = df[df["date"] == day_before] if day_before.month == month else pd.DataFrame()
+    cum_before = fila_antes.iloc[0] if len(fila_antes) else None
+    totales = {}
+    for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
+        v_before = cum_before[col] if cum_before is not None else 0
+        totales[col] = cum_sunday[col] - v_before
+    return friday, sunday, totales
+
+finde_cur = finde_acumulado(cur_year, cur_month)
+finde_prev = finde_acumulado(cur_year - 1, cur_month)
+
+if finde_cur is None:
+    _friday_cur, _, _ = primer_finde_fechas(cur_year, cur_month)
+    finde_section_html = f"""
+<div class="section" style="margin-top:30px;">Primer fin de semana de {mes_nombre}</div>
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;padding:12px 16px;color:#000000;font-size:13px;">
+  Todavía no llegamos al primer fin de semana de {mes_nombre} {cur_year}
+  (arranca el viernes {_friday_cur.strftime('%d/%m')}).
+</div>
+"""
+else:
+    friday_cur, sunday_cur, tot_cur = finde_cur
+    label_finde_cur = f"{friday_cur.strftime('%d/%m')} al {sunday_cur.strftime('%d/%m')}"
+    ticket_finde_cur = (tot_cur["ecommerce_tax"] / tot_cur["orders"]) if tot_cur["orders"] else 0
+
+    if finde_prev is not None:
+        friday_prev, sunday_prev, tot_prev = finde_prev
+        label_finde_prev = f"{friday_prev.strftime('%d/%m')} al {sunday_prev.strftime('%d/%m')} ({cur_year - 1})"
+        ticket_finde_prev = (tot_prev["ecommerce_tax"] / tot_prev["orders"]) if tot_prev["orders"] else 0
+        prev_pedidos_finde_txt = intfmt(tot_prev["orders"])
+        prev_venta_finde_txt = money(tot_prev["ecommerce_tax"])
+        prev_unidades_finde_txt = intfmt(tot_prev["units"])
+        prev_ticket_finde_txt = money(ticket_finde_prev)
+    else:
+        label_finde_prev = f"Primer finde {mes_nombre} {cur_year - 1} (sin datos)"
+        prev_pedidos_finde_txt = prev_venta_finde_txt = prev_unidades_finde_txt = prev_ticket_finde_txt = "—"
+
+    finde_table_html = f"""
+<div class="cmp-table-wrap">
+<div class="table-scroll">
+<table class="cmp-table">
+  <thead>
+    <tr>
+      <th>Indicador</th>
+      <th>{label_finde_cur}</th>
+      <th>{label_finde_prev}</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(tot_cur["orders"])}</td><td>{prev_pedidos_finde_txt}</td></tr>
+    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(tot_cur["ecommerce_tax"])}</td><td>{prev_venta_finde_txt}</td></tr>
+    <tr><td>📦 Unidades</td><td>{intfmt(tot_cur["units"])}</td><td>{prev_unidades_finde_txt}</td></tr>
+    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_finde_cur)}</td><td>{prev_ticket_finde_txt}</td></tr>
+  </tbody>
+</table>
+</div>
+</div>
+"""
+    finde_section_html = f"""
+<div class="section" style="margin-top:30px;">Primer fin de semana de {mes_nombre}</div>
+<div class="section-desc">Viernes + sábado + domingo de la primera semana completa del mes, comparado con el mismo fin de semana de {cur_year - 1}.</div>
+{finde_table_html}
+"""
+
+# ---------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------
 
@@ -472,6 +564,7 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
 <div class="section-desc">Datos acumulados al <b>{last_date.strftime('%d-%m-%Y')}</b>. Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>
 {table_html}
 {footnote_html}
+{finde_section_html}
 
 </div>
 </body>
@@ -509,5 +602,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(table_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Primer fin de semana del mes
+# ---------------------------------------------------------------------
+
+st.markdown(finde_section_html, unsafe_allow_html=True)
 
 st.markdown(footnote_html, unsafe_allow_html=True)
