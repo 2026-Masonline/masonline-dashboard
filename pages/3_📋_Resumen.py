@@ -195,6 +195,59 @@ def kpi_card(label, value, sub, cls=""):
         '</div>'
     )
 
+# ---------------------------------------------------------------------
+# Tipificaciones de Reclamos (misma lógica que Operativo): cada tipo de
+# reclamo es "Operativo" (problema del sector Ecom) o "No operativo" (otro
+# problema, ajeno a Ecom). El Top 5 tiendas y el ranking por tipo de este
+# resumen solo cuentan los reclamos Operativos.
+# ---------------------------------------------------------------------
+TIPIFICACIONES_OPS = {
+    "cobrado no entregado": "Operativo",
+    "producto equivocado": "Operativo",
+    "producto danado gm": "No operativo",
+    "fuera de fecha y hora": "Operativo",
+    "disconformidad con criterio de sustitucion": "Operativo",
+    "producto vencido / danado / mal estado": "Operativo",
+    "faltante de partes y piezas": "Operativo",
+    "reclamo factura a": "Operativo",
+    "otros": "No operativo",
+    "anulaciones desde tienda": "Operativo",
+    "faltante de comprobante de pago": "Operativo",
+    "reagendamiento desde tienda": "Operativo",
+    "devolucion no aplicada fiserv": "No operativo",
+    "devolucion no aplicada mercadopago": "No operativo",
+    "mala actitud ecommerce": "Operativo",
+    "problema con cupon": "No operativo",
+    "problema sitio web": "No operativo",
+    "diferencia de precio entre pedido y facturado": "No operativo",
+    "descuento bancario no aplicado": "No operativo",
+    "errores con medios de pago": "No operativo",
+    "errores masivos": "No operativo",
+    "solicitud de reagendamiento": "No operativo",
+    "solicitud de cambio o devolucion": "No operativo",
+    "servicio tecnico": "No operativo",
+    "solicitud de anulacion o boton de arrepentimiento": "No operativo",
+    "solicitud de tercero autorizado": "No operativo",
+    "solicitud de factura a": "No operativo",
+    "anulacion o disconformidad por falta de stock": "Operativo",
+    "pedido equivocado": "Operativo",
+    "anulacion o demora por validacion": "No operativo",
+    "devolucion no aplicada modo": "No operativo",
+    "devolucion de cobro de envases de cerveza": "Operativo",
+}
+
+def _norm_tipificacion(v):
+    """Normaliza un 'Tipo' de reclamo para buscarlo en TIPIFICACIONES_OPS:
+    minúsculas, sin acentos, sin espacios de más."""
+    s = norm_txt(v).lower()
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    return " ".join(s.split())
+
+def clasificar_tipo_reclamo(tipo):
+    """'Operativo' / 'No operativo' según la tipificación, o 'Sin clasificar'
+    si el tipo no está en la lista (para que se vea en vez de asumir mal)."""
+    return TIPIFICACIONES_OPS.get(_norm_tipificacion(tipo), "Sin clasificar")
+
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
 }
@@ -1199,14 +1252,17 @@ else:
     ))
 
     # ---- 2) Reclamos abiertos: Top 5 tiendas + ranking por tipo ----
+    # Solo se cuentan los reclamos Operativos (problema del sector Ecom) —
+    # los No operativos / ajenos a Ecom no entran en este ranking.
     st.markdown(
-        '<div class="section">🗣️ Reclamos abiertos — Top 5 tiendas y ranking por tipo</div>'
-        '<div class="section-desc">Reclamos en estado Nuevo o En proceso.</div>',
+        '<div class="section">🗣️ Reclamos abiertos (Operativos) — Top 5 tiendas y ranking por tipo</div>'
+        '<div class="section-desc">Reclamos Operativos en estado Nuevo o En proceso.</div>',
         unsafe_allow_html=True
     )
     body = None
     if reclamos is not None and len(reclamos):
-        abiertos = reclamos[reclamos["Estado"].isin(["Nuevo", "En proceso"])]
+        abiertos = reclamos[reclamos["Estado"].isin(["Nuevo", "En proceso"])].copy()
+        abiertos = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
         if len(abiertos):
             agg_tienda = abiertos.groupby("Tienda").agg(
                 Cantidad=("Pedido", "count")
@@ -1218,26 +1274,26 @@ else:
             html_tipo = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos abiertos</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos Operativos abiertos</div>', unsafe_allow_html=True)
                 st.write(html_tienda, unsafe_allow_html=True)
             with col2:
-                st.markdown('<div class="resumen-title">Ranking por tipo de reclamo</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Ranking por tipo de reclamo (Operativos)</div>', unsafe_allow_html=True)
                 st.write(html_tipo, unsafe_allow_html=True)
             body = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Top 5 tiendas con más reclamos abiertos</div>' + html_tienda + '</div>'
+                '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos abiertos</div>' + html_tienda + '</div>'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Ranking por tipo de reclamo</div>' + html_tipo + '</div>'
+                '<div class="resumen-title">Ranking por tipo de reclamo (Operativos)</div>' + html_tipo + '</div>'
                 '</div>'
             )
         else:
-            st.markdown('<div class="empty-box">Sin reclamos abiertos 🎉</div>', unsafe_allow_html=True)
+            st.markdown('<div class="empty-box">Sin reclamos Operativos abiertos 🎉</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="empty-box">Sin datos de Reclamos 🎉</div>', unsafe_allow_html=True)
     sections.append((
-        "🗣️ Reclamos abiertos — Top 5 tiendas y ranking por tipo",
-        "Reclamos en estado Nuevo o En proceso.",
+        "🗣️ Reclamos abiertos (Operativos) — Top 5 tiendas y ranking por tipo",
+        "Reclamos Operativos en estado Nuevo o En proceso.",
         body
     ))
 
