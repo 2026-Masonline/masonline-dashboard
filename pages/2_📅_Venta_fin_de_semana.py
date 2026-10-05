@@ -209,13 +209,30 @@ finde_tabla["participacion"] = (
     finde_tabla["venta"] / acc_ecom if acc_ecom else 0
 )
 
-# ---- Mismo período, abierto día por día (Viernes/Sábado/Domingo) ----
+# ---- Mismo período, abierto día por día (Viernes/Sábado) ----
+# El domingo no se muestra como fila aparte: se suma al sábado del mismo
+# fin de semana (la venta del domingo queda reflejada junto con la del
+# sábado, en vez de en una línea propia).
 DIA_NOMBRE = {4: "Viernes", 5: "Sábado", 6: "Domingo"}
 detalle_dia = finde_rows.copy().sort_values("date")
 detalle_dia["dia_nombre"] = detalle_dia["date"].dt.weekday.map(DIA_NOMBRE)
 detalle_dia["rango"] = detalle_dia["finde_inicio"].apply(
     lambda d: f"Vie {d.strftime('%d/%m')} – Dom {(d + pd.Timedelta(days=2)).strftime('%d/%m')}"
 )
+
+_domingo_sums = (
+    detalle_dia[detalle_dia["dia_nombre"] == "Domingo"]
+    .groupby("finde_inicio")[["ecommerce_tax", "orders", "units"]]
+    .sum()
+    .rename(columns=lambda c: f"{c}_dom")
+)
+detalle_dia = detalle_dia[detalle_dia["dia_nombre"] != "Domingo"].merge(
+    _domingo_sums, on="finde_inicio", how="left"
+)
+_es_sabado = detalle_dia["dia_nombre"] == "Sábado"
+for _col in ["ecommerce_tax", "orders", "units"]:
+    detalle_dia[_col] = detalle_dia[_col] + detalle_dia[f"{_col}_dom"].fillna(0) * _es_sabado
+detalle_dia = detalle_dia.drop(columns=["ecommerce_tax_dom", "orders_dom", "units_dom"])
 
 def money(v):
     """Número completo mientras esté por debajo del millón (ej. $213.945).
@@ -246,14 +263,15 @@ def intfmt(v):
 
 def render_finde_cards_html(finde_tabla, detalle_dia):
     """Una tarjeta por fin de semana: arriba el rango de fechas, abajo la
-    info de Viernes, después Sábado y después Domingo (en ese orden)."""
+    info de Viernes y después Sábado (la venta del domingo ya viene sumada
+    al sábado, no se muestra como fila aparte)."""
     if not len(finde_tabla):
         return (
             '<div class="upload-box"><div class="upload-text">'
             'Todavía no hay ningún fin de semana (viernes, sábado y domingo) cargado este mes.'
             '</div></div>'
         )
-    orden_dia = {"Viernes": 0, "Sábado": 1, "Domingo": 2}
+    orden_dia = {"Viernes": 0, "Sábado": 1}
     cards = ""
     for _, wknd in finde_tabla.iterrows():
         dias_finde = (
@@ -265,11 +283,12 @@ def render_finde_cards_html(finde_tabla, detalle_dia):
 
         filas_dias = ""
         for _, d in dias_finde.iterrows():
+            etiqueta_dia = d["dia_nombre"] + (" + domingo" if d["dia_nombre"] == "Sábado" else "")
             filas_dias += (
                 '<div style="display:flex;justify-content:space-between;align-items:baseline;'
                 'padding:9px 0;border-top:1px solid #eef0ef;">'
                 f'<span style="font-weight:700;color:#20252b;font-size:13.5px;">'
-                f'{d["dia_nombre"]} <span style="font-weight:400;color:#6b7280;">{d["date"].strftime("%d/%m")}</span></span>'
+                f'{etiqueta_dia} <span style="font-weight:400;color:#6b7280;">{d["date"].strftime("%d/%m")}</span></span>'
                 f'<span style="font-size:13px;color:#20252b;">'
                 f'<b style="color:#e8432c;">{money(d["ecommerce_tax"])}</b>'
                 f' · {intfmt(d["orders"])} pedidos · {intfmt(d["units"])} unidades</span>'
