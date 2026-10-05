@@ -2329,7 +2329,7 @@ if any_data_loaded:
     """, unsafe_allow_html=True)
 
     auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
-    col_aud, col_tda = st.columns([1, 2])
+    col_aud, col_tda, col_mes = st.columns([1, 2, 1])
     with col_aud:
         st.markdown('<div class="field-label">Auditor</div>', unsafe_allow_html=True)
         auditor_sel = st.selectbox(
@@ -2351,24 +2351,52 @@ if any_data_loaded:
         )
     filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
 
-    def ftr(d):
+    # Filtro por mes: sale de las fechas reales de Pedidos +72h, Reclamos,
+    # Cancelados y Faltantes — así se puede ver, por ejemplo, cuánto quedó
+    # acumulado de Pedidos +72h en un mes puntual. On Time Preparación, Fill
+    # Rate y Productividad Pickers son una foto del día del archivo subido
+    # (sin fecha histórica por fila), así que no tienen mes para filtrar.
+    _MESES_ES = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+    }
+    _meses_disponibles = set()
+    for d, _col in [(pedidos_72h, "Fecha"), (reclamos, "Fecha"), (cancelados, "Fecha"), (faltantes, "FechaArchivo")]:
+        if d is not None and _col in d.columns:
+            _meses_disponibles.update(d[_col].dropna().dt.to_period("M").astype(str).unique())
+    _meses_ordenados = sorted(_meses_disponibles, reverse=True)
+    _meses_labels = {m: f"{_MESES_ES[int(m.split('-')[1])]} {m.split('-')[0]}" for m in _meses_ordenados}
+    with col_mes:
+        st.markdown('<div class="field-label">Mes</div>', unsafe_allow_html=True)
+        mes_sel = st.selectbox(
+            "Mes", ["Todos los meses"] + [_meses_labels[m] for m in _meses_ordenados],
+            label_visibility="collapsed"
+        )
+    filtro_mes = None if mes_sel == "Todos los meses" else next(
+        m for m in _meses_ordenados if _meses_labels[m] == mes_sel
+    )
+
+    def ftr(d, date_col=None):
         if d is None:
             return d
+        out = d
         if filtro_tienda is not None:
-            return d[d["Tienda"] == filtro_tienda]
-        if filtro_auditor is not None:
-            return d[d["Tienda"].apply(get_auditor) == filtro_auditor]
-        return d
+            out = out[out["Tienda"] == filtro_tienda]
+        elif filtro_auditor is not None:
+            out = out[out["Tienda"].apply(get_auditor) == filtro_auditor]
+        if filtro_mes is not None and date_col is not None and date_col in out.columns:
+            out = out[out[date_col].dt.to_period("M").astype(str) == filtro_mes]
+        return out
 
-    pedidos_f = ftr(pedidos_72h)
-    reclamos_f = ftr(reclamos)
+    pedidos_f = ftr(pedidos_72h, "Fecha")
+    reclamos_f = ftr(reclamos, "Fecha")
     prepa_f = ftr(ontime_prepa)
     fr_f = ftr(fill_rate)
-    can_f = ftr(cancelados)
-    falt_f = ftr(faltantes)
+    can_f = ftr(cancelados, "Fecha")
+    falt_f = ftr(faltantes, "FechaArchivo")
     pickers_f = ftr(pickers)
 
-    filtro_activo = filtro_tienda is not None or filtro_auditor is not None
+    filtro_activo = filtro_tienda is not None or filtro_auditor is not None or filtro_mes is not None
 
     # ---- KPI row ----
     kpis = build_kpis(
