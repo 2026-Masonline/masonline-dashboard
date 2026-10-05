@@ -236,17 +236,42 @@ TIPIFICACIONES_OPS = {
     "devolucion de cobro de envases de cerveza": "Operativo",
 }
 
+# Alias para variantes de redacción que aparecen en el export real de
+# Reclamos pero no coinciden letra a letra con "Nombre de la tipificacion"
+# del archivo de referencia (plural/singular, con o sin "Solicitud de").
+_TIPIFICACION_ALIASES = {
+    "devolucion no aplicada mercado pago": "devolucion no aplicada mercadopago",
+    "anulacion o demoras por validacion": "anulacion o demora por validacion",
+    "problemas con cupon": "problema con cupon",
+    "factura a": "reclamo factura a",
+    "3ero autorizado": "solicitud de tercero autorizado",
+    "3ro autorizado": "solicitud de tercero autorizado",
+    "reagendamiento cd/proveedor": "solicitud de reagendamiento",
+}
+
 def _norm_tipificacion(v):
-    """Normaliza un 'Tipo' de reclamo para buscarlo en TIPIFICACIONES_OPS:
-    minúsculas, sin acentos, sin espacios de más."""
-    s = norm_txt(v).lower()
+    """Normaliza un 'Tipo' de reclamo para buscarlo en TIPIFICACIONES_OPS.
+    El export de Reclamos trae el 'Tipo' como ruta completa separada por
+    '|' (ej. 'Stock de tienda|Reclamo Stock|Cobrado no entregado') — acá
+    nos quedamos con el último tramo, que es la tipificación en sí.
+    También colapsa espacios alrededor de '/' (ej. 'vencido/dañado' vs
+    'vencido / dañado'), minúsculas y sin acentos."""
+    s = norm_txt(v)
+    if "|" in s:
+        s = s.split("|")[-1]
+    s = s.lower()
     s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    s = re.sub(r"\s*/\s*", "/", s)
     return " ".join(s.split())
+
+_TIPIFICACIONES_NORM = {_norm_tipificacion(k): v for k, v in TIPIFICACIONES_OPS.items()}
 
 def clasificar_tipo_reclamo(tipo):
     """'Operativo' / 'No operativo' según la tipificación, o 'Sin clasificar'
     si el tipo no está en la lista (para que se vea en vez de asumir mal)."""
-    return TIPIFICACIONES_OPS.get(_norm_tipificacion(tipo), "Sin clasificar")
+    key = _norm_tipificacion(tipo)
+    key = _TIPIFICACION_ALIASES.get(key, key)
+    return _TIPIFICACIONES_NORM.get(key, "Sin clasificar")
 
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
