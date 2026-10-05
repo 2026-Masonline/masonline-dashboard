@@ -1427,9 +1427,13 @@ def _body_reclamos(reclamos_f):
     detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
 
     # "Top 5 tiendas" cuenta TODOS los reclamos abiertos (Operativos y No
-    # operativos). "Top 5 tipos" solo cuenta los Operativos (problema del
-    # sector Ecom). El detalle completo de abajo sigue mostrando todos.
-    agg = abiertos.groupby("Tienda").apply(lambda g: pd.Series({
+    # operativos), pero sin los que no tienen tienda asociada (son reclamos
+    # No operativos de tipo "Problema sitio web" / "Devolución no aplicada
+    # FISERV" que no quedan atados a ninguna tienda puntual — no corresponde
+    # sumarlos en un ranking por tienda). "Top 5 tipos" solo cuenta los
+    # Operativos (problema del sector Ecom). El detalle completo de abajo
+    # sigue mostrando todos.
+    agg = abiertos[abiertos["Tienda"] != ""].groupby("Tienda").apply(lambda g: pd.Series({
         "Cantidad": len(g),
         ">72h": int((g["Horas"] > 72).sum()),
         "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
@@ -2479,10 +2483,13 @@ if any_data_loaded:
             if solo_abiertos:
                 base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
             # "Top 5 tiendas" cuenta TODOS los reclamos (Operativos y No
-            # operativos). "Top 5 tipos" solo cuenta los Operativos (problema
-            # del sector Ecom). El resto de la sección (detalle, mes a mes,
-            # totales de la tarjeta) sigue con todos los reclamos.
-            agg = base.groupby("Tienda").apply(lambda g: pd.Series({
+            # operativos), pero sin los que no tienen tienda asociada (son
+            # reclamos No operativos de tipo "Problema sitio web" /
+            # "Devolución no aplicada FISERV" que no quedan atados a ninguna
+            # tienda puntual). "Top 5 tipos" solo cuenta los Operativos
+            # (problema del sector Ecom). El resto de la sección (detalle,
+            # mes a mes, totales de la tarjeta) sigue con todos los reclamos.
+            agg = base[base["Tienda"] != ""].groupby("Tienda").apply(lambda g: pd.Series({
                 "Cantidad": len(g),
                 ">72h": int((g["Horas"] > 72).sum()),
                 "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
