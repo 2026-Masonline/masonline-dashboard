@@ -226,6 +226,85 @@ def norm_codigo(v):
         return str(int(v))
     return norm_txt(v)
 
+# ---------------------------------------------------------------------
+# Tipificaciones de Reclamos (del archivo "Tipificaciones CC Ecommerce"):
+# cada tipo de reclamo es "Operativo" (problema del sector Ecom) o "No
+# operativo" (otro problema, ajeno a Ecom). Se usa para que "Resumen por
+# tienda" y "Resumen por tipo" (dentro de Reclamos) solo cuenten los
+# reclamos Operativos.
+# ---------------------------------------------------------------------
+TIPIFICACIONES_OPS = {
+    "cobrado no entregado": "Operativo",
+    "producto equivocado": "Operativo",
+    "producto danado gm": "No operativo",
+    "fuera de fecha y hora": "Operativo",
+    "disconformidad con criterio de sustitucion": "Operativo",
+    "producto vencido / danado / mal estado": "Operativo",
+    "faltante de partes y piezas": "Operativo",
+    "reclamo factura a": "Operativo",
+    "otros": "No operativo",
+    "anulaciones desde tienda": "Operativo",
+    "faltante de comprobante de pago": "Operativo",
+    "reagendamiento desde tienda": "Operativo",
+    "devolucion no aplicada fiserv": "No operativo",
+    "devolucion no aplicada mercadopago": "No operativo",
+    "mala actitud ecommerce": "Operativo",
+    "problema con cupon": "No operativo",
+    "problema sitio web": "No operativo",
+    "diferencia de precio entre pedido y facturado": "No operativo",
+    "descuento bancario no aplicado": "No operativo",
+    "errores con medios de pago": "No operativo",
+    "errores masivos": "No operativo",
+    "solicitud de reagendamiento": "No operativo",
+    "solicitud de cambio o devolucion": "No operativo",
+    "servicio tecnico": "No operativo",
+    "solicitud de anulacion o boton de arrepentimiento": "No operativo",
+    "solicitud de tercero autorizado": "No operativo",
+    "solicitud de factura a": "No operativo",
+    "anulacion o disconformidad por falta de stock": "Operativo",
+    "pedido equivocado": "Operativo",
+    "anulacion o demora por validacion": "No operativo",
+    "devolucion no aplicada modo": "No operativo",
+    "devolucion de cobro de envases de cerveza": "Operativo",
+}
+
+# Alias para variantes de redacción que aparecen en el export real de
+# Reclamos pero no coinciden letra a letra con "Nombre de la tipificacion"
+# del archivo de referencia (plural/singular, con o sin "Solicitud de").
+_TIPIFICACION_ALIASES = {
+    "devolucion no aplicada mercado pago": "devolucion no aplicada mercadopago",
+    "anulacion o demoras por validacion": "anulacion o demora por validacion",
+    "problemas con cupon": "problema con cupon",
+    "factura a": "reclamo factura a",
+    "3ero autorizado": "solicitud de tercero autorizado",
+    "3ro autorizado": "solicitud de tercero autorizado",
+    "reagendamiento cd/proveedor": "solicitud de reagendamiento",
+}
+
+def _norm_tipificacion(v):
+    """Normaliza un 'Tipo' de reclamo para buscarlo en TIPIFICACIONES_OPS.
+    El export de Reclamos trae el 'Tipo' como ruta completa separada por
+    '|' (ej. 'Stock de tienda|Reclamo Stock|Cobrado no entregado') — acá
+    nos quedamos con el último tramo, que es la tipificación en sí.
+    También colapsa espacios alrededor de '/' (ej. 'vencido/dañado' vs
+    'vencido / dañado'), minúsculas y sin acentos."""
+    s = norm_txt(v)
+    if "|" in s:
+        s = s.split("|")[-1]
+    s = s.lower()
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    s = re.sub(r"\s*/\s*", "/", s)
+    return " ".join(s.split())
+
+_TIPIFICACIONES_NORM = {_norm_tipificacion(k): v for k, v in TIPIFICACIONES_OPS.items()}
+
+def clasificar_tipo_reclamo(tipo):
+    """'Operativo' / 'No operativo' según la tipificación, o 'Sin clasificar'
+    si el tipo no está en la lista (para que se vea en vez de asumir mal)."""
+    key = _norm_tipificacion(tipo)
+    key = _TIPIFICACION_ALIASES.get(key, key)
+    return _TIPIFICACIONES_NORM.get(key, "Sin clasificar")
+
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
 }
@@ -1346,22 +1425,27 @@ def _body_reclamos(reclamos_f):
     show["Horas"] = show["Horas"].round(1)
     show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
     detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
-    agg = abiertos.groupby("Tienda").apply(lambda g: pd.Series({
+
+    # "Resumen por tienda" y "Resumen por tipo" (top 5) solo cuentan los
+    # reclamos Operativos (problema del sector Ecom) — el detalle completo
+    # de abajo sigue mostrando todos los reclamos, Operativos y No operativos.
+    abiertos_ops = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+    agg = abiertos_ops.groupby("Tienda").apply(lambda g: pd.Series({
         "Cantidad": len(g),
         ">72h": int((g["Horas"] > 72).sum()),
         "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
-    })).reset_index().sort_values("Cantidad", ascending=False)
+    })).reset_index().sort_values("Cantidad", ascending=False).head(5)
     resumen_html = resumen_table_html(
         agg, "Tienda",
         {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
     )
-    agg_tipo = abiertos.groupby("Tipo").agg(
+    agg_tipo = abiertos_ops.groupby("Tipo").agg(
         Cantidad=("Pedido", "count")
-    ).reset_index().sort_values("Cantidad", ascending=False)
+    ).reset_index().sort_values("Cantidad", ascending=False).head(5)
     resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
     return (
-        '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html +
-        '<div class="resumen-title" style="margin-top:18px;">Resumen por tipo (abiertos)</div>' + resumen_tipo_html
+        '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos (abiertos)</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Top 5 tipos de reclamo Operativos (abiertos)</div>' + resumen_tipo_html
         + '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
@@ -2394,14 +2478,19 @@ if any_data_loaded:
             base = reclamos_f.copy()
             if solo_abiertos:
                 base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
-            agg = base.groupby("Tienda").apply(lambda g: pd.Series({
+            # "Resumen por tienda" y "Resumen por tipo" (top 5) solo cuentan
+            # los reclamos Operativos (problema del sector Ecom) — el resto
+            # de la sección (detalle, mes a mes, totales de la tarjeta) sigue
+            # con todos los reclamos, Operativos y No operativos.
+            base_ops = base[base["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+            agg = base_ops.groupby("Tienda").apply(lambda g: pd.Series({
                 "Cantidad": len(g),
                 ">72h": int((g["Horas"] > 72).sum()),
                 "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
-            })).reset_index().sort_values("Cantidad", ascending=False)
-            agg_tipo = base.groupby("Tipo").agg(
+            })).reset_index().sort_values("Cantidad", ascending=False).head(5)
+            agg_tipo = base_ops.groupby("Tipo").agg(
                 Cantidad=("Pedido", "count")
-            ).reset_index().sort_values("Cantidad", ascending=False)
+            ).reset_index().sort_values("Cantidad", ascending=False).head(5)
 
             # Reclamos por mes y tienda — cuántos va llevando cada tienda mes
             # a mes, dentro del rango de fechas elegido arriba.
@@ -2425,9 +2514,9 @@ if any_data_loaded:
             resumen_side_by_side = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html + '</div>'
+                '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>' + resumen_html + '</div>'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Resumen por tipo</div>' + resumen_tipo_html + '</div>'
+                '<div class="resumen-title">Top 5 tipos de reclamo Operativos</div>' + resumen_tipo_html + '</div>'
                 '</div>'
             )
             export_body = (
@@ -2458,10 +2547,10 @@ if any_data_loaded:
 
             col_tienda, col_tipo = st.columns(2)
             with col_tienda:
-                st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>', unsafe_allow_html=True)
                 st.write(resumen_html, unsafe_allow_html=True)
             with col_tipo:
-                st.markdown('<div class="resumen-title">Resumen por tipo</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 tipos de reclamo Operativos</div>', unsafe_allow_html=True)
                 st.write(resumen_tipo_html, unsafe_allow_html=True)
 
             with st.expander(f"Ver reclamos por mes y tienda ({len(piv_mes)} tiendas)"):
