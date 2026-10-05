@@ -145,8 +145,6 @@ latest = current.iloc[-1]
 days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 days_elapsed = len(current)
 
-share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
-
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
 acc_orders = current["orders"].sum()
@@ -187,6 +185,18 @@ friday_company = current[current["date"] == last_friday]["company_tax"].sum()
 saturday_company = (
     current[current["date"].isin([last_saturday, last_sunday])]["company_tax"].sum()
 )
+
+# Participación del día: si el último día cargado es sábado o domingo, usamos
+# el combinado sábado+domingo (el domingo solo no es representativo: no hay
+# locales abiertos y los números aislados de ese día distorsionan el ratio).
+# Para cualquier otro día de la semana, se usa el día tal cual.
+if latest["date"].weekday() in (5, 6):
+    _ecom_dia = saturday_sales
+    _company_dia = saturday_company
+else:
+    _ecom_dia = latest["ecommerce_tax"]
+    _company_dia = latest["company_tax"]
+share_daily = (_ecom_dia / _company_dia) if _company_dia else 0
 
 # "Fin de semana" para esta página = Viernes + Sábado, pero el número del
 # Sábado ya trae adentro lo que se vendió el domingo (sumado arriba).
