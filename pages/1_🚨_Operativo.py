@@ -226,61 +226,6 @@ def norm_codigo(v):
         return str(int(v))
     return norm_txt(v)
 
-# ---------------------------------------------------------------------
-# Tipificaciones de Reclamos (del archivo "Tipificaciones CC Ecommerce"):
-# cada tipo de reclamo es "Operativo" (problema del sector Ecom — tiene que
-# resolverse rápido, dentro de las 24hs) o "No operativo" (otro problema,
-# ajeno a Ecom — puede tardar hasta 72hs). Ningún reclamo debería quedar
-# abierto más de 72hs sin importar el tipo.
-# ---------------------------------------------------------------------
-TIPIFICACIONES_OPS = {
-    "cobrado no entregado": "Operativo",
-    "producto equivocado": "Operativo",
-    "producto danado gm": "No operativo",
-    "fuera de fecha y hora": "Operativo",
-    "disconformidad con criterio de sustitucion": "Operativo",
-    "producto vencido / danado / mal estado": "Operativo",
-    "faltante de partes y piezas": "Operativo",
-    "reclamo factura a": "Operativo",
-    "otros": "No operativo",
-    "anulaciones desde tienda": "Operativo",
-    "faltante de comprobante de pago": "Operativo",
-    "reagendamiento desde tienda": "Operativo",
-    "devolucion no aplicada fiserv": "No operativo",
-    "devolucion no aplicada mercadopago": "No operativo",
-    "mala actitud ecommerce": "Operativo",
-    "problema con cupon": "No operativo",
-    "problema sitio web": "No operativo",
-    "diferencia de precio entre pedido y facturado": "No operativo",
-    "descuento bancario no aplicado": "No operativo",
-    "errores con medios de pago": "No operativo",
-    "errores masivos": "No operativo",
-    "solicitud de reagendamiento": "No operativo",
-    "solicitud de cambio o devolucion": "No operativo",
-    "servicio tecnico": "No operativo",
-    "solicitud de anulacion o boton de arrepentimiento": "No operativo",
-    "solicitud de tercero autorizado": "No operativo",
-    "solicitud de factura a": "No operativo",
-    "anulacion o disconformidad por falta de stock": "Operativo",
-    "pedido equivocado": "Operativo",
-    "anulacion o demora por validacion": "No operativo",
-    "devolucion no aplicada modo": "No operativo",
-    "devolucion de cobro de envases de cerveza": "Operativo",
-}
-
-def _norm_tipificacion(v):
-    """Normaliza un 'Tipo' de reclamo para buscarlo en TIPIFICACIONES_OPS:
-    minúsculas, sin acentos, sin espacios de más."""
-    import unicodedata
-    s = norm_txt(v).lower()
-    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
-    return " ".join(s.split())
-
-def clasificar_tipo_reclamo(tipo):
-    """'Operativo' / 'No operativo' según la tipificación, o 'Sin clasificar'
-    si el tipo no está en la lista (para que se vea en vez de asumir mal)."""
-    return TIPIFICACIONES_OPS.get(_norm_tipificacion(tipo), "Sin clasificar")
-
 TIENDA_ALIASES = {
     "grafa": "Constituyentes",
 }
@@ -1328,19 +1273,9 @@ def sev_pedido_72h(dias):
         return "serious", "Grave"
     return "warning", "Atención"
 
-def sev_reclamo(horas, estado, categoria=None):
-    """Operativo (problema del sector Ecom) tiene que resolverse rápido:
-    límite de 24hs. No operativo / Sin clasificar usa el límite general de
-    72hs. Ningún reclamo debería superar las 72hs igual, pero un Operativo
-    ya aparece crítico mucho antes, a partir de las 24hs."""
+def sev_reclamo(horas, estado):
     if estado in ("Cerrado", "No aplica-Anulado"):
         return "neutral", estado
-    if categoria == "Operativo":
-        if horas > 24:
-            return "critical", ">24h sin acción"
-        if horas >= 12:
-            return "warning", "12–24h"
-        return "good", "<12h"
     if horas > 72:
         return "critical", ">72h sin acción"
     if horas >= 24:
@@ -1410,43 +1345,22 @@ def _body_reclamos(reclamos_f):
     show = abiertos.copy().sort_values("Horas", ascending=False)
     show["Horas"] = show["Horas"].round(1)
     show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-    show["Categoría"] = show["Categoria"]
-    detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Categoría", "Estado", "Fecha", "Horas", "Urgencia"]
-
-    # "Vencidos"/"En alerta" salen de Sev (no de un corte fijo de horas),
-    # porque el límite ahora depende de la categoría: 24hs si es Operativo
-    # (problema del sector Ecom), 72hs si es No operativo / Sin clasificar.
+    detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
     agg = abiertos.groupby("Tienda").apply(lambda g: pd.Series({
         "Cantidad": len(g),
-        "Vencidos": int((g["Sev"] == "critical").sum()),
-        "En alerta": int((g["Sev"] == "warning").sum()),
+        ">72h": int((g["Horas"] > 72).sum()),
+        "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
     })).reset_index().sort_values("Cantidad", ascending=False)
     resumen_html = resumen_table_html(
         agg, "Tienda",
-        {"Cantidad": lambda v: f"{int(v)}", "Vencidos": lambda v: f"{int(v)}", "En alerta": lambda v: f"{int(v)}"}
+        {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
     )
-
-    agg_cat = abiertos.groupby("Categoria").apply(lambda g: pd.Series({
-        "Cantidad": len(g),
-        "Vencidos": int((g["Sev"] == "critical").sum()),
-        "En alerta": int((g["Sev"] == "warning").sum()),
-    })).reset_index().rename(columns={"Categoria": "Categoría"}).sort_values("Cantidad", ascending=False)
-    resumen_cat_html = resumen_table_html(
-        agg_cat, "Categoría",
-        {"Cantidad": lambda v: f"{int(v)}", "Vencidos": lambda v: f"{int(v)}", "En alerta": lambda v: f"{int(v)}"}
-    )
-
     agg_tipo = abiertos.groupby("Tipo").agg(
         Cantidad=("Pedido", "count")
     ).reset_index().sort_values("Cantidad", ascending=False)
     resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
     return (
-        '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
-        '<div style="flex:1;min-width:260px;">'
-        '<div class="resumen-title">Resumen por categoría (abiertos) — Operativo: límite 24hs · No operativo: límite 72hs</div>' + resumen_cat_html + '</div>'
-        '<div style="flex:1;min-width:260px;">'
-        '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html + '</div>'
-        '</div>'
+        '<div class="resumen-title">Resumen por tienda (abiertos)</div>' + resumen_html +
         '<div class="resumen-title" style="margin-top:18px;">Resumen por tipo (abiertos)</div>' + resumen_tipo_html
         + '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
@@ -1458,7 +1372,7 @@ def html_doc_reclamos(reclamos_f):
         return None
     return export_section_html(
         "🗣️ Reclamos operativos",
-        "Límite según tipo: Operativo (sector Ecom) 24hs · No operativo 72hs sin acción.",
+        "Franjas de alerta: 24hs y 72hs sin acción.",
         body
     )
 
@@ -1638,7 +1552,7 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
     can_b = cancelados_bundle(can_f)
     sections = [
         ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
-        ("🗣️ Reclamos operativos", "Límite según tipo: Operativo (sector Ecom) 24hs · No operativo 72hs sin acción.", _body_reclamos(reclamos_f)),
+        ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
         ("⏱️ On Time Preparación", "Porcentaje de pedidos preparados en horario, por tienda.", prepa_b["body"] if prepa_b else None),
         ("🧩 Fill Rate — con y sin sustituto", f"Todas las tiendas con venta — en rojo/amarillo, las que no llegan al objetivo ({FR_OBJETIVO}%).", _body_fr(fr_f)),
         ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
@@ -1712,12 +1626,12 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
         kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
     if reclamos_f is not None:
         abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
-        r_venc = (abiertos["Sev"] == "critical").sum()
-        r_alerta = (abiertos["Sev"] == "warning").sum()
+        r72 = (abiertos["Horas"] > 72).sum()
+        r24 = ((abiertos["Horas"] >= 24) & (abiertos["Horas"] <= 72)).sum()
         card = kpi_card(
             "Reclamos abiertos", f"{len(abiertos)}",
-            f"{r_venc} vencidos · {r_alerta} en alerta",
-            "crit" if r_venc > 0 else ("warn" if r_alerta > 0 else "good")
+            f"{r72} con +72h · {r24} entre 24–72h",
+            "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
         )
         kpis.append(kpi_link_wrap(card, html_doc_reclamos(reclamos_f), "operativo_reclamos.html"))
     if prepa_f is not None and len(prepa_f):
@@ -2032,12 +1946,10 @@ if reclamos is not None:
     reclamos["Estado"] = reclamos["Estado"].apply(norm_txt)
     reclamos["Tipo"] = reclamos["Tipo"].apply(norm_txt)
     if len(reclamos):
-        reclamos["Categoria"] = reclamos["Tipo"].apply(clasificar_tipo_reclamo)
         reclamos[["Sev", "SevLabel"]] = reclamos.apply(
-            lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"], r["Categoria"])), axis=1
+            lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"])), axis=1
         )
     else:
-        reclamos["Categoria"] = pd.Series(dtype=object)
         reclamos["Sev"] = pd.Series(dtype=object)
         reclamos["SevLabel"] = pd.Series(dtype=object)
 
@@ -2442,8 +2354,7 @@ if any_data_loaded:
     st.markdown(
         f'<div class="section">🗣️ Reclamos operativos '
         f'<span class="count-pill">{len(reclamos_f) if reclamos_f is not None else 0}</span></div>'
-        '<div class="section-desc">Límite según tipo: Operativo (problema del sector Ecom) 24hs · '
-        'No operativo 72hs sin acción.</div>',
+        '<div class="section-desc">Franjas de alerta: 24hs y 72hs sin acción.</div>',
         unsafe_allow_html=True
     )
     if reclamos_f is not None:
@@ -2478,25 +2389,16 @@ if any_data_loaded:
             show = show.sort_values("Horas", ascending=False)
             show["Horas"] = show["Horas"].round(1)
             show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-            show["Categoría"] = show["Categoria"]
-            detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Categoría", "Estado", "Fecha", "Horas", "Urgencia"]
+            detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
 
             base = reclamos_f.copy()
             if solo_abiertos:
                 base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
-            # "Vencidos"/"En alerta" salen de Sev, no de un corte fijo de horas,
-            # porque el límite depende de la categoría (24hs Operativo, 72hs
-            # No operativo / Sin clasificar).
             agg = base.groupby("Tienda").apply(lambda g: pd.Series({
                 "Cantidad": len(g),
-                "Vencidos": int((g["Sev"] == "critical").sum()),
-                "En alerta": int((g["Sev"] == "warning").sum()),
+                ">72h": int((g["Horas"] > 72).sum()),
+                "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
             })).reset_index().sort_values("Cantidad", ascending=False)
-            agg_cat = base.groupby("Categoria").apply(lambda g: pd.Series({
-                "Cantidad": len(g),
-                "Vencidos": int((g["Sev"] == "critical").sum()),
-                "En alerta": int((g["Sev"] == "warning").sum()),
-            })).reset_index().rename(columns={"Categoria": "Categoría"}).sort_values("Cantidad", ascending=False)
             agg_tipo = base.groupby("Tipo").agg(
                 Cantidad=("Pedido", "count")
             ).reset_index().sort_values("Cantidad", ascending=False)
@@ -2517,17 +2419,11 @@ if any_data_loaded:
 
             resumen_html = resumen_table_html(
                 agg, "Tienda",
-                {"Cantidad": lambda v: f"{int(v)}", "Vencidos": lambda v: f"{int(v)}", "En alerta": lambda v: f"{int(v)}"}
-            )
-            resumen_cat_html = resumen_table_html(
-                agg_cat, "Categoría",
-                {"Cantidad": lambda v: f"{int(v)}", "Vencidos": lambda v: f"{int(v)}", "En alerta": lambda v: f"{int(v)}"}
+                {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
             )
             resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
             resumen_side_by_side = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
-                '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Resumen por categoría — Operativo: límite 24hs · No operativo: límite 72hs</div>' + resumen_cat_html + '</div>'
                 '<div style="flex:1;min-width:260px;">'
                 '<div class="resumen-title">Resumen por tienda</div>' + resumen_html + '</div>'
                 '<div style="flex:1;min-width:260px;">'
@@ -2543,16 +2439,16 @@ if any_data_loaded:
             )
             html_doc = export_section_html(
                 "🗣️ Reclamos operativos",
-                "Límite según tipo: Operativo (sector Ecom) 24hs · No operativo 72hs sin acción.",
+                "Franjas de alerta: 24hs y 72hs sin acción.",
                 export_body
             )
 
-            vencidos_tot = int((base["Sev"] == "critical").sum())
-            alerta_tot = int((base["Sev"] == "warning").sum())
+            r72_tot = int((base["Horas"] > 72).sum())
+            r24_tot = int(((base["Horas"] >= 24) & (base["Horas"] <= 72)).sum())
             mini_card = kpi_card(
                 "Reclamos abiertos" if solo_abiertos else "Reclamos (todos)", f"{len(show)}",
-                f"{vencidos_tot} vencidos · {alerta_tot} en alerta — clickeá para bajar el HTML",
-                "crit" if vencidos_tot > 0 else ("warn" if alerta_tot > 0 else "good")
+                f"{r72_tot} con +72h · {r24_tot} entre 24–72h — clickeá para bajar el HTML",
+                "crit" if r72_tot > 0 else ("warn" if r24_tot > 0 else "good")
             )
             st.markdown(
                 f'<div class="kpi-row" style="margin:4px 0 14px; grid-template-columns: minmax(230px, 340px);">'
@@ -2560,14 +2456,7 @@ if any_data_loaded:
                 unsafe_allow_html=True
             )
 
-            col_cat, col_tienda, col_tipo = st.columns(3)
-            with col_cat:
-                st.markdown(
-                    '<div class="resumen-title">Resumen por categoría</div>'
-                    '<div style="color:#000000;font-size:12px;margin:-4px 0 6px;">Operativo: límite 24hs · No operativo: límite 72hs</div>',
-                    unsafe_allow_html=True
-                )
-                st.write(resumen_cat_html, unsafe_allow_html=True)
+            col_tienda, col_tipo = st.columns(2)
             with col_tienda:
                 st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
                 st.write(resumen_html, unsafe_allow_html=True)
