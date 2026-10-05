@@ -1280,7 +1280,7 @@ else:
     # Solo se cuentan los reclamos Operativos (problema del sector Ecom) —
     # los No operativos / ajenos a Ecom no entran en este ranking.
     st.markdown(
-        '<div class="section">🗣️ Reclamos abiertos (Operativos) — Top 5 tiendas y ranking por tipo</div>'
+        '<div class="section">🗣️ Reclamos abiertos (Operativos) — Top 5 tiendas y Top 5 tipos</div>'
         '<div class="section-desc">Reclamos Operativos en estado Nuevo o En proceso.</div>',
         unsafe_allow_html=True
     )
@@ -1294,7 +1294,7 @@ else:
             ).reset_index().sort_values("Cantidad", ascending=False).head(5)
             agg_tipo = abiertos.groupby("Tipo").agg(
                 Cantidad=("Pedido", "count")
-            ).reset_index().sort_values("Cantidad", ascending=False)
+            ).reset_index().sort_values("Cantidad", ascending=False).head(5)
             html_tienda = resumen_table_html(agg_tienda, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
             html_tipo = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
             col1, col2 = st.columns(2)
@@ -1302,14 +1302,14 @@ else:
                 st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos Operativos abiertos</div>', unsafe_allow_html=True)
                 st.write(html_tienda, unsafe_allow_html=True)
             with col2:
-                st.markdown('<div class="resumen-title">Ranking por tipo de reclamo (Operativos)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 tipos de reclamo con más pedidos (Operativos)</div>', unsafe_allow_html=True)
                 st.write(html_tipo, unsafe_allow_html=True)
             body = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
                 '<div style="flex:1;min-width:260px;">'
                 '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos abiertos</div>' + html_tienda + '</div>'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Ranking por tipo de reclamo (Operativos)</div>' + html_tipo + '</div>'
+                '<div class="resumen-title">Top 5 tipos de reclamo con más pedidos (Operativos)</div>' + html_tipo + '</div>'
                 '</div>'
             )
         else:
@@ -1317,7 +1317,7 @@ else:
     else:
         st.markdown('<div class="empty-box">Sin datos de Reclamos 🎉</div>', unsafe_allow_html=True)
     sections.append((
-        "🗣️ Reclamos abiertos (Operativos) — Top 5 tiendas y ranking por tipo",
+        "🗣️ Reclamos abiertos (Operativos) — Top 5 tiendas y Top 5 tipos",
         "Reclamos Operativos en estado Nuevo o En proceso.",
         body
     ))
