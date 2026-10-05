@@ -1398,9 +1398,14 @@ def _body_pedidos(pedidos_f):
     agg = pedidos_f.groupby("Tienda").agg(
         Cantidad=("Pedido", "count")
     ).reset_index().sort_values("Cantidad", ascending=False)
+    top10 = agg.head(10)[["Tienda", "Cantidad"]]
+    top10_html = resumen_table_html(
+        top10, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
+    )
     resumen_html = resumen_table_html(agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}"})
     return (
-        '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+        '<div class="resumen-title">Top 10 tiendas que no actualizaron el pedido</div>' + top10_html +
+        '<div class="resumen-title" style="margin-top:18px;">Resumen por tienda</div>' + resumen_html +
         '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
@@ -2439,8 +2444,15 @@ if any_data_loaded:
             agg = pedidos_f.groupby("Tienda").agg(
                 Cantidad=("Pedido", "count")
             ).reset_index().sort_values("Cantidad", ascending=False)
+            top10 = agg.head(10)[["Tienda", "Cantidad"]]
+            top10_html = resumen_table_html(
+                top10, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
+            )
 
-            st.markdown('<div class="resumen-title">Resumen por tienda</div>', unsafe_allow_html=True)
+            st.markdown('<div class="resumen-title">Top 10 tiendas que no actualizaron el pedido</div>', unsafe_allow_html=True)
+            st.write(top10_html, unsafe_allow_html=True)
+
+            st.markdown('<div class="resumen-title" style="margin-top:14px;">Resumen por tienda</div>', unsafe_allow_html=True)
             resumen_html = resumen_table_html(
                 agg, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}
             )
@@ -2451,7 +2463,8 @@ if any_data_loaded:
                     st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
 
             export_body = (
-                '<div class="resumen-title">Resumen por tienda</div>' + resumen_html +
+                '<div class="resumen-title">Top 10 tiendas que no actualizaron el pedido</div>' + top10_html +
+                '<div class="resumen-title" style="margin-top:18px;">Resumen por tienda</div>' + resumen_html +
                 '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
                 + table_html(show[detail_cols])
             )
