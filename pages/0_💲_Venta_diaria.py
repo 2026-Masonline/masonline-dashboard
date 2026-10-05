@@ -203,17 +203,6 @@ if len(df_tiendas):
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df = df[df["date"].dt.date < arg_today].copy()
 
-# Año/mes "en curso", "anterior" y "mismo mes año pasado" calculados solos a
-# partir de la fecha de hoy (hora Argentina) en vez de quedar fijos en el
-# código — así esta página avanza sola al mes siguiente apenas se sube el
-# primer archivo de ese mes, sin que haya que tocar nada acá cada vez.
-REF_YEAR, REF_MONTH = arg_today.year, arg_today.month
-if REF_MONTH == 1:
-    PREV_YEAR, PREV_MONTH = REF_YEAR - 1, 12
-else:
-    PREV_YEAR, PREV_MONTH = REF_YEAR, REF_MONTH - 1
-LY_YEAR = REF_YEAR - 1
-
 _MESES_ES = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
     "agosto", "septiembre", "octubre", "noviembre", "diciembre"
@@ -222,6 +211,44 @@ _MESES_ABREV_ES = [
     "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul",
     "Ago", "Sep", "Oct", "Nov", "Dic"
 ]
+
+# Selector de mes: por defecto abre en el mes en curso (calculado solo, sin
+# quedar fijo en el código), pero se puede elegir cualquier otro mes que ya
+# tenga datos cargados, para mirar un mes cerrado sin tener que esperar a
+# que vuelva a ser el mes actual.
+_periodos_disponibles = sorted(
+    {(d.year, d.month) for d in df["date"].dt.date},
+    reverse=True
+)
+
+def _etiqueta_periodo(p):
+    y, m = p
+    return f"{_MESES_ES[m - 1].capitalize()} {y}"
+
+if _periodos_disponibles:
+    _periodo_hoy = (arg_today.year, arg_today.month)
+    _default_idx = (
+        _periodos_disponibles.index(_periodo_hoy)
+        if _periodo_hoy in _periodos_disponibles else 0
+    )
+    REF_YEAR, REF_MONTH = st.selectbox(
+        "Mes a mostrar",
+        _periodos_disponibles,
+        index=_default_idx,
+        format_func=_etiqueta_periodo,
+        key="venta_diaria_mes_sel",
+    )
+else:
+    REF_YEAR, REF_MONTH = arg_today.year, arg_today.month
+
+# Año/mes "anterior" y "mismo mes año pasado", calculados a partir del mes
+# elegido arriba (el en curso por defecto).
+if REF_MONTH == 1:
+    PREV_YEAR, PREV_MONTH = REF_YEAR - 1, 12
+else:
+    PREV_YEAR, PREV_MONTH = REF_YEAR, REF_MONTH - 1
+LY_YEAR = REF_YEAR - 1
+
 MES_ACTUAL_NOMBRE = _MESES_ES[REF_MONTH - 1].capitalize()
 MES_ACTUAL_LABEL = f"{MES_ACTUAL_NOMBRE} {REF_YEAR}"
 MES_ACTUAL_ABREV = _MESES_ABREV_ES[REF_MONTH - 1]
