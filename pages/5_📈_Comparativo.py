@@ -234,21 +234,9 @@ if df.empty:
     st.error("Todavía no hay datos cargados para un día anterior a hoy.")
     st.stop()
 
-# Filtro de fecha: por default se muestra el último día cerrado cargado,
-# pero se puede elegir cualquier otro día del archivo para ver el acumulado
-# "a esa fecha" (el archivo trae un acumulado del mes por cada fila/día).
+# Siempre se muestra el acumulado hasta el último día cerrado cargado (ya
+# no hay selector manual de fecha de corte).
 available_dates = sorted(df["date"].unique(), reverse=True)
-date_labels = [pd.Timestamp(d).strftime("%d-%m-%Y") for d in available_dates]
-label_to_date = {lbl: pd.Timestamp(d) for lbl, d in zip(date_labels, available_dates)}
-
-st.markdown('<div class="filtro-row">', unsafe_allow_html=True)
-selected_label = st.selectbox(
-    "**📅 Fecha de corte (acumulado hasta ese día)**",
-    date_labels,
-    index=0,
-    key="comparativo_fecha_corte",
-)
-st.markdown('</div>', unsafe_allow_html=True)
 
 usar_rango = st.checkbox(
     "**📊 Acumular un rango de días (Desde/Hasta) en vez de un solo corte**",
@@ -272,7 +260,7 @@ if usar_rango:
     if rango_desde > rango_hasta:
         rango_desde, rango_hasta = rango_hasta, rango_desde
 
-last_date = label_to_date[selected_label]
+last_date = pd.Timestamp(available_dates[0])
 cur_year, cur_month = last_date.year, last_date.month
 n = last_date.day  # día del mes al que se corta (p.ej. 30 = acumulado al 30)
 
