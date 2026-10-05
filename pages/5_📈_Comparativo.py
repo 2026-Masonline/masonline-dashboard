@@ -243,7 +243,7 @@ label_to_date = {lbl: pd.Timestamp(d) for lbl, d in zip(date_labels, available_d
 
 st.markdown('<div class="filtro-row">', unsafe_allow_html=True)
 selected_label = st.selectbox(
-    "📅 Fecha de corte (acumulado hasta ese día)",
+    "**📅 Fecha de corte (acumulado hasta ese día)**",
     date_labels,
     index=0,
     key="comparativo_fecha_corte",
@@ -251,7 +251,7 @@ selected_label = st.selectbox(
 st.markdown('</div>', unsafe_allow_html=True)
 
 usar_rango = st.checkbox(
-    "📊 Acumular un rango de días (Desde/Hasta) en vez de un solo corte",
+    "**📊 Acumular un rango de días (Desde/Hasta) en vez de un solo corte**",
     key="comparativo_usar_rango",
 )
 rango_desde = rango_hasta = None
@@ -261,12 +261,12 @@ if usar_rango:
     col_desde, col_hasta = st.columns(2)
     with col_desde:
         rango_desde = st.date_input(
-            "Desde", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
+            "**Desde**", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
             key="comparativo_rango_desde",
         )
     with col_hasta:
         rango_hasta = st.date_input(
-            "Hasta", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
+            "**Hasta**", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
             key="comparativo_rango_hasta",
         )
     if rango_desde > rango_hasta:
