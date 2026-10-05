@@ -487,6 +487,87 @@ else:
 """
 
 # ---------------------------------------------------------------------
+# Día a día: misma fecha del mes (día 1, 2, 3...) de este año vs el mismo
+# día del mes del año anterior. El archivo trae el ACUMULADO del mes por
+# fila, así que para aislar el valor de CADA día individual hay que restar
+# el acumulado de ese día menos el del día anterior (el primer día del mes
+# no se resta nada, el acumulado de ese día ES el valor del día).
+# ---------------------------------------------------------------------
+
+def dia_a_dia(year, month):
+    sub = df[(df["date"].dt.year == year) & (df["date"].dt.month == month)].sort_values("date").copy()
+    if sub.empty:
+        return sub
+    sub["dia"] = sub["date"].dt.day
+    for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
+        valores = sub[col].to_numpy().copy()
+        if len(valores) > 1:
+            valores[1:] = valores[1:] - valores[:-1]
+        sub[col] = valores
+    return sub[["dia", "ecommerce_tax", "orders", "units", "company_tax"]]
+
+dia_cur = dia_a_dia(cur_year, cur_month)
+dia_cur = dia_cur[dia_cur["dia"] <= n]
+dia_prev = dia_a_dia(cur_year - 1, cur_month)
+
+dia_cmp = dia_cur.merge(dia_prev, on="dia", how="left", suffixes=("", "_prev"))
+
+def variacion_html(v):
+    if v is None:
+        return '<span style="color:#6b7280;">—</span>'
+    cls = "#208653" if v >= 0 else "#d64545"
+    arrow = "▲" if v >= 0 else "▼"
+    sign = "+" if v >= 0 else "−"
+    return f'<span style="color:{cls};font-weight:700;">{arrow} {sign}{abs(v) * 100:.1f}%</span>'
+
+dia_rows_html = ""
+for _, r in dia_cmp.iterrows():
+    hay_prev_dia = pd.notna(r.get("ecommerce_tax_prev"))
+    venta_prev_txt = money(r["ecommerce_tax_prev"]) if hay_prev_dia else "—"
+    variacion = (
+        (r["ecommerce_tax"] / r["ecommerce_tax_prev"] - 1)
+        if hay_prev_dia and r["ecommerce_tax_prev"] else None
+    )
+    dia_rows_html += (
+        '<tr style="border-top:1px solid #f1f3f5;">'
+        f'<td style="padding:10px 16px;color:#000000;font-weight:700;">{int(r["dia"])}</td>'
+        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{money(r["ecommerce_tax"])}</td>'
+        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{venta_prev_txt}</td>'
+        f'<td style="padding:10px 16px;text-align:center;">{variacion_html(variacion)}</td>'
+        '</tr>'
+    )
+
+if dia_rows_html:
+    dia_table_html = f"""
+<div class="cmp-table-wrap">
+<div class="table-scroll">
+<table class="cmp-table">
+  <thead>
+    <tr>
+      <th>Día</th>
+      <th>{mes_nombre} {cur_year}</th>
+      <th>{mes_nombre} {cur_year - 1}</th>
+      <th>Variación</th>
+    </tr>
+  </thead>
+  <tbody>{dia_rows_html}</tbody>
+</table>
+</div>
+</div>
+"""
+else:
+    dia_table_html = (
+        '<div style="background:white;border:1px solid #e8ebef;border-radius:12px;'
+        'padding:12px 16px;color:#000000;font-size:13px;">Todavía no hay días cargados para comparar.</div>'
+    )
+
+dia_section_html = f"""
+<div class="section" style="margin-top:30px;">Día a día vs {cur_year - 1}</div>
+<div class="section-desc">Venta Ecommerce (con impuesto) de cada día del mes, comparada con el mismo día de {mes_nombre} {cur_year - 1} (no el mismo día de la semana, el mismo número de día).</div>
+{dia_table_html}
+"""
+
+# ---------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------
 
@@ -565,6 +646,7 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
 {table_html}
 {footnote_html}
 {finde_section_html}
+{dia_section_html}
 
 </div>
 </body>
@@ -608,5 +690,11 @@ st.markdown(table_html, unsafe_allow_html=True)
 # ---------------------------------------------------------------------
 
 st.markdown(finde_section_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Día a día vs año anterior
+# ---------------------------------------------------------------------
+
+st.markdown(dia_section_html, unsafe_allow_html=True)
 
 st.markdown(footnote_html, unsafe_allow_html=True)
