@@ -234,42 +234,32 @@ if df.empty:
     st.error("Todavía no hay datos cargados para un día anterior a hoy.")
     st.stop()
 
-# Siempre se muestra el acumulado hasta el último día cerrado cargado (ya
-# no hay selector manual de fecha de corte).
+# Siempre se muestra el acumulado hasta el último día cerrado cargado (no
+# hay selector manual de fecha de corte); las tarjetas de "Resultados del
+# período" suman el rango Desde/Hasta que se elija acá abajo (por default,
+# del 1 del mes en curso hasta el último día cargado).
 available_dates = sorted(df["date"].unique(), reverse=True)
+_min_fecha = df["date"].min().date()
+_max_fecha = df["date"].max().date()
+_default_desde = _max_fecha.replace(day=1)
 
-usar_rango = st.checkbox(
-    "**📊 Acumular un rango de días (Desde/Hasta) en vez de un solo corte**",
-    key="comparativo_usar_rango",
-)
-rango_desde = rango_hasta = None
-if usar_rango:
-    _min_fecha = df["date"].min().date()
-    _max_fecha = df["date"].max().date()
-    col_desde, col_hasta = st.columns(2)
-    with col_desde:
-        rango_desde = st.date_input(
-            "**Desde**", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
-            key="comparativo_rango_desde",
-        )
-    with col_hasta:
-        rango_hasta = st.date_input(
-            "**Hasta**", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
-            key="comparativo_rango_hasta",
-        )
-    if rango_desde > rango_hasta:
-        rango_desde, rango_hasta = rango_hasta, rango_desde
+col_desde, col_hasta = st.columns(2)
+with col_desde:
+    rango_desde = st.date_input(
+        "**Desde**", value=_default_desde, min_value=_min_fecha, max_value=_max_fecha,
+        key="comparativo_rango_desde",
+    )
+with col_hasta:
+    rango_hasta = st.date_input(
+        "**Hasta**", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
+        key="comparativo_rango_hasta",
+    )
+if rango_desde > rango_hasta:
+    rango_desde, rango_hasta = rango_hasta, rango_desde
 
 last_date = pd.Timestamp(available_dates[0])
 cur_year, cur_month = last_date.year, last_date.month
-n = last_date.day  # día del mes al que se corta (p.ej. 30 = acumulado al 30)
-
-prev = df[
-    (df["date"].dt.year == cur_year - 1) &
-    (df["date"].dt.month == cur_month) &
-    (df["date"].dt.day <= n)
-]
-hay_prev = len(prev) > 0
+n = last_date.day  # día del mes al que se corta (p.ej. 30 = acumulado al 30); lo usa "Día a día"
 
 MESES_ES = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
@@ -336,59 +326,36 @@ def _mismo_dia_año_pasado(ts):
         # 29 de febrero sin equivalente el año anterior
         return ts.replace(year=ts.year - 1, day=28)
 
-if usar_rango:
-    rango_desde_ts = pd.Timestamp(rango_desde)
-    rango_hasta_ts = pd.Timestamp(rango_hasta)
-    tot_rango_cur = suma_rango(rango_desde_ts, rango_hasta_ts) or {
-        "orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0
-    }
-    pedidos_cur = tot_rango_cur["orders"]
-    venta_cur = tot_rango_cur["ecommerce_tax"]
-    unidades_cur = tot_rango_cur["units"]
-    ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
+rango_desde_ts = pd.Timestamp(rango_desde)
+rango_hasta_ts = pd.Timestamp(rango_hasta)
+tot_rango_cur = suma_rango(rango_desde_ts, rango_hasta_ts) or {
+    "orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0
+}
+pedidos_cur = tot_rango_cur["orders"]
+venta_cur = tot_rango_cur["ecommerce_tax"]
+unidades_cur = tot_rango_cur["units"]
+ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
 
-    rango_desde_prev_ts = _mismo_dia_año_pasado(rango_desde_ts)
-    rango_hasta_prev_ts = _mismo_dia_año_pasado(rango_hasta_ts)
-    tot_rango_prev = suma_rango(rango_desde_prev_ts, rango_hasta_prev_ts)
-    hay_prev = tot_rango_prev is not None
-    if hay_prev:
-        pedidos_prev = tot_rango_prev["orders"]
-        venta_prev = tot_rango_prev["ecommerce_tax"]
-        unidades_prev = tot_rango_prev["units"]
-    else:
-        pedidos_prev = venta_prev = unidades_prev = 0
-    ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
-
-    rango_label_cur = f"{rango_desde_ts.strftime('%d/%m/%Y')} al {rango_hasta_ts.strftime('%d/%m/%Y')}"
-    rango_label_prev = f"{rango_desde_prev_ts.strftime('%d/%m/%Y')} al {rango_hasta_prev_ts.strftime('%d/%m/%Y')}"
-    col_cur_label = rango_label_cur
-    col_prev_label = rango_label_prev if hay_prev else f"{rango_label_prev} (sin datos)"
-    comparar_vs_year = f"{rango_desde_prev_ts.year}"
-    comparar_vs_sub = f"mismo rango {rango_desde_prev_ts.year}"
-    periodo_val_label = "Rango acumulado"
-    periodo_small_label = f"Datos acumulados del {rango_desde_ts.strftime('%d/%m')} al {rango_hasta_ts.strftime('%d/%m')}"
+rango_desde_prev_ts = _mismo_dia_año_pasado(rango_desde_ts)
+rango_hasta_prev_ts = _mismo_dia_año_pasado(rango_hasta_ts)
+tot_rango_prev = suma_rango(rango_desde_prev_ts, rango_hasta_prev_ts)
+hay_prev = tot_rango_prev is not None
+if hay_prev:
+    pedidos_prev = tot_rango_prev["orders"]
+    venta_prev = tot_rango_prev["ecommerce_tax"]
+    unidades_prev = tot_rango_prev["units"]
 else:
-    last_row = df[df["date"] == last_date].iloc[0]
-    pedidos_cur = last_row["orders"]
-    venta_cur = last_row["ecommerce_tax"]
-    unidades_cur = last_row["units"]
-    ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
+    pedidos_prev = venta_prev = unidades_prev = 0
+ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
 
-    if hay_prev:
-        prev_last_row = prev.sort_values("date").iloc[-1]
-        pedidos_prev = prev_last_row["orders"]
-        venta_prev = prev_last_row["ecommerce_tax"]
-        unidades_prev = prev_last_row["units"]
-    else:
-        pedidos_prev = venta_prev = unidades_prev = 0
-    ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
-
-    col_cur_label = f"{mes_nombre} {cur_year}"
-    col_prev_label = f"{mes_nombre} {cur_year - 1}" if hay_prev else f"{mes_nombre} {cur_year - 1} (sin datos)"
-    comparar_vs_year = f"{cur_year - 1}"
-    comparar_vs_sub = f"mismo período {cur_year - 1}"
-    periodo_val_label = f"{mes_nombre} {cur_year}"
-    periodo_small_label = f"Datos acumulados al {last_date.strftime('%d/%m')}"
+rango_label_cur = f"{rango_desde_ts.strftime('%d/%m/%Y')} al {rango_hasta_ts.strftime('%d/%m/%Y')}"
+rango_label_prev = f"{rango_desde_prev_ts.strftime('%d/%m/%Y')} al {rango_hasta_prev_ts.strftime('%d/%m/%Y')}"
+col_cur_label = rango_label_cur
+col_prev_label = rango_label_prev if hay_prev else f"{rango_label_prev} (sin datos)"
+comparar_vs_year = f"{rango_desde_prev_ts.year}"
+comparar_vs_sub = f"mismo rango {rango_desde_prev_ts.year}"
+periodo_val_label = "Rango acumulado"
+periodo_small_label = f"Datos acumulados del {rango_desde_ts.strftime('%d/%m')} al {rango_hasta_ts.strftime('%d/%m')}"
 
 def delta_badge(v, is_money=False):
     if not hay_prev:
@@ -469,20 +436,12 @@ table_html = f"""
 </div>
 """
 
-if usar_rango:
-    footnote_html = (
-        '<div style="color:#000000;font-size:11px;margin-top:14px;">'
-        f'"{col_prev_label}" toma el mismo rango de fechas (día y mes) un año antes, '
-        'para que la comparación sea pareja.'
-        '</div>'
-    )
-else:
-    footnote_html = (
-        '<div style="color:#000000;font-size:11px;margin-top:14px;">'
-        f'"{mes_nombre} {cur_year - 1}" toma el acumulado hasta el mismo día {n} del mes '
-        '(la misma cantidad de días que ya pasaron este mes), para que la comparación sea pareja.'
-        '</div>'
-    )
+footnote_html = (
+    '<div style="color:#000000;font-size:11px;margin-top:14px;">'
+    f'"{col_prev_label}" toma el mismo rango de fechas (día y mes) un año antes, '
+    'para que la comparación sea pareja.'
+    '</div>'
+)
 
 # ---------------------------------------------------------------------
 # Primer fin de semana del mes: Viernes + Sábado + Domingo de la primera
