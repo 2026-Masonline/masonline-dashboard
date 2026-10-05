@@ -155,28 +155,39 @@ target = 0.03
 share = acc_ecom / acc_company if acc_company else 0
 progress = min(share / target, 1.0) * 100 if target else 0
 
-# Buscamos el Sábado más reciente con datos cargados (y el Viernes
-# anterior), sin asumir que "hoy" es un día en particular. El domingo no
-# se usa para nada en esta página: "fin de semana" acá es Viernes +
-# Sábado únicamente.
+# Buscamos el Sábado más reciente con datos cargados (y el Viernes/Domingo
+# alrededor), sin asumir que "hoy" es un día en particular. La venta del
+# domingo se suma a la del sábado (no se pierde), pero el domingo nunca se
+# muestra como tal en ningún lado de la página — ni como fila propia, ni
+# en los rangos de fecha, ni en ninguna etiqueta.
 last_data_date = current["date"].max()
 days_since_saturday = (last_data_date.weekday() - 5) % 7  # Monday=0 ... Saturday=5, Sunday=6
 last_saturday = last_data_date - pd.Timedelta(days=days_since_saturday)
 last_friday = last_saturday - pd.Timedelta(days=1)
+last_sunday = last_saturday + pd.Timedelta(days=1)
 
 friday_sales = current[current["date"] == last_friday]["ecommerce_tax"].sum()
-saturday_sales = current[current["date"] == last_saturday]["ecommerce_tax"].sum()
+saturday_sales = (
+    current[current["date"].isin([last_saturday, last_sunday])]["ecommerce_tax"].sum()
+)
 
 friday_units = current[current["date"] == last_friday]["units"].sum()
-saturday_units = current[current["date"] == last_saturday]["units"].sum()
+saturday_units = (
+    current[current["date"].isin([last_saturday, last_sunday])]["units"].sum()
+)
 
 friday_orders = current[current["date"] == last_friday]["orders"].sum()
-saturday_orders = current[current["date"] == last_saturday]["orders"].sum()
+saturday_orders = (
+    current[current["date"].isin([last_saturday, last_sunday])]["orders"].sum()
+)
 
 friday_company = current[current["date"] == last_friday]["company_tax"].sum()
-saturday_company = current[current["date"] == last_saturday]["company_tax"].sum()
+saturday_company = (
+    current[current["date"].isin([last_saturday, last_sunday])]["company_tax"].sum()
+)
 
-# Fin de semana = Viernes + Sábado (el domingo no se toma).
+# "Fin de semana" para esta página = Viernes + Sábado, pero el número del
+# Sábado ya trae adentro lo que se vendió el domingo (sumado arriba).
 weekend_full_ecom = friday_sales + saturday_sales
 weekend_full_units = friday_units + saturday_units
 weekend_full_orders = friday_orders + saturday_orders
@@ -185,7 +196,10 @@ weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_
 weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_saturday.strftime('%d-%m')}"
 
 # ---- Venta por fin de semana del mes en curso ----
-finde_rows = current[current["date"].dt.weekday.isin([4, 5])].copy()
+# finde_rows incluye el domingo (weekday 6) para que su venta entre en la
+# suma del fin de semana — pero el domingo se va a fusionar con el sábado
+# más abajo, antes de mostrar nada, así que nunca aparece como fila propia.
+finde_rows = current[current["date"].dt.weekday.isin([4, 5, 6])].copy()
 finde_rows["finde_inicio"] = finde_rows["date"] - pd.to_timedelta(
     (finde_rows["date"].dt.weekday - 4) % 7, unit="D"
 )
@@ -207,12 +221,29 @@ finde_tabla["participacion"] = (
 )
 
 # ---- Mismo período, abierto día por día (Viernes/Sábado) ----
-DIA_NOMBRE = {4: "Viernes", 5: "Sábado"}
+# El domingo no se muestra como fila aparte: su venta se suma a la fila
+# del sábado del mismo fin de semana, sin dejar rastro de que ese número
+# incluye el domingo.
+DIA_NOMBRE = {4: "Viernes", 5: "Sábado", 6: "Domingo"}
 detalle_dia = finde_rows.copy().sort_values("date")
 detalle_dia["dia_nombre"] = detalle_dia["date"].dt.weekday.map(DIA_NOMBRE)
 detalle_dia["rango"] = detalle_dia["finde_inicio"].apply(
     lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
 )
+
+_domingo_sums = (
+    detalle_dia[detalle_dia["date"].dt.weekday == 6]
+    .groupby("finde_inicio")[["ecommerce_tax", "orders", "units"]]
+    .sum()
+    .rename(columns=lambda c: f"{c}_dom")
+)
+detalle_dia = detalle_dia[detalle_dia["date"].dt.weekday != 6].merge(
+    _domingo_sums, on="finde_inicio", how="left"
+)
+_es_sabado = detalle_dia["dia_nombre"] == "Sábado"
+for _col in ["ecommerce_tax", "orders", "units"]:
+    detalle_dia[_col] = detalle_dia[_col] + detalle_dia[f"{_col}_dom"].fillna(0) * _es_sabado
+detalle_dia = detalle_dia.drop(columns=["ecommerce_tax_dom", "orders_dom", "units_dom"])
 
 def money(v):
     """Número completo mientras esté por debajo del millón (ej. $213.945).
