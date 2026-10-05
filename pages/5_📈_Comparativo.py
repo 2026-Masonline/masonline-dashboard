@@ -487,6 +487,93 @@ else:
 """
 
 # ---------------------------------------------------------------------
+# Último fin de semana cerrado (el más reciente con datos cargados, no
+# necesariamente el primero del mes) comparado con el mismo fin de semana
+# —el mismo número de fin de semana dentro del mes— del año anterior.
+# Reutiliza la misma técnica de aislar días del acumulado.
+# ---------------------------------------------------------------------
+
+def finde_totales(friday, saturday, sunday):
+    """Totales de un viernes/sábado/domingo puntuales, aislados del
+    acumulado del mes — o None si ninguno de los tres tiene datos."""
+    totales = {"ecommerce_tax": 0.0, "orders": 0.0, "units": 0.0, "company_tax": 0.0}
+    alguno = False
+    for d in [friday, saturday, sunday]:
+        fila = df[df["date"] == d]
+        if fila.empty:
+            continue
+        alguno = True
+        dia_antes = d - pd.Timedelta(days=1)
+        fila_antes = df[df["date"] == dia_antes] if dia_antes.month == d.month else pd.DataFrame()
+        for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
+            v_antes = fila_antes.iloc[0][col] if len(fila_antes) else 0
+            totales[col] += fila.iloc[0][col] - v_antes
+    return totales if alguno else None
+
+def nth_finde_fechas(year, month, n):
+    friday1, _, _ = primer_finde_fechas(year, month)
+    friday = friday1 + pd.Timedelta(weeks=n - 1)
+    return friday, friday + pd.Timedelta(days=1), friday + pd.Timedelta(days=2)
+
+_ultima_fecha_cargada = df["date"].max()
+_dias_desde_sabado = (_ultima_fecha_cargada.weekday() - 5) % 7  # Monday=0 ... Saturday=5, Sunday=6
+ultimo_sabado = _ultima_fecha_cargada - pd.Timedelta(days=_dias_desde_sabado)
+ultimo_viernes = ultimo_sabado - pd.Timedelta(days=1)
+ultimo_domingo = ultimo_sabado + pd.Timedelta(days=1)
+
+_primer_viernes_ese_mes, _, _ = primer_finde_fechas(ultimo_viernes.year, ultimo_viernes.month)
+n_ultimo_finde = int(round((ultimo_viernes - _primer_viernes_ese_mes).days / 7)) + 1
+mes_ultimo_finde = MESES_ES.get(ultimo_viernes.month, "").capitalize()
+
+friday_up, saturday_up, sunday_up = nth_finde_fechas(
+    ultimo_viernes.year - 1, ultimo_viernes.month, n_ultimo_finde
+)
+
+tot_ultimo = finde_totales(ultimo_viernes, ultimo_sabado, ultimo_domingo)
+tot_ultimo_prev = finde_totales(friday_up, saturday_up, sunday_up)
+
+label_ultimo = f"{ultimo_viernes.strftime('%d/%m')} al {ultimo_domingo.strftime('%d/%m')}"
+ticket_ultimo = (tot_ultimo["ecommerce_tax"] / tot_ultimo["orders"]) if tot_ultimo["orders"] else 0
+
+if tot_ultimo_prev is not None:
+    label_ultimo_prev = f"{friday_up.strftime('%d/%m')} al {sunday_up.strftime('%d/%m')} ({ultimo_viernes.year - 1})"
+    ticket_ultimo_prev = (tot_ultimo_prev["ecommerce_tax"] / tot_ultimo_prev["orders"]) if tot_ultimo_prev["orders"] else 0
+    prev_pedidos_ultimo_txt = intfmt(tot_ultimo_prev["orders"])
+    prev_venta_ultimo_txt = money(tot_ultimo_prev["ecommerce_tax"])
+    prev_unidades_ultimo_txt = intfmt(tot_ultimo_prev["units"])
+    prev_ticket_ultimo_txt = money(ticket_ultimo_prev)
+else:
+    label_ultimo_prev = f"Mismo finde {ultimo_viernes.year - 1} (sin datos)"
+    prev_pedidos_ultimo_txt = prev_venta_ultimo_txt = prev_unidades_ultimo_txt = prev_ticket_ultimo_txt = "—"
+
+ultimo_finde_table_html = f"""
+<div class="cmp-table-wrap">
+<div class="table-scroll">
+<table class="cmp-table">
+  <thead>
+    <tr>
+      <th>Indicador</th>
+      <th>{label_ultimo}</th>
+      <th>{label_ultimo_prev}</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(tot_ultimo["orders"])}</td><td>{prev_pedidos_ultimo_txt}</td></tr>
+    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(tot_ultimo["ecommerce_tax"])}</td><td>{prev_venta_ultimo_txt}</td></tr>
+    <tr><td>📦 Unidades</td><td>{intfmt(tot_ultimo["units"])}</td><td>{prev_unidades_ultimo_txt}</td></tr>
+    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_ultimo)}</td><td>{prev_ticket_ultimo_txt}</td></tr>
+  </tbody>
+</table>
+</div>
+</div>
+"""
+ultimo_finde_section_html = f"""
+<div class="section" style="margin-top:30px;">Último fin de semana</div>
+<div class="section-desc">Viernes + sábado + domingo del fin de semana más reciente ya cerrado, comparado con ese mismo fin de semana (el fin de semana n.º {n_ultimo_finde} del mes) de {mes_ultimo_finde} {ultimo_viernes.year - 1}.</div>
+{ultimo_finde_table_html}
+"""
+
+# ---------------------------------------------------------------------
 # Día a día: misma fecha del mes (día 1, 2, 3...) de este año vs el mismo
 # día del mes del año anterior. El archivo trae el ACUMULADO del mes por
 # fila, así que para aislar el valor de CADA día individual hay que restar
@@ -646,6 +733,7 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
 {table_html}
 {footnote_html}
 {finde_section_html}
+{ultimo_finde_section_html}
 {dia_section_html}
 
 </div>
@@ -690,6 +778,12 @@ st.markdown(table_html, unsafe_allow_html=True)
 # ---------------------------------------------------------------------
 
 st.markdown(finde_section_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Último fin de semana
+# ---------------------------------------------------------------------
+
+st.markdown(ultimo_finde_section_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Día a día vs año anterior
