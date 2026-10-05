@@ -601,22 +601,28 @@ def _github_headers():
 
 def fetch_shared_from_github(shared_path):
     """Trae de GitHub la última copia guardada de este reporte (para cuando
-    el servidor se reinició y la copia local temporal ya no está)."""
+    el servidor se reinició y la copia local temporal ya no está).
+
+    Pide el archivo en formato "raw" (Accept: vnd.github.raw+json) en vez
+    del formato normal (JSON + contenido en base64): el formato normal solo
+    trae el contenido completo para archivos de hasta 1 MB — con uno más
+    pesado (como Pedidos +72h, que ronda 1,6 MB), GitHub devuelve el
+    contenido vacío sin avisar, y acá terminaba leyéndose como un Excel de
+    0 bytes ("no pude determinar el formato del archivo"). El formato
+    "raw" no tiene ese límite (soporta hasta 100 MB)."""
     headers = _github_headers()
     if not headers:
         return None
     import urllib.request
-    import json
-    import base64
     repo = "2026-Masonline/masonline-dashboard"
     branch = "main"
     repo_path = f"shared_uploads/{shared_path.name}"
     url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
     try:
-        request_get = urllib.request.Request(url, headers=headers, method="GET")
+        request_get = urllib.request.Request(url, headers=raw_headers, method="GET")
         with urllib.request.urlopen(request_get, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        return base64.b64decode(data["content"])
+            return response.read()
     except Exception:
         return None
 
