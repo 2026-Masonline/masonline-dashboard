@@ -546,6 +546,68 @@ else:
     label_ultimo_prev = f"Mismo finde {ultimo_viernes.year - 1} (sin datos)"
     prev_pedidos_ultimo_txt = prev_venta_ultimo_txt = prev_unidades_ultimo_txt = prev_ticket_ultimo_txt = "—"
 
+# Tarjetas rápidas del último fin de semana (mismo estilo que "Resultados
+# del período", pero con los totales del finde comparados contra el mismo
+# finde del año pasado), para verlas de un vistazo arriba en la página.
+hay_prev_finde = tot_ultimo_prev is not None
+
+def delta_badge_finde(v, is_money=False):
+    if not hay_prev_finde:
+        return (
+            '<div class="kpi-delta-line neutral">'
+            f'<span class="kpi-delta">Sin datos de {ultimo_viernes.year - 1} para comparar</span>'
+            '</div>'
+        )
+    cls = "positive" if v >= 0 else "negative"
+    arrow = "▲" if v >= 0 else "▼"
+    sign = "+" if v >= 0 else "−"
+    body = money(abs(v))[1:] if is_money else intfmt(abs(v))
+    return (
+        f'<div class="kpi-delta-line {cls}">'
+        f'<span class="kpi-delta">{arrow} {sign} {body}</span>'
+        f'<div class="sub">vs mismo finde {ultimo_viernes.year - 1}</div>'
+        '</div>'
+    )
+
+d_pedidos_finde = tot_ultimo["orders"] - (tot_ultimo_prev["orders"] if hay_prev_finde else 0)
+d_venta_finde = tot_ultimo["ecommerce_tax"] - (tot_ultimo_prev["ecommerce_tax"] if hay_prev_finde else 0)
+d_unidades_finde = tot_ultimo["units"] - (tot_ultimo_prev["units"] if hay_prev_finde else 0)
+d_ticket_finde = ticket_ultimo - (ticket_ultimo_prev if hay_prev_finde else 0)
+
+finde_kpis_html = f"""
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-icon blue">🛒</div>
+    <div class="kpi-label">Pedidos Facturados</div>
+    <div class="kpi-value">{intfmt(tot_ultimo["orders"])}</div>
+    <div>{delta_badge_finde(d_pedidos_finde, is_money=False)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon red">💰</div>
+    <div class="kpi-label">Venta Ecommerce (con impuesto)</div>
+    <div class="kpi-value">{money(tot_ultimo["ecommerce_tax"])}</div>
+    <div>{delta_badge_finde(d_venta_finde, is_money=True)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon green">📦</div>
+    <div class="kpi-label">Unidades</div>
+    <div class="kpi-value">{intfmt(tot_ultimo["units"])}</div>
+    <div>{delta_badge_finde(d_unidades_finde, is_money=False)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon orange">🏷️</div>
+    <div class="kpi-label">Ticket promedio</div>
+    <div class="kpi-value">{money(ticket_ultimo)}</div>
+    <div>{delta_badge_finde(d_ticket_finde, is_money=True)}</div>
+  </div>
+</div>
+"""
+finde_kpis_section_html = f"""
+<div class="section" style="margin-top:30px;">Último fin de semana</div>
+<div class="section-desc">Viernes + sábado + domingo del fin de semana más reciente ya cerrado ({label_ultimo}), comparado con ese mismo fin de semana (el fin de semana n.º {n_ultimo_finde} del mes) de {mes_ultimo_finde} {ultimo_viernes.year - 1}.</div>
+{finde_kpis_html}
+"""
+
 ultimo_finde_table_html = f"""
 <div class="cmp-table-wrap">
 <div class="table-scroll">
@@ -568,7 +630,7 @@ ultimo_finde_table_html = f"""
 </div>
 """
 ultimo_finde_section_html = f"""
-<div class="section" style="margin-top:30px;">Último fin de semana</div>
+<div class="section" style="margin-top:30px;">Último fin de semana — detalle</div>
 <div class="section-desc">Viernes + sábado + domingo del fin de semana más reciente ya cerrado, comparado con ese mismo fin de semana (el fin de semana n.º {n_ultimo_finde} del mes) de {mes_ultimo_finde} {ultimo_viernes.year - 1}.</div>
 {ultimo_finde_table_html}
 """
@@ -727,6 +789,7 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
 <div class="section">Resultados del período</div>
 <div class="section-desc">Indicadores principales del canal ecommerce — datos tomados al <b>{last_date.strftime('%d-%m-%Y')}</b>.</div>
 {kpis_html}
+{finde_kpis_section_html}
 
 <div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
 <div class="section-desc">Datos acumulados al <b>{last_date.strftime('%d-%m-%Y')}</b>. Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>
@@ -760,6 +823,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(kpis_html, unsafe_allow_html=True)
+st.markdown(finde_kpis_section_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Comparativo vs año anterior
