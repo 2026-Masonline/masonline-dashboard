@@ -1426,11 +1426,10 @@ def _body_reclamos(reclamos_f):
     show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
     detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
 
-    # "Resumen por tienda" y "Resumen por tipo" (top 5) solo cuentan los
-    # reclamos Operativos (problema del sector Ecom) — el detalle completo
-    # de abajo sigue mostrando todos los reclamos, Operativos y No operativos.
-    abiertos_ops = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
-    agg = abiertos_ops.groupby("Tienda").apply(lambda g: pd.Series({
+    # "Top 5 tiendas" cuenta TODOS los reclamos abiertos (Operativos y No
+    # operativos). "Top 5 tipos" solo cuenta los Operativos (problema del
+    # sector Ecom). El detalle completo de abajo sigue mostrando todos.
+    agg = abiertos.groupby("Tienda").apply(lambda g: pd.Series({
         "Cantidad": len(g),
         ">72h": int((g["Horas"] > 72).sum()),
         "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
@@ -1439,13 +1438,14 @@ def _body_reclamos(reclamos_f):
         agg, "Tienda",
         {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
     )
+    abiertos_ops = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
     agg_tipo = abiertos_ops.groupby("Tipo").agg(
         Cantidad=("Pedido", "count")
     ).reset_index().sort_values("Cantidad", ascending=False).head(5)
     resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
     return (
-        '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos (abiertos)</div>' + resumen_html +
-        '<div class="resumen-title" style="margin-top:18px;">Top 5 tipos de reclamo Operativos (abiertos)</div>' + resumen_tipo_html
+        '<div class="resumen-title">Top 5 tiendas con más reclamos (abiertos)</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Top 5 reclamos Operativos (abiertos)</div>' + resumen_tipo_html
         + '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
     )
@@ -2478,16 +2478,16 @@ if any_data_loaded:
             base = reclamos_f.copy()
             if solo_abiertos:
                 base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
-            # "Resumen por tienda" y "Resumen por tipo" (top 5) solo cuentan
-            # los reclamos Operativos (problema del sector Ecom) — el resto
-            # de la sección (detalle, mes a mes, totales de la tarjeta) sigue
-            # con todos los reclamos, Operativos y No operativos.
-            base_ops = base[base["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
-            agg = base_ops.groupby("Tienda").apply(lambda g: pd.Series({
+            # "Top 5 tiendas" cuenta TODOS los reclamos (Operativos y No
+            # operativos). "Top 5 tipos" solo cuenta los Operativos (problema
+            # del sector Ecom). El resto de la sección (detalle, mes a mes,
+            # totales de la tarjeta) sigue con todos los reclamos.
+            agg = base.groupby("Tienda").apply(lambda g: pd.Series({
                 "Cantidad": len(g),
                 ">72h": int((g["Horas"] > 72).sum()),
                 "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
             })).reset_index().sort_values("Cantidad", ascending=False).head(5)
+            base_ops = base[base["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
             agg_tipo = base_ops.groupby("Tipo").agg(
                 Cantidad=("Pedido", "count")
             ).reset_index().sort_values("Cantidad", ascending=False).head(5)
@@ -2514,9 +2514,9 @@ if any_data_loaded:
             resumen_side_by_side = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>' + resumen_html + '</div>'
+                '<div class="resumen-title">Top 5 tiendas con más reclamos</div>' + resumen_html + '</div>'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Top 5 tipos de reclamo Operativos</div>' + resumen_tipo_html + '</div>'
+                '<div class="resumen-title">Top 5 reclamos Operativos</div>' + resumen_tipo_html + '</div>'
                 '</div>'
             )
             export_body = (
@@ -2547,10 +2547,10 @@ if any_data_loaded:
 
             col_tienda, col_tipo = st.columns(2)
             with col_tienda:
-                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos</div>', unsafe_allow_html=True)
                 st.write(resumen_html, unsafe_allow_html=True)
             with col_tipo:
-                st.markdown('<div class="resumen-title">Top 5 tipos de reclamo Operativos</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 reclamos Operativos</div>', unsafe_allow_html=True)
                 st.write(resumen_tipo_html, unsafe_allow_html=True)
 
             with st.expander(f"Ver reclamos por mes y tienda ({len(piv_mes)} tiendas)"):
