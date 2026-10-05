@@ -1212,7 +1212,7 @@ else:
             all_stores.update([s for s in d["Tienda"].unique() if s])
 
     auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
-    col_aud, col_tda = st.columns([1, 2])
+    col_aud, col_tda, col_mes = st.columns([1, 2, 1])
     with col_aud:
         auditor_sel = st.selectbox("Auditor", ["Todos los auditores"] + auditores, key="resumen_auditor")
     filtro_auditor = None if auditor_sel == "Todos los auditores" else auditor_sel
@@ -1226,14 +1226,40 @@ else:
         tienda_sel = st.selectbox("Tienda", ["Todas las tiendas"] + sorted(stores_disponibles), key="resumen_tienda")
     filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
 
-    def ftr(d):
+    # Filtro por mes: sale de las fechas reales de Pedidos +72h, Reclamos,
+    # Cancelados y Faltantes. On Time Preparación y Fill Rate son una foto
+    # del día del archivo subido (sin fecha por fila), así que no tienen
+    # mes para filtrar y no se ven afectados por este filtro.
+    _MESES_ES = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+    }
+    _meses_disponibles = set()
+    for d, _col in [(pedidos_72h, "Fecha"), (reclamos, "Fecha"), (cancelados, "Fecha"), (faltantes, "FechaArchivo")]:
+        if d is not None and _col in d.columns:
+            _meses_disponibles.update(d[_col].dropna().dt.to_period("M").astype(str).unique())
+    _meses_ordenados = sorted(_meses_disponibles, reverse=True)
+    _meses_labels = {m: f"{_MESES_ES[int(m.split('-')[1])]} {m.split('-')[0]}" for m in _meses_ordenados}
+    with col_mes:
+        mes_sel = st.selectbox(
+            "Mes", ["Todos los meses"] + [_meses_labels[m] for m in _meses_ordenados],
+            key="resumen_mes"
+        )
+    filtro_mes = None if mes_sel == "Todos los meses" else next(
+        m for m in _meses_ordenados if _meses_labels[m] == mes_sel
+    )
+
+    def ftr(d, date_col=None):
         if d is None:
             return d
+        out = d
         if filtro_tienda is not None:
-            return d[d["Tienda"] == filtro_tienda]
-        if filtro_auditor is not None:
-            return d[d["Tienda"].apply(get_auditor) == filtro_auditor]
-        return d
+            out = out[out["Tienda"] == filtro_tienda]
+        elif filtro_auditor is not None:
+            out = out[out["Tienda"].apply(get_auditor) == filtro_auditor]
+        if filtro_mes is not None and date_col is not None and date_col in out.columns:
+            out = out[out[date_col].dt.to_period("M").astype(str) == filtro_mes]
+        return out
 
     # Días con datos de Faltantes (sobre el total, antes de filtrar por
     # tienda/auditor) — "actual" es el más reciente del archivo, "anterior"
@@ -1245,12 +1271,12 @@ else:
         fecha_actual_falt = _fechas_falt[0] if len(_fechas_falt) >= 1 else None
         fecha_anterior_falt = _fechas_falt[1] if len(_fechas_falt) >= 2 else None
 
-    pedidos_72h = ftr(pedidos_72h)
-    reclamos = ftr(reclamos)
+    pedidos_72h = ftr(pedidos_72h, "Fecha")
+    reclamos = ftr(reclamos, "Fecha")
     ontime_prepa = ftr(ontime_prepa)
     fill_rate = ftr(fill_rate)
-    cancelados = ftr(cancelados)
-    faltantes = ftr(faltantes)
+    cancelados = ftr(cancelados, "Fecha")
+    faltantes = ftr(faltantes, "FechaArchivo")
 
     FR_OBJETIVO = 98
     sections = []  # (title, desc, body_html) para el HTML combinado
