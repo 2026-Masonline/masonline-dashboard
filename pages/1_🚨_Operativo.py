@@ -1421,7 +1421,15 @@ def html_doc_pedidos(pedidos_f):
 def _body_reclamos(reclamos_f):
     if reclamos_f is None or not len(reclamos_f):
         return None
-    abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+    abiertos_todos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+    if not len(abiertos_todos):
+        return None
+    # Toda esta sección es "Reclamos operativos": solo cuenta los reclamos
+    # clasificados como Operativos (problema del sector Ecom). Los No
+    # operativos (ej. "Devolución no aplicada FISERV", "Problema sitio web")
+    # no entran en ningún lado de esta sección — ni en el detalle, ni en los
+    # rankings, ni en los totales.
+    abiertos = abiertos_todos[abiertos_todos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
     if not len(abiertos):
         return None
     show = abiertos.copy().sort_values("Horas", ascending=False)
@@ -1429,13 +1437,8 @@ def _body_reclamos(reclamos_f):
     show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
     detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
 
-    # "Top 5 tiendas" cuenta TODOS los reclamos abiertos (Operativos y No
-    # operativos), pero sin los que no tienen tienda asociada (son reclamos
-    # No operativos de tipo "Problema sitio web" / "Devolución no aplicada
-    # FISERV" que no quedan atados a ninguna tienda puntual — no corresponde
-    # sumarlos en un ranking por tienda). "Top 5 tipos" solo cuenta los
-    # Operativos (problema del sector Ecom). El detalle completo de abajo
-    # sigue mostrando todos.
+    # "Top 5 tiendas" sin los reclamos que no tienen tienda asociada (no
+    # corresponde sumarlos en un ranking por tienda).
     agg = abiertos[abiertos["Tienda"] != ""].groupby("Tienda").apply(lambda g: pd.Series({
         "Cantidad": len(g),
         ">72h": int((g["Horas"] > 72).sum()),
@@ -1445,13 +1448,12 @@ def _body_reclamos(reclamos_f):
         agg, "Tienda",
         {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
     )
-    abiertos_ops = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
-    agg_tipo = abiertos_ops.groupby("Tipo").agg(
+    agg_tipo = abiertos.groupby("Tipo").agg(
         Cantidad=("Pedido", "count")
     ).reset_index().sort_values("Cantidad", ascending=False).head(5)
     resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
     return (
-        '<div class="resumen-title">Top 5 tiendas con más reclamos (abiertos)</div>' + resumen_html +
+        '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos (abiertos)</div>' + resumen_html +
         '<div class="resumen-title" style="margin-top:18px;">Top 5 reclamos Operativos (abiertos)</div>' + resumen_tipo_html
         + '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
         + table_html(show[detail_cols])
@@ -1717,10 +1719,13 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
         kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
     if reclamos_f is not None:
         abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+        # Solo Operativos: los No operativos no cuentan en esta tarjeta ni en
+        # el resto de la sección de Reclamos.
+        abiertos = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
         r72 = (abiertos["Horas"] > 72).sum()
         r24 = ((abiertos["Horas"] >= 24) & (abiertos["Horas"] <= 72)).sum()
         card = kpi_card(
-            "Reclamos abiertos", f"{len(abiertos)}",
+            "Reclamos Operativos abiertos", f"{len(abiertos)}",
             f"{r72} con +72h · {r24} entre 24–72h",
             "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
         )
@@ -2505,6 +2510,10 @@ if any_data_loaded:
         show = reclamos_f.copy()
         if solo_abiertos:
             show = show[show["Estado"].isin(["Nuevo", "En proceso"])]
+        # Toda esta sección es "Reclamos Operativos": los No operativos (ej.
+        # "Devolución no aplicada FISERV", "Problema sitio web") quedan
+        # afuera de todo — detalle, rankings y totales de la tarjeta.
+        show = show[show["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
         if len(show):
             show = show.sort_values("Horas", ascending=False)
             show["Horas"] = show["Horas"].round(1)
@@ -2514,20 +2523,15 @@ if any_data_loaded:
             base = reclamos_f.copy()
             if solo_abiertos:
                 base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
-            # "Top 5 tiendas" cuenta TODOS los reclamos (Operativos y No
-            # operativos), pero sin los que no tienen tienda asociada (son
-            # reclamos No operativos de tipo "Problema sitio web" /
-            # "Devolución no aplicada FISERV" que no quedan atados a ninguna
-            # tienda puntual). "Top 5 tipos" solo cuenta los Operativos
-            # (problema del sector Ecom). El resto de la sección (detalle,
-            # mes a mes, totales de la tarjeta) sigue con todos los reclamos.
+            base = base[base["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+            # "Top 5 tiendas" sin los reclamos que no tienen tienda asociada
+            # (no corresponde sumarlos en un ranking por tienda).
             agg = base[base["Tienda"] != ""].groupby("Tienda").apply(lambda g: pd.Series({
                 "Cantidad": len(g),
                 ">72h": int((g["Horas"] > 72).sum()),
                 "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
             })).reset_index().sort_values("Cantidad", ascending=False).head(5)
-            base_ops = base[base["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
-            agg_tipo = base_ops.groupby("Tipo").agg(
+            agg_tipo = base.groupby("Tipo").agg(
                 Cantidad=("Pedido", "count")
             ).reset_index().sort_values("Cantidad", ascending=False).head(5)
 
@@ -2553,7 +2557,7 @@ if any_data_loaded:
             resumen_side_by_side = (
                 '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
                 '<div style="flex:1;min-width:260px;">'
-                '<div class="resumen-title">Top 5 tiendas con más reclamos</div>' + resumen_html + '</div>'
+                '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>' + resumen_html + '</div>'
                 '<div style="flex:1;min-width:260px;">'
                 '<div class="resumen-title">Top 5 reclamos Operativos</div>' + resumen_tipo_html + '</div>'
                 '</div>'
@@ -2574,7 +2578,7 @@ if any_data_loaded:
             r72_tot = int((base["Horas"] > 72).sum())
             r24_tot = int(((base["Horas"] >= 24) & (base["Horas"] <= 72)).sum())
             mini_card = kpi_card(
-                "Reclamos abiertos" if solo_abiertos else "Reclamos (todos)", f"{len(show)}",
+                "Reclamos Operativos abiertos" if solo_abiertos else "Reclamos Operativos (todos)", f"{len(show)}",
                 f"{r72_tot} con +72h · {r24_tot} entre 24–72h — clickeá para bajar el HTML",
                 "crit" if r72_tot > 0 else ("warn" if r24_tot > 0 else "good")
             )
@@ -2586,7 +2590,7 @@ if any_data_loaded:
 
             col_tienda, col_tipo = st.columns(2)
             with col_tienda:
-                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos</div>', unsafe_allow_html=True)
+                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>', unsafe_allow_html=True)
                 st.write(resumen_html, unsafe_allow_html=True)
             with col_tipo:
                 st.markdown('<div class="resumen-title">Top 5 reclamos Operativos</div>', unsafe_allow_html=True)
