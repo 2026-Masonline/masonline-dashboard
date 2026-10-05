@@ -287,29 +287,14 @@ def money(v):
 def intfmt(v):
     return f"{int(round(v)):,}".replace(",", ".")
 
-#  El archivo "Vs de ventas" trae, en cada fila, el ACUMULADO del mes hasta
-#  esa fecha (no el valor de ese día puntual) — por eso NO hay que sumar
-#  varias filas del mes (eso contaba el acumulado una y otra vez, de ahí
-#  salía el 30.360 en vez de 2.086 pedidos). El total del mes-a-la-fecha es
-#  directamente el valor de la fila de la fecha elegida en el filtro.
-
-def isolar_dias(frame):
-    """Valor de CADA día por separado (no acumulado). El archivo trae el
-    acumulado del mes por fila, así que el primer día de cada mes ya es su
-    propio valor aislado, y el resto sale de restar el acumulado anterior
-    dentro del mismo mes."""
-    d = frame.sort_values("date").copy()
-    d["_ym"] = d["date"].dt.to_period("M")
-    out = d.copy()
-    for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
-        out[col] = d.groupby("_ym")[col].diff()
-        out[col] = out[col].fillna(d[col])
-    return out.drop(columns="_ym")
-
-df_diario = isolar_dias(df)
+#  El archivo "Vs de ventas" trae una fila por DÍA y por TIENDA, con el
+#  valor de ESE día puntual (no acumulado) — más arriba ya sumamos todas
+#  las tiendas por fecha (el "df" de acá es uno-fila-por-día). Por eso para
+#  sumar un rango de fechas alcanza con filtrar esas filas y sumarlas
+#  directo, sin restar nada.
 
 def suma_rango(desde_ts, hasta_ts):
-    sub = df_diario[(df_diario["date"] >= desde_ts) & (df_diario["date"] <= hasta_ts)]
+    sub = df[(df["date"] >= desde_ts) & (df["date"] <= hasta_ts)]
     if sub.empty:
         return None
     return {
@@ -446,11 +431,8 @@ footnote_html = (
 # ---------------------------------------------------------------------
 # Primer fin de semana del mes: Viernes + Sábado + Domingo de la primera
 # semana completa del mes, comparado con el mismo fin de semana (primer
-# finde de ese mismo mes) del año anterior. El archivo trae el ACUMULADO
-# del mes por día, no el valor de cada día suelto — así que para aislar
-# solo esos 3 días hay que restar: acumulado del domingo menos acumulado
-# del día anterior al viernes (0 si el viernes es el día 1 del mes, porque
-# ahí el acumulado recién arranca).
+# finde de ese mismo mes) del año anterior. El archivo trae el valor de
+# CADA día puntual (no acumulado), así que alcanza con sumar esos 3 días.
 # ---------------------------------------------------------------------
 
 def primer_finde_fechas(year, month):
@@ -463,20 +445,13 @@ def primer_finde_fechas(year, month):
 
 def finde_acumulado(year, month):
     """Totales (venta, pedidos, unidades, facturación) del primer fin de
-    semana de ese mes/año, aislados del acumulado — o None si los datos
-    cargados todavía no llegan a esa fecha."""
+    semana de ese mes/año — o None si los datos cargados todavía no
+    llegan a esa fecha (no hay fila para el domingo)."""
     friday, saturday, sunday = primer_finde_fechas(year, month)
-    fila_domingo = df[df["date"] == sunday]
-    if fila_domingo.empty:
+    if df[df["date"] == sunday].empty:
         return None
-    cum_sunday = fila_domingo.iloc[0]
-    day_before = friday - pd.Timedelta(days=1)
-    fila_antes = df[df["date"] == day_before] if day_before.month == month else pd.DataFrame()
-    cum_before = fila_antes.iloc[0] if len(fila_antes) else None
-    totales = {}
-    for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
-        v_before = cum_before[col] if cum_before is not None else 0
-        totales[col] = cum_sunday[col] - v_before
+    sub = df[df["date"].isin([friday, saturday, sunday])]
+    totales = {col: sub[col].sum() for col in ["ecommerce_tax", "orders", "units", "company_tax"]}
     return friday, sunday, totales
 
 finde_cur = finde_acumulado(cur_year, cur_month)
@@ -539,25 +514,16 @@ else:
 # Último fin de semana cerrado (el más reciente con datos cargados, no
 # necesariamente el primero del mes) comparado con el mismo fin de semana
 # —el mismo número de fin de semana dentro del mes— del año anterior.
-# Reutiliza la misma técnica de aislar días del acumulado.
+# El archivo trae el valor de cada día puntual, así que alcanza con sumar.
 # ---------------------------------------------------------------------
 
 def finde_totales(friday, saturday, sunday):
-    """Totales de un viernes/sábado/domingo puntuales, aislados del
-    acumulado del mes — o None si ninguno de los tres tiene datos."""
-    totales = {"ecommerce_tax": 0.0, "orders": 0.0, "units": 0.0, "company_tax": 0.0}
-    alguno = False
-    for d in [friday, saturday, sunday]:
-        fila = df[df["date"] == d]
-        if fila.empty:
-            continue
-        alguno = True
-        dia_antes = d - pd.Timedelta(days=1)
-        fila_antes = df[df["date"] == dia_antes] if dia_antes.month == d.month else pd.DataFrame()
-        for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
-            v_antes = fila_antes.iloc[0][col] if len(fila_antes) else 0
-            totales[col] += fila.iloc[0][col] - v_antes
-    return totales if alguno else None
+    """Totales de un viernes/sábado/domingo puntuales — o None si ninguno
+    de los tres tiene datos cargados."""
+    sub = df[df["date"].isin([friday, saturday, sunday])]
+    if sub.empty:
+        return None
+    return {col: sub[col].sum() for col in ["ecommerce_tax", "orders", "units", "company_tax"]}
 
 def nth_finde_fechas(year, month, n):
     friday1, _, _ = primer_finde_fechas(year, month)
@@ -624,10 +590,8 @@ ultimo_finde_section_html = f"""
 
 # ---------------------------------------------------------------------
 # Día a día: misma fecha del mes (día 1, 2, 3...) de este año vs el mismo
-# día del mes del año anterior. El archivo trae el ACUMULADO del mes por
-# fila, así que para aislar el valor de CADA día individual hay que restar
-# el acumulado de ese día menos el del día anterior (el primer día del mes
-# no se resta nada, el acumulado de ese día ES el valor del día).
+# día del mes del año anterior. El archivo ya trae el valor de CADA día
+# puntual (no acumulado), así que se usa directo, sin restar nada.
 # ---------------------------------------------------------------------
 
 def dia_a_dia(year, month):
@@ -635,11 +599,6 @@ def dia_a_dia(year, month):
     if sub.empty:
         return sub
     sub["dia"] = sub["date"].dt.day
-    for col in ["ecommerce_tax", "orders", "units", "company_tax"]:
-        valores = sub[col].to_numpy().copy()
-        if len(valores) > 1:
-            valores[1:] = valores[1:] - valores[:-1]
-        sub[col] = valores
     return sub[["dia", "ecommerce_tax", "orders", "units", "company_tax"]]
 
 dia_cur = dia_a_dia(cur_year, cur_month)
