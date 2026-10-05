@@ -186,18 +186,6 @@ saturday_company = (
     current[current["date"].isin([last_saturday, last_sunday])]["company_tax"].sum()
 )
 
-# Participación del día: si el último día cargado es sábado o domingo, usamos
-# el combinado sábado+domingo (el domingo solo no es representativo: no hay
-# locales abiertos y los números aislados de ese día distorsionan el ratio).
-# Para cualquier otro día de la semana, se usa el día tal cual.
-if latest["date"].weekday() in (5, 6):
-    _ecom_dia = saturday_sales
-    _company_dia = saturday_company
-else:
-    _ecom_dia = latest["ecommerce_tax"]
-    _company_dia = latest["company_tax"]
-share_daily = (_ecom_dia / _company_dia) if _company_dia else 0
-
 # "Fin de semana" para esta página = Viernes + Sábado, pero el número del
 # Sábado ya trae adentro lo que se vendió el domingo (sumado arriba).
 weekend_full_ecom = friday_sales + saturday_sales
@@ -342,7 +330,7 @@ st.markdown(f"""
     {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
     <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
-      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+      Participación del finde: <span style="color:#2f9e66;">{pct(weekend_full_share)}</span>
     </div>
   </div>
 </div>
@@ -481,7 +469,7 @@ body {{
     {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
     <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
-      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+      Participación del finde: <span style="color:#2f9e66;">{pct(weekend_full_share)}</span>
     </div>
   </div>
 </div>
