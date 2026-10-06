@@ -624,7 +624,13 @@ def get_shared_bytes(uploaded_file, shared_path):
     """Esta pestaña no tiene uploader propio (siempre se llama con
     uploaded_file=None): lee el último reporte subido en la pestaña "app",
     primero de la copia local y, si no está (reinicio del servidor), de
-    GitHub (donde queda guardado para siempre)."""
+    GitHub (donde queda guardado para siempre).
+
+    Si la copia local está vacía (0 bytes) la descarta y va directo a
+    GitHub: un bug viejo (ya arreglado) podía dejar guardada ahí una copia
+    vacía/corrupta de un archivo pesado — como todas las pestañas comparten
+    esta misma carpeta temporal, sin este chequeo esa copia rota se seguía
+    leyendo para siempre, aunque la causa original ya esté arreglada."""
     if uploaded_file is not None:
         data = uploaded_file.getvalue()
         try:
@@ -634,11 +640,13 @@ def get_shared_bytes(uploaded_file, shared_path):
         return data, True
     if shared_path.exists():
         try:
-            return shared_path.read_bytes(), False
+            data = shared_path.read_bytes()
+            if data:
+                return data, False
         except Exception:
             pass
     content = fetch_shared_from_github(shared_path)
-    if content is not None:
+    if content:
         try:
             shared_path.write_bytes(content)
         except Exception:
