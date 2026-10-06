@@ -668,12 +668,19 @@ ultimo_finde_section_html = f"""
 # puntual (no acumulado), así que se usa directo, sin restar nada.
 # ---------------------------------------------------------------------
 
+_DIA_A_DIA_COLS = ["dia", "ecommerce_tax", "orders", "units", "company_tax"]
+
 def dia_a_dia(year, month):
     sub = df[(df["date"].dt.year == year) & (df["date"].dt.month == month)].sort_values("date").copy()
     if sub.empty:
-        return sub
+        # Importante: devolver siempre estas columnas (aunque vacío), porque
+        # más abajo se hace un merge(on="dia", ...) entre dia_cur y dia_prev.
+        # Si alguno de los dos meses no tiene datos (ej. el archivo todavía no
+        # trae el mes anterior), un DataFrame vacío SIN la columna "dia"
+        # rompía ese merge con un KeyError.
+        return pd.DataFrame(columns=_DIA_A_DIA_COLS)
     sub["dia"] = sub["date"].dt.day
-    return sub[["dia", "ecommerce_tax", "orders", "units", "company_tax"]]
+    return sub[_DIA_A_DIA_COLS]
 
 dia_cur = dia_a_dia(cur_year, cur_month)
 dia_cur = dia_cur[dia_cur["dia"] <= n]
