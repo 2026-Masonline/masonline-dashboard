@@ -247,14 +247,15 @@ if df.empty:
     st.error("Todavía no hay datos cargados para un día anterior a hoy.")
     st.stop()
 
-# Siempre se muestra el acumulado hasta el último día cerrado cargado (no
-# hay selector manual de fecha de corte); las tarjetas de "Resultados del
-# período" suman el rango Desde/Hasta que se elija acá abajo (por default,
-# del 1 del mes en curso hasta el último día cargado).
+# Por default, "Resultados del período" compara un solo día (el último
+# día cerrado cargado) contra el mismo día del año anterior — no el
+# acumulado del mes. Las tarjetas suman el rango Desde/Hasta que se elija
+# acá abajo, así que para ver un acumulado (ej. todo el mes) alcanza con
+# mover "Desde" al día 1.
 available_dates = sorted(df["date"].unique(), reverse=True)
 _min_fecha = df["date"].min().date()
 _max_fecha = df["date"].max().date()
-_default_desde = _max_fecha.replace(day=1)
+_default_desde = _max_fecha
 
 col_desde, col_hasta = st.columns(2)
 with col_desde:
@@ -346,14 +347,24 @@ else:
     pedidos_prev = venta_prev = unidades_prev = 0
 ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
 
-rango_label_cur = f"{rango_desde_ts.strftime('%d/%m/%Y')} al {rango_hasta_ts.strftime('%d/%m/%Y')}"
-rango_label_prev = f"{rango_desde_prev_ts.strftime('%d/%m/%Y')} al {rango_hasta_prev_ts.strftime('%d/%m/%Y')}"
+_es_un_solo_dia = rango_desde_ts == rango_hasta_ts
+
+if _es_un_solo_dia:
+    rango_label_cur = rango_desde_ts.strftime('%d/%m/%Y')
+    rango_label_prev = rango_desde_prev_ts.strftime('%d/%m/%Y')
+else:
+    rango_label_cur = f"{rango_desde_ts.strftime('%d/%m/%Y')} al {rango_hasta_ts.strftime('%d/%m/%Y')}"
+    rango_label_prev = f"{rango_desde_prev_ts.strftime('%d/%m/%Y')} al {rango_hasta_prev_ts.strftime('%d/%m/%Y')}"
 col_cur_label = rango_label_cur
 col_prev_label = rango_label_prev if hay_prev else f"{rango_label_prev} (sin datos)"
 comparar_vs_year = f"{rango_desde_prev_ts.year}"
-comparar_vs_sub = f"mismo rango {rango_desde_prev_ts.year}"
-periodo_val_label = "Rango acumulado"
-periodo_small_label = f"Datos acumulados del {rango_desde_ts.strftime('%d/%m')} al {rango_hasta_ts.strftime('%d/%m')}"
+comparar_vs_sub = f"mismo día {rango_desde_prev_ts.year}" if _es_un_solo_dia else f"mismo rango {rango_desde_prev_ts.year}"
+if _es_un_solo_dia:
+    periodo_val_label = "Día puntual"
+    periodo_small_label = f"Datos del {rango_desde_ts.strftime('%d/%m')} vs. mismo día {rango_desde_prev_ts.year}"
+else:
+    periodo_val_label = "Rango acumulado"
+    periodo_small_label = f"Datos acumulados del {rango_desde_ts.strftime('%d/%m')} al {rango_hasta_ts.strftime('%d/%m')}"
 
 def delta_badge(v, is_money=False):
     if not hay_prev:
