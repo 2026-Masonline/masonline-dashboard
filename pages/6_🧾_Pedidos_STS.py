@@ -158,6 +158,7 @@ def mes_label(ts):
 
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
+SHARED_PEDIDOS_STS_PATH = SHARED_DIR / "pedidos_sts.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
 
@@ -227,14 +228,24 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+pedidos_sts_bytes = get_shared_bytes(SHARED_PEDIDOS_STS_PATH)
 pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
 reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
-src_bytes = pedidos_bytes if pedidos_bytes is not None else reporte_bytes
+src_bytes = pedidos_sts_bytes if pedidos_sts_bytes is not None else (
+    pedidos_bytes if pedidos_bytes is not None else reporte_bytes
+)
 
-if src_bytes is not None:
+if pedidos_sts_bytes is not None:
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
-        '● Mostrando el archivo de Pedidos subido en la pestaña app — no hace falta subir nada acá.</div>',
+        '● Mostrando el archivo subido en la pestaña app, tarjeta "PEDIDOS STS".</div>',
+        unsafe_allow_html=True
+    )
+elif src_bytes is not None:
+    st.markdown(
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
+        '● Todavía no subiste nada en la tarjeta "PEDIDOS STS" — mostrando el archivo '
+        'de "PEDIDOS +72H" en su lugar.</div>',
         unsafe_allow_html=True
     )
 else:
@@ -245,8 +256,8 @@ else:
         TODAVÍA NO HAY DATOS CARGADOS
       </div>
       <div style="font-size:12px;color:#6b7280;">
-        Subí el archivo de Pedidos (export "order-operation") en la pestaña <b>app</b>.
-        Esta página va a mostrar el listado automáticamente con esos mismos datos.
+        Subí el archivo de Pedidos (export "order-operation") en la pestaña <b>app</b>,
+        tarjeta "PEDIDOS STS". Esta página va a mostrar el listado automáticamente.
       </div>
     </div>
     """, unsafe_allow_html=True)
