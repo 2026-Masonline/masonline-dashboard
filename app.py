@@ -358,10 +358,20 @@ def save_shared_bytes(uploaded_file, shared_path, label="reporte", stamp_date=Fa
         return True
 
     if shared_path.exists():
-        return True
+        try:
+            # Si la copia local está vacía (0 bytes) la descarta y va
+            # directo a GitHub: un bug viejo (ya arreglado) podía dejar
+            # guardada ahí una copia vacía/corrupta de un archivo pesado —
+            # como todas las pestañas comparten esta misma carpeta
+            # temporal, sin este chequeo esa copia rota se seguía
+            # "confirmando como disponible" para siempre.
+            if shared_path.stat().st_size > 0:
+                return True
+        except Exception:
+            pass
 
     content = fetch_shared_from_github(shared_path)
-    if content is not None:
+    if content:
         try:
             shared_path.write_bytes(content)
         except Exception:
