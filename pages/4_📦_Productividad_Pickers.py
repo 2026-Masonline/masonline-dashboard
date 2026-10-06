@@ -306,14 +306,22 @@ def fetch_shared_from_github(shared_path):
 def get_shared_bytes(shared_path):
     """Primero intenta la copia local (rápida); si el servidor se reinició y
     la copia local se perdió, la trae de GitHub (donde queda guardada para
-    siempre) y la vuelve a dejar en local para la próxima."""
+    siempre) y la vuelve a dejar en local para la próxima.
+
+    Si la copia local está vacía (0 bytes) la descarta y va directo a
+    GitHub: un bug viejo (ya arreglado) podía dejar guardada ahí una copia
+    vacía/corrupta de un archivo pesado — como todas las pestañas comparten
+    esta misma carpeta temporal, sin este chequeo esa copia rota se seguía
+    leyendo para siempre, aunque la causa original ya esté arreglada."""
     if shared_path.exists():
         try:
-            return shared_path.read_bytes()
+            data = shared_path.read_bytes()
+            if data:
+                return data
         except Exception:
             pass
     content = fetch_shared_from_github(shared_path)
-    if content is not None:
+    if content:
         try:
             shared_path.write_bytes(content)
         except Exception:
