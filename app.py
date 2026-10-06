@@ -216,6 +216,13 @@ f_vsventas = upload_box_reporte(
     "f_vsventas"
 )
 
+r9, _r10, _r11, _r12 = st.columns(4)
+f_pedidos_sts = upload_box_reporte(
+    r9, "PEDIDOS STS",
+    "Archivo de Pedidos para la pestaña Pedidos STS (Mes, Número de pedido, Número de tienda).",
+    "f_pedidos_sts"
+)
+
 st.markdown(
     '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
     'Delivery todavía guarda el archivo pero no arma ninguna sección — eso lo '
@@ -240,6 +247,7 @@ SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
 SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
+SHARED_PEDIDOS_STS_PATH = SHARED_DIR / "pedidos_sts.xlsx"
 
 def _github_headers():
     token = st.secrets.get("GITHUB_TOKEN")
@@ -388,6 +396,7 @@ ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time", sta
 delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH, "Delivery")
 fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate", stamp_date=True)
 vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH, "Comparativo (vs ventas)")
+pedidos_sts_guardado = save_shared_bytes(f_pedidos_sts, SHARED_PEDIDOS_STS_PATH, "Pedidos STS")
 
 if pedidos_guardado or faltantes_guardado:
     st.markdown(
