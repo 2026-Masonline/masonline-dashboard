@@ -209,25 +209,37 @@ COL_PEDIDOS = "Pedidos Facturados con Venta Operativa - Ecommerce"
 COL_UNIDADES = "Cantidad Venta Operativa - Ecommerce"
 COL_FACTURACION = "Facturacion"
 
-RAW_ORDER_COLS = {"commerceDateCreated", "commerceId", "salesChannelPrefix", "totalAmount"}
+RAW_ORDER_COLS = {
+    "commerceDateCreated", "commerceId", "commerceSequentialId",
+    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+}
 
 def _es_hoja_detalle_pedidos(d):
     return RAW_ORDER_COLS.issubset(set(d.columns))
 
 def _adaptar_hoja_detalle_pedidos(d):
     """Arma, a partir del detalle de pedidos (una fila por pedido), las
-    mismas 4 columnas por día que traían las hojas viejas ya agregadas.
-    Según indicó Emi: se descartan los pedidos del canal Pick&Mix
-    (salesChannelPrefix = "PM") y las devoluciones (commerceId que
-    contiene "RMA") — igual que ya se hace con Pedidos +72h en Operativo.
-    "Venta - Ecommerce" y "Facturacion" toman el mismo monto (totalAmount,
-    que ya viene con impuesto incluido); "Pedidos Facturados" cuenta cada
-    fila como un pedido (cada fila de este archivo es un commerceId
-    distinto); "Cantidad" suma itemsQuantity."""
+    mismas 4 columnas por día que traían las hojas viejas ya agregadas, con
+    el criterio que indicó Emi:
+    - Se descartan los pedidos del canal Pick&Mix (salesChannelPrefix =
+      "PM") y las devoluciones (commerceId que contiene "RMA") — igual que
+      ya se hace con Pedidos +72h en Operativo. De paso, esos son
+      exactamente los únicos casos sin "commerceSequentialId" cargado, así
+      que se descarta también cualquier fila sin ese dato como chequeo
+      extra.
+    - "Pedidos" = cada fila cuenta un pedido (identificado por
+      commerceSequentialId, no por commerceId — una misma
+      commerceSequentialId puede repetirse entre envíos de un mismo pedido,
+      aunque en la práctica, una vez sacados PM y RMA, cada fila que queda
+      ya es una commerceSequentialId distinta).
+    - "Venta - Ecommerce" y "Facturacion" = totalAmount (lo vendido en $,
+      con impuesto incluido).
+    - "Cantidad" (unidades) = itemsPickedQuantity (unidades efectivamente
+      pickeadas), no itemsQuantity (unidades pedidas)."""
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
-    d = d[~es_pm & ~es_rma]
+    d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
     monto = pd.to_numeric(
         d["totalAmount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
         errors="coerce"
@@ -236,7 +248,7 @@ def _adaptar_hoja_detalle_pedidos(d):
         "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
         COL_VENTA: monto,
         COL_FACTURACION: monto,
-        COL_UNIDADES: pd.to_numeric(d.get("itemsQuantity"), errors="coerce").fillna(0),
+        COL_UNIDADES: pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce").fillna(0),
         COL_PEDIDOS: 1,
     })
     return out
