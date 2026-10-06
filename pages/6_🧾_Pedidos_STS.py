@@ -325,17 +325,36 @@ else:
 tabla_f = tabla_f[["Mes", "Numero de pedido", "Numero de tienda"]].reset_index(drop=True)
 
 st.markdown(
-    f'<div class="kpi-row">{kpi_card("Pedidos listados", f"{len(tabla_f):,}".replace(",", "."))}</div>',
+    f'<div class="kpi-row">{kpi_card("Pedidos listados", f"{len(tabla_f):,}".replace(",", "."))}'
+    f'{kpi_card("Tiendas", tabla_f["Numero de tienda"].nunique())}</div>',
     unsafe_allow_html=True
 )
 
-st.markdown('<div class="section">Listado</div>', unsafe_allow_html=True)
-st.markdown(table_html(tabla_f), unsafe_allow_html=True)
-
 csv_bytes = tabla_f.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
-    "⬇ Descargar CSV",
+    "⬇ Descargar CSV (todo lo filtrado)",
     data=csv_bytes,
     file_name="pedidos_sts.csv",
     mime="text/csv",
 )
+
+st.markdown('<div class="section">Listado por tienda</div>', unsafe_allow_html=True)
+
+if tabla_f.empty:
+    st.markdown(
+        '<div style="background:#fafaf8;border:1px dashed #dfe2db;border-radius:12px;'
+        'padding:22px;text-align:center;color:#868d8e;font-size:13px;margin-top:8px;">'
+        'No hay pedidos para ese mes.</div>',
+        unsafe_allow_html=True
+    )
+else:
+    # Orden de tienda: numérico si el código lo permite, para que 998 no
+    # quede antes que 1002 por orden de texto.
+    tiendas_orden = sorted(
+        tabla_f["Numero de tienda"].unique(),
+        key=lambda t: (0, int(t)) if t.isdigit() else (1, t)
+    )
+    for tienda in tiendas_orden:
+        sub = tabla_f[tabla_f["Numero de tienda"] == tienda][["Mes", "Numero de pedido"]]
+        with st.expander(f"Tienda {tienda} — {len(sub)} pedido(s)"):
+            st.markdown(table_html(sub.reset_index(drop=True)), unsafe_allow_html=True)
