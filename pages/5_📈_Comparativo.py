@@ -196,14 +196,50 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# El archivo trae una hoja por año (ej. "2025", "2026"), una fila por
-# tienda y por día. Juntamos todas las hojas y sumamos las 4 columnas que
-# necesitamos, por día (across todas las tiendas) — así no importa cómo se
-# llamen las hojas ni cuántos años tenga, ni si el mes cargado cambia.
+# El archivo trae una hoja por año (ej. "2025", "2026"). Hasta acá, cada hoja
+# traía los totales ya armados por tienda y por día (una fila = una
+# tienda-día, con las 4 columnas de abajo ya calculadas). A partir de la hoja
+# 2026, en cambio, el archivo trae el detalle de pedidos sin armar (una fila
+# por pedido, columnas tipo commerceId/totalAmount/itemsQuantity/status) — lo
+# detectamos por esas columnas y armamos nosotros mismos las 4 columnas que
+# necesitamos. Así conviven las dos hojas sin que importe cómo se llamen ni
+# cuántos años tenga el archivo.
 COL_VENTA = "Venta - Ecommerce"
 COL_PEDIDOS = "Pedidos Facturados con Venta Operativa - Ecommerce"
 COL_UNIDADES = "Cantidad Venta Operativa - Ecommerce"
 COL_FACTURACION = "Facturacion"
+
+RAW_ORDER_COLS = {"commerceDateCreated", "commerceId", "salesChannelPrefix", "totalAmount"}
+
+def _es_hoja_detalle_pedidos(d):
+    return RAW_ORDER_COLS.issubset(set(d.columns))
+
+def _adaptar_hoja_detalle_pedidos(d):
+    """Arma, a partir del detalle de pedidos (una fila por pedido), las
+    mismas 4 columnas por día que traían las hojas viejas ya agregadas.
+    Según indicó Emi: se descartan los pedidos del canal Pick&Mix
+    (salesChannelPrefix = "PM") y las devoluciones (commerceId que
+    contiene "RMA") — igual que ya se hace con Pedidos +72h en Operativo.
+    "Venta - Ecommerce" y "Facturacion" toman el mismo monto (totalAmount,
+    que ya viene con impuesto incluido); "Pedidos Facturados" cuenta cada
+    fila como un pedido (cada fila de este archivo es un commerceId
+    distinto); "Cantidad" suma itemsQuantity."""
+    d = d.copy()
+    es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
+    es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
+    d = d[~es_pm & ~es_rma]
+    monto = pd.to_numeric(
+        d["totalAmount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+        errors="coerce"
+    ).fillna(0)
+    out = pd.DataFrame({
+        "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
+        COL_VENTA: monto,
+        COL_FACTURACION: monto,
+        COL_UNIDADES: pd.to_numeric(d.get("itemsQuantity"), errors="coerce").fillna(0),
+        COL_PEDIDOS: 1,
+    })
+    return out
 
 try:
     xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
@@ -211,6 +247,8 @@ try:
     for sheet in xl.sheet_names:
         d = xl.parse(sheet)
         d.columns = [str(c).strip() for c in d.columns]
+        if _es_hoja_detalle_pedidos(d):
+            d = _adaptar_hoja_detalle_pedidos(d)
         if "Fecha" not in d.columns:
             continue
         d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
