@@ -149,6 +149,41 @@ def mes_label(ts):
         return ""
     return f"{MESES_ES.get(ts.month, ts.month).capitalize()} {ts.year}"
 
+# Código de tienda (shippingWarehouseReferenceId) -> nombre. Mismo listado
+# que usan Productividad Pickers y la pestaña app.
+TIENDA_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+def tienda_nombre(codigo):
+    return TIENDA_MAP.get(norm_txt(codigo), norm_txt(codigo))
+
 # ---------------------------------------------------------------------
 # Archivo compartido: esta pestaña NO tiene uploader propio. Usa el mismo
 # archivo de Pedidos (export "order-operation") que se sube en la pestaña
@@ -375,5 +410,12 @@ else:
     )
     for tienda in tiendas_orden:
         sub = tabla_f[tabla_f["Numero de tienda"] == tienda][["Mes", "Numero de pedido"]]
-        with st.expander(f"Tienda {tienda} — {len(sub)} pedido(s)"):
+        nombre = tienda_nombre(tienda)
+        with st.expander(f"{nombre} ({tienda}) — {len(sub)} pedido(s)"):
+            st.markdown(
+                f'<div style="font-weight:800;font-size:15px;color:#20252b;margin-bottom:8px;">'
+                f'{nombre} <span style="font-weight:400;color:#6b7280;font-size:12.5px;">(tienda {tienda})</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
             st.markdown(table_html(sub.reset_index(drop=True)), unsafe_allow_html=True)
