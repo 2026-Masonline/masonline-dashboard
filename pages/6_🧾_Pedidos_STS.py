@@ -273,10 +273,29 @@ else:
 
 REQUIRED_COLS = ["commerceSequentialId", "shippingWarehouseReferenceId", "deliveryFinishDate"]
 
+def find_all_sheets(xl, required_cols):
+    """Como find_sheet, pero junta TODAS las hojas que tengan las columnas
+    necesarias (no solo la primera) — por si el archivo trae una hoja por
+    mes/período en vez de todo en una sola, como pasa con 'Vs de ventas'."""
+    required = {c.lower() for c in required_cols}
+    frames = []
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if required.issubset(cols):
+            frames.append(df)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
 xl = safe_open_excel(src_bytes)
 df_raw = None
 if xl is not None:
-    _, df_raw = find_sheet(xl, REQUIRED_COLS)
+    df_raw = find_all_sheets(xl, REQUIRED_COLS)
 
 if df_raw is None:
     st.markdown("""
