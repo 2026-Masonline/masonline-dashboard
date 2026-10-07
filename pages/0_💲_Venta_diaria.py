@@ -506,6 +506,9 @@ st.markdown(f"""
     <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
       Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
     </div>
+    <div style="font-weight:800;font-size:16px;margin-top:4px;color:#20252b;">
+      Pedidos del día: <span style="color:#e8432c;">{intfmt(latest["orders"])}</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -860,7 +863,10 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
     {MES_ACTUAL_LABEL}
     <small>Datos acumulados al {latest["date"].strftime("%d/%m/%Y")}</small>
     <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
-      Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
+      Participación del día: <span style="color:#2f9e66;">{html.escape(pct(share_daily))}</span>
+    </div>
+    <div style="font-weight:800;font-size:16px;margin-top:4px;color:#20252b;">
+      Pedidos del día: <span style="color:#e8432c;">{html.escape(intfmt(latest["orders"]))}</span>
     </div>
   </div>
 </div>
@@ -912,15 +918,6 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
       {html.escape(f"{share/target:.0%}")}
       <small>del objetivo</small>
     </div>
-  </div>
-</div>
-
-<div class="section">Pedidos del día</div>
-<div style="display:flex;">
-  <div class="card" style="border-top:4px solid #e8432c;max-width:240px;">
-    <div class="label" style="color:#e8432c;">PEDIDOS DEL DÍA</div>
-    <div class="value" style="color:#e8432c;">{html.escape(intfmt(latest["orders"]))}</div>
-    <div class="small">{html.escape(latest["date"].strftime("%d/%m/%Y"))}</div>
   </div>
 </div>
 
@@ -1046,17 +1043,6 @@ with tab1:
           {f"{share/target:.0%}"}
           <small>del objetivo</small>
         </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="section">Pedidos del día</div>', unsafe_allow_html=True)
-    st.markdown(f"""
-    <div style="display:flex;">
-      <div class="card" style="border-top:4px solid #e8432c;max-width:240px;">
-        <div class="label" style="color:#e8432c;">PEDIDOS DEL DÍA</div>
-        <div class="value" style="color:#e8432c;">{intfmt(latest["orders"])}</div>
-        <div class="small">{latest["date"].strftime("%d/%m/%Y")}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
