@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import tempfile
+import io
+import json
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -247,7 +249,6 @@ SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
 SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
-SHARED_PEDIDOS_STS_PATH = SHARED_DIR / "pedidos_sts.xlsx"
 
 def _github_headers():
     token = st.secrets.get("GITHUB_TOKEN")
@@ -388,6 +389,136 @@ def save_shared_bytes(uploaded_file, shared_path, label="reporte", stamp_date=Fa
 
     return False
 
+# -----------------------------------------------------------------
+# Pedidos STS: a diferencia de los demás reportes (que guardan el Excel
+# entero tal cual se subió), este se procesa al vuelo apenas se sube acá
+# y se guarda YA SEPARADO POR MES — cada mes en su propio archivito
+# (pedidos_sts_<AAAA-MM>.csv) + un índice (pedidos_sts_index.json) con la
+# lista de meses cargados. Así, la pestaña Pedidos STS puede ir sumando
+# mes a mes sin que un archivo nuevo pise los meses anteriores, y sin
+# tener que guardar (ni volver a leer) el Excel pesado completo cada vez.
+# -----------------------------------------------------------------
+
+def _read_shared_bytes(shared_path):
+    """Como save_shared_bytes pero de solo lectura (sin un file_uploader
+    de por medio): copia local si existe y no está vacía, si no la trae
+    de GitHub y la cachea local para la próxima."""
+    if shared_path.exists():
+        try:
+            data = shared_path.read_bytes()
+            if data:
+                return data
+        except Exception:
+            pass
+    content = fetch_shared_from_github(shared_path)
+    if content:
+        try:
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
+    return None
+
+INDEX_PEDIDOS_STS_PATH = SHARED_DIR / "pedidos_sts_index.json"
+
+def _month_shared_path_sts(month_key):
+    return SHARED_DIR / f"pedidos_sts_{month_key}.csv"
+
+def load_index_pedidos_sts():
+    data = _read_shared_bytes(INDEX_PEDIDOS_STS_PATH)
+    if not data:
+        return []
+    try:
+        return sorted(set(json.loads(data.decode("utf-8"))), reverse=True)
+    except Exception:
+        return []
+
+def save_index_pedidos_sts(meses):
+    meses = sorted(set(meses), reverse=True)
+    content = json.dumps(meses).encode("utf-8")
+    try:
+        INDEX_PEDIDOS_STS_PATH.write_bytes(content)
+    except Exception:
+        pass
+    save_bytes_to_github(INDEX_PEDIDOS_STS_PATH, content, "Pedidos STS (índice de meses)")
+
+def save_month_df_sts(month_key, df_mes):
+    out = df_mes[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]].copy()
+    out["_mes_ord"] = out["_mes_ord"].astype(str)
+    content = out.to_csv(index=False).encode("utf-8")
+    path = _month_shared_path_sts(month_key)
+    try:
+        path.write_bytes(content)
+    except Exception:
+        pass
+    save_bytes_to_github(path, content, f"Pedidos STS {month_key}")
+    meses = load_index_pedidos_sts()
+    if month_key not in meses:
+        meses.append(month_key)
+        save_index_pedidos_sts(meses)
+
+def norm_cols(df):
+    df = df.copy()
+    df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
+    return df
+
+def norm_txt(v):
+    if pd.isna(v):
+        return ""
+    return str(v).replace("\xa0", " ").strip()
+
+def norm_codigo(v):
+    if pd.isna(v):
+        return ""
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return norm_txt(v)
+
+MESES_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+
+def mes_label(ts):
+    if pd.isna(ts):
+        return ""
+    return f"{MESES_ES.get(ts.month, ts.month).capitalize()} {ts.year}"
+
+REQUIRED_COLS_STS = ["commerceSequentialId", "shippingWarehouseReferenceId", "deliveryFinishDate"]
+
+def find_all_sheets_sts(xl, required_cols):
+    required = {c.lower() for c in required_cols}
+    frames = []
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if required.issubset(cols):
+            frames.append(df)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+def procesar_archivo_sts(file_bytes):
+    try:
+        xl = pd.ExcelFile(io.BytesIO(file_bytes))
+    except Exception:
+        return {"ok": False}
+    df_raw = find_all_sheets_sts(xl, REQUIRED_COLS_STS)
+    if df_raw is None:
+        return {"ok": False}
+    d = df_raw.copy()
+    d["_fecha"] = pd.to_datetime(d["deliveryFinishDate"], errors="coerce")
+    d = d.dropna(subset=["commerceSequentialId", "_fecha"]).copy()
+    d["Mes"] = d["_fecha"].apply(mes_label)
+    d["_mes_ord"] = d["_fecha"].dt.to_period("M")
+    d["Numero de pedido"] = d["commerceSequentialId"].apply(norm_codigo)
+    d["Numero de tienda"] = d["shippingWarehouseReferenceId"].apply(norm_codigo)
+    return {"ok": True, "data": d[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]]}
+
 faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH, "Faltantes")
 pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH, "Pedidos +72h")
 pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH, "Pickers")
@@ -396,7 +527,37 @@ ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time", sta
 delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH, "Delivery")
 fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate", stamp_date=True)
 vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH, "Comparativo (vs ventas)")
-pedidos_sts_guardado = save_shared_bytes(f_pedidos_sts, SHARED_PEDIDOS_STS_PATH, "Pedidos STS")
+
+if f_pedidos_sts is not None:
+    firma_sts = (f_pedidos_sts.name, f_pedidos_sts.size)
+    if st.session_state.get("_pedidos_sts_firma_app") != firma_sts:
+        with st.spinner("Procesando archivo de Pedidos STS…"):
+            resultado_sts = procesar_archivo_sts(f_pedidos_sts.getvalue())
+        if not resultado_sts["ok"]:
+            st.error(
+                "PEDIDOS STS: no encontré las columnas necesarias (commerceSequentialId, "
+                "shippingWarehouseReferenceId, deliveryFinishDate) en ninguna hoja de ese archivo."
+            )
+        else:
+            d_sts = resultado_sts["data"]
+            if d_sts.empty:
+                st.warning("PEDIDOS STS: el archivo no tiene pedidos con fecha de entrega válida.")
+            else:
+                resumen_sts = []
+                with st.spinner("Guardando por mes…"):
+                    for mes_ord, grupo in d_sts.groupby("_mes_ord"):
+                        month_key = str(mes_ord)
+                        save_month_df_sts(month_key, grupo)
+                        resumen_sts.append(
+                            f"{grupo['Mes'].iloc[0]} ({len(grupo):,} pedidos)".replace(",", ".")
+                        )
+                st.markdown(
+                    '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
+                    '● PEDIDOS STS guardado → ' + " · ".join(resumen_sts) +
+                    ' — ya lo podés ver en la pestaña Pedidos STS.</div>',
+                    unsafe_allow_html=True
+                )
+        st.session_state["_pedidos_sts_firma_app"] = firma_sts
 
 if pedidos_guardado or faltantes_guardado:
     st.markdown(
