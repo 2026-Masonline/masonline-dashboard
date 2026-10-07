@@ -202,10 +202,6 @@ def tienda_nombre(codigo):
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
 
-MESES_SUBDIR = "pedidos_sts_meses"
-SHARED_MESES_DIR = SHARED_DIR / MESES_SUBDIR
-SHARED_MESES_DIR.mkdir(parents=True, exist_ok=True)
-
 INDEX_LOCAL_PATH = SHARED_DIR / "pedidos_sts_index.json"
 INDEX_REPO_PATH = "shared_uploads/pedidos_sts_index.json"
 
@@ -278,10 +274,10 @@ def _github_put(repo_path, content_bytes, label):
         return False
 
 def _month_local_path(month_key):
-    return SHARED_MESES_DIR / f"{month_key}.csv"
+    return SHARED_DIR / f"pedidos_sts_{month_key}.csv"
 
 def _month_repo_path(month_key):
-    return f"shared_uploads/{MESES_SUBDIR}/{month_key}.csv"
+    return f"shared_uploads/pedidos_sts_{month_key}.csv"
 
 def load_index():
     """Lista de meses (ej. '2026-01') que ya tienen datos guardados,
@@ -361,65 +357,6 @@ def save_month_df(month_key, df_mes):
         save_index(meses)
 
 # ---------------------------------------------------------------------
-# Procesar un archivo recién subido: arma las 3 columnas pedidas —
-# Mes (de deliveryFinishDate), Número de pedido (commerceSequentialId) y
-# Número de tienda (shippingWarehouseReferenceId) — juntando TODAS las
-# hojas del archivo que tengan esas columnas (por si viene una hoja por
-# período). Se descartan las filas sin commerceSequentialId (Pick&Mix /
-# devoluciones RMA, que no tienen un "número de pedido" real).
-# ---------------------------------------------------------------------
-
-REQUIRED_COLS = ["commerceSequentialId", "shippingWarehouseReferenceId", "deliveryFinishDate"]
-
-def find_all_sheets(xl, required_cols):
-    required = {c.lower() for c in required_cols}
-    frames = []
-    hojas_usadas = []
-    hojas_descartadas = []
-    for name in xl.sheet_names:
-        try:
-            df = xl.parse(name)
-        except Exception as e:
-            hojas_descartadas.append(f"{name} (no se pudo leer: {e})")
-            continue
-        df = norm_cols(df)
-        cols = {c.lower() for c in df.columns}
-        if required.issubset(cols):
-            frames.append(df)
-            hojas_usadas.append(f"{name} ({len(df):,} filas)".replace(",", "."))
-        else:
-            faltantes = required - cols
-            hojas_descartadas.append(f"{name} (sin columnas: {', '.join(sorted(faltantes))})")
-    if not frames:
-        return None, hojas_usadas, hojas_descartadas
-    return pd.concat(frames, ignore_index=True), hojas_usadas, hojas_descartadas
-
-def procesar_archivo(file_bytes):
-    xl = safe_open_excel(file_bytes)
-    if xl is None:
-        return {"ok": False, "hojas_usadas": [], "hojas_descartadas": []}
-    df_raw, hojas_usadas, hojas_descartadas = find_all_sheets(xl, REQUIRED_COLS)
-    if df_raw is None:
-        return {"ok": False, "hojas_usadas": hojas_usadas, "hojas_descartadas": hojas_descartadas}
-    d = df_raw.copy()
-    filas_antes = len(d)
-    d["_fecha"] = pd.to_datetime(d["deliveryFinishDate"], errors="coerce")
-    sin_fecha_valida = int(d["_fecha"].isna().sum())
-    d = d.dropna(subset=["commerceSequentialId", "_fecha"]).copy()
-    d["Mes"] = d["_fecha"].apply(mes_label)
-    d["_mes_ord"] = d["_fecha"].dt.to_period("M")
-    d["Numero de pedido"] = d["commerceSequentialId"].apply(norm_codigo)
-    d["Numero de tienda"] = d["shippingWarehouseReferenceId"].apply(norm_codigo)
-    return {
-        "ok": True,
-        "data": d[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]],
-        "hojas_usadas": hojas_usadas,
-        "hojas_descartadas": hojas_descartadas,
-        "filas_antes": filas_antes,
-        "sin_fecha_valida": sin_fecha_valida,
-    }
-
-# ---------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------
 
@@ -432,85 +369,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------
-# Cargar un mes
-# ---------------------------------------------------------------------
-
-st.markdown('<div class="section">Cargar pedidos de un mes</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="section-desc">Subí acá el archivo de Pedidos (export "order-operation") de un mes — '
-    'se guarda en su propia tarjeta, abajo, y se suma a los meses ya cargados sin borrarlos. '
-    'Si volvés a subir un mes que ya estaba, lo reemplaza. Después de guardar, el cuadro de abajo '
-    'vuelve a quedar vacío y listo para el próximo mes.</div>',
+    '<div style="color:#6b7280;font-size:12px;margin:-6px 0 14px;">'
+    'Los datos se cargan desde la pestaña <b>app</b> (menú de la izquierda), tarjeta '
+    '"PEDIDOS STS" — subí ahí el archivo de Pedidos de un mes y aparece acá solo, sumado '
+    'a los meses que ya tenías.</div>',
     unsafe_allow_html=True
 )
 
-# El cuadro de carga usa una "key" que cambia después de cada guardado
-# exitoso (ver más abajo) — así, en vez de quedar mostrando el archivo ya
-# procesado (que parece que "desapareció" el cuadro grande para arrastrar
-# un archivo nuevo), Streamlit lo redibuja vacío y listo para el próximo
-# mes, sin que haya que tocar ninguna "x" primero.
-if "_pedidos_sts_uploader_n" not in st.session_state:
-    st.session_state["_pedidos_sts_uploader_n"] = 0
-
-# Mensaje del último archivo procesado (se guarda en sesión porque el
-# rerun que vacía el cuadro de carga pasa antes de que se alcance a ver
-# cualquier mensaje escrito en el mismo ciclo).
-if st.session_state.get("_pedidos_sts_msg"):
-    tipo_msg, texto_msg = st.session_state.pop("_pedidos_sts_msg")
-    getattr(st, tipo_msg)(texto_msg)
-if st.session_state.get("_pedidos_sts_detalle"):
-    hojas_usadas_prev, hojas_descartadas_prev = st.session_state.pop("_pedidos_sts_detalle")
-    with st.expander("Detalle técnico del último archivo subido"):
-        st.markdown(
-            f"**Hojas usadas** ({len(hojas_usadas_prev)}): "
-            + (", ".join(hojas_usadas_prev) if hojas_usadas_prev else "ninguna")
-        )
-        if hojas_descartadas_prev:
-            st.markdown(
-                f"**Hojas descartadas** ({len(hojas_descartadas_prev)}): "
-                + ", ".join(hojas_descartadas_prev)
-            )
-
-nuevo_archivo = st.file_uploader(
-    "Archivo de Pedidos", type=["xlsx", "xls"],
-    key=f"pedidos_sts_upload_{st.session_state['_pedidos_sts_uploader_n']}",
-    label_visibility="collapsed"
-)
-
-if nuevo_archivo is not None:
-    with st.spinner("Procesando archivo…"):
-        resultado = procesar_archivo(nuevo_archivo.getvalue())
-    if not resultado["ok"]:
-        st.session_state["_pedidos_sts_msg"] = (
-            "error",
-            "No encontré las columnas necesarias (commerceSequentialId, "
-            "shippingWarehouseReferenceId, deliveryFinishDate) en ninguna hoja de ese archivo."
-        )
-    else:
-        d_nuevo = resultado["data"]
-        if d_nuevo.empty:
-            st.session_state["_pedidos_sts_msg"] = (
-                "warning", "El archivo no tiene pedidos con fecha de entrega válida."
-            )
-        else:
-            resumen = []
-            with st.spinner("Guardando por mes…"):
-                for mes_ord, grupo in d_nuevo.groupby("_mes_ord"):
-                    month_key = str(mes_ord)
-                    save_month_df(month_key, grupo)
-                    resumen.append(
-                        f"{grupo['Mes'].iloc[0]} ({len(grupo):,} pedidos)".replace(",", ".")
-                    )
-            st.session_state["_pedidos_sts_msg"] = ("success", "Guardado → " + " · ".join(resumen))
-        st.session_state["_pedidos_sts_detalle"] = (resultado["hojas_usadas"], resultado["hojas_descartadas"])
-    # Cambia la key del uploader y vuelve a correr la página: así el
-    # cuadro de carga aparece vacío de nuevo, listo para el próximo mes.
-    st.session_state["_pedidos_sts_uploader_n"] += 1
-    st.rerun()
-
 # ---------------------------------------------------------------------
-# Armar la tabla combinada con todos los meses ya guardados
+# Armar la tabla combinada con todos los meses ya guardados (lo que subió
+# la pestaña app, tarjeta "PEDIDOS STS", mes a mes)
 # ---------------------------------------------------------------------
 
 index_meses = load_index()
