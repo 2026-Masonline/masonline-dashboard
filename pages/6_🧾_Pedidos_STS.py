@@ -328,26 +328,37 @@ REQUIRED_COLS = ["commerceSequentialId", "shippingWarehouseReferenceId", "delive
 def find_all_sheets(xl, required_cols):
     """Como find_sheet, pero junta TODAS las hojas que tengan las columnas
     necesarias (no solo la primera) — por si el archivo trae una hoja por
-    mes/período en vez de todo en una sola, como pasa con 'Vs de ventas'."""
+    mes/período en vez de todo en una sola, como pasa con 'Vs de ventas'.
+    Devuelve también qué hojas usó y cuáles descartó, para poder mostrar un
+    detalle técnico en pantalla si algo no cierra (por ejemplo, si el
+    archivo tiene más meses de los que se terminan mostrando)."""
     required = {c.lower() for c in required_cols}
     frames = []
+    hojas_usadas = []
+    hojas_descartadas = []
     for name in xl.sheet_names:
         try:
             df = xl.parse(name)
-        except Exception:
+        except Exception as e:
+            hojas_descartadas.append(f"{name} (no se pudo leer: {e})")
             continue
         df = norm_cols(df)
         cols = {c.lower() for c in df.columns}
         if required.issubset(cols):
             frames.append(df)
+            hojas_usadas.append(f"{name} ({len(df):,} filas)".replace(",", "."))
+        else:
+            faltantes = required - cols
+            hojas_descartadas.append(f"{name} (sin columnas: {', '.join(sorted(faltantes))})")
     if not frames:
-        return None
-    return pd.concat(frames, ignore_index=True)
+        return None, hojas_usadas, hojas_descartadas
+    return pd.concat(frames, ignore_index=True), hojas_usadas, hojas_descartadas
 
 xl = safe_open_excel(src_bytes)
 df_raw = None
+hojas_usadas, hojas_descartadas = [], []
 if xl is not None:
-    df_raw = find_all_sheets(xl, REQUIRED_COLS)
+    df_raw, hojas_usadas, hojas_descartadas = find_all_sheets(xl, REQUIRED_COLS)
 
 if df_raw is None:
     st.markdown("""
@@ -367,7 +378,10 @@ if df_raw is None:
     st.stop()
 
 d = df_raw.copy()
-d["_fecha"] = pd.to_datetime(d["deliveryFinishDate"], errors="coerce")
+filas_antes = len(d)
+d["_fecha_raw"] = pd.to_datetime(d["deliveryFinishDate"], errors="coerce")
+sin_fecha_valida = d["_fecha_raw"].isna().sum()
+d["_fecha"] = d["_fecha_raw"]
 d = d.dropna(subset=["commerceSequentialId", "_fecha"]).copy()
 d["Mes"] = d["_fecha"].apply(mes_label)
 d["_mes_ord"] = d["_fecha"].dt.to_period("M")
@@ -377,6 +391,22 @@ d["Numero de tienda"] = d["shippingWarehouseReferenceId"].apply(norm_codigo)
 tabla = d[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]].sort_values(
     ["_mes_ord", "Numero de pedido"], ascending=[False, True]
 )
+
+with st.expander("Ver detalle técnico (para diagnosticar si falta algún mes)"):
+    st.markdown(
+        f"**Hojas usadas** ({len(hojas_usadas)}): " + (", ".join(hojas_usadas) if hojas_usadas else "ninguna")
+    )
+    if hojas_descartadas:
+        st.markdown(f"**Hojas descartadas** ({len(hojas_descartadas)}): " + ", ".join(hojas_descartadas))
+    st.markdown(f"**Filas leídas en total:** {filas_antes:,}".replace(",", "."))
+    st.markdown(
+        f"**Filas sin deliveryFinishDate válido (se descartan):** {sin_fecha_valida:,}".replace(",", ".")
+    )
+    if not tabla.empty:
+        mes_min = tabla["_mes_ord"].min()
+        mes_max = tabla["_mes_ord"].max()
+        st.markdown(f"**Rango de meses cargados:** {mes_min} a {mes_max}")
+        st.markdown(f"**Pedidos finales (sin PM/RMA, con fecha válida):** {len(tabla):,}".replace(",", "."))
 
 # ---------------------------------------------------------------------
 # Filtro de Mes
