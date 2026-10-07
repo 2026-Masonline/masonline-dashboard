@@ -915,6 +915,15 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
   </div>
 </div>
 
+<div class="section">Pedidos del día</div>
+<div style="display:flex;">
+  <div class="card" style="border-top:4px solid #e8432c;max-width:240px;">
+    <div class="label" style="color:#e8432c;">PEDIDOS DEL DÍA</div>
+    <div class="value" style="color:#e8432c;">{html.escape(intfmt(latest["orders"]))}</div>
+    <div class="small">{html.escape(latest["date"].strftime("%d/%m/%Y"))}</div>
+  </div>
+</div>
+
 <div class="section">Top 5 tiendas eCommerce</div>
 <div style="color:#6b7280;font-size:13px;margin-top:-8px;margin-bottom:12px;">
 Ranking por venta ecommerce, con pedidos de cada tienda.
@@ -1037,6 +1046,17 @@ with tab1:
           {f"{share/target:.0%}"}
           <small>del objetivo</small>
         </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section">Pedidos del día</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="display:flex;">
+      <div class="card" style="border-top:4px solid #e8432c;max-width:240px;">
+        <div class="label" style="color:#e8432c;">PEDIDOS DEL DÍA</div>
+        <div class="value" style="color:#e8432c;">{intfmt(latest["orders"])}</div>
+        <div class="small">{latest["date"].strftime("%d/%m/%Y")}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
