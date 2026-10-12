@@ -483,10 +483,12 @@ for d_cur, d_prev in zip(dias_sel, dias_prev):
     venta_dia_cur = fila_cur["ecommerce_tax"].sum() if len(fila_cur) else None
     pedidos_dia_cur = fila_cur["orders"].sum() if len(fila_cur) else None
     venta_dia_prev = fila_prev["ecommerce_tax"].sum() if len(fila_prev) else None
+    pedidos_dia_prev = fila_prev["orders"].sum() if len(fila_prev) else None
 
     venta_cur_txt = money(venta_dia_cur) if venta_dia_cur is not None else "—"
     pedidos_cur_txt = intfmt(pedidos_dia_cur) if pedidos_dia_cur is not None else "—"
     venta_prev_txt = money(venta_dia_prev) if venta_dia_prev is not None else "—"
+    pedidos_prev_txt = intfmt(pedidos_dia_prev) if pedidos_dia_prev is not None else "—"
     variacion = (
         (venta_dia_cur / venta_dia_prev - 1)
         if venta_dia_cur is not None and venta_dia_prev not in (None, 0) else None
@@ -497,6 +499,7 @@ for d_cur, d_prev in zip(dias_sel, dias_prev):
         f'<td style="padding:10px 16px;color:#000000;text-align:center;">{venta_cur_txt}</td>'
         f'<td style="padding:10px 16px;color:#000000;text-align:center;">{pedidos_cur_txt}</td>'
         f'<td style="padding:10px 16px;color:#000000;text-align:center;">{venta_prev_txt}</td>'
+        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{pedidos_prev_txt}</td>'
         f'<td style="padding:10px 16px;text-align:center;">{variacion_html(variacion)}</td>'
         '</tr>'
     )
@@ -511,6 +514,7 @@ dia_table_html = f"""
       <th>Venta {viernes_sel.year}</th>
       <th>Pedidos {viernes_sel.year}</th>
       <th>Venta {viernes_prev.year}</th>
+      <th>Pedidos {viernes_prev.year}</th>
       <th>Variación</th>
     </tr>
   </thead>
