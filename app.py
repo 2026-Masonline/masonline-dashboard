@@ -188,6 +188,16 @@ _PEDIDOS_72H_COLS = [
     "totalAmount", "shippingWarehouseName",
 ]
 
+# El export "order-operation" trae muchas columnas más (cliente, forma de
+# pago, items, etc.) que ninguna pestaña del dashboard usa. Nos quedamos solo
+# con estas antes de guardar el combinado — reduce bastante el tamaño del
+# archivo (y la memoria que ocupa cada vez que una pestaña lo vuelve a leer),
+# algo que pesa más todavía ahora que se pueden subir varios archivos juntos.
+_PEDIDOS_72H_COLS_UTILES = [
+    "commerceId", "salesChannelPrefix", "commerceDateCreated", "deliveryFinishDate",
+    "status", "totalAmount", "shippingWarehouseName", "shippingLocationName",
+]
+
 def _norm_cols_pedidos(df):
     df = df.copy()
     df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
@@ -240,6 +250,11 @@ def merge_pedidos_72h_files(uploaded_files):
         if df is None:
             resumen.append(f"{f.name}: no encontré la hoja esperada, lo salteé")
             continue
+        # Recortar a las columnas que realmente se usan ANTES de apilar —
+        # así no se arrastran en memoria las decenas de columnas del export
+        # que ninguna pestaña necesita.
+        cols_presentes = [c for c in _PEDIDOS_72H_COLS_UTILES if c in df.columns]
+        df = df[cols_presentes].copy()
         partes.append(df)
         resumen.append(f"{f.name}: {len(df):,}".replace(",", "."))
 
