@@ -433,11 +433,23 @@ pedidos_cur_kpi, venta_cur_kpi, unidades_cur_kpi = tot_cur_kpi["orders"], tot_cu
 company_cur_kpi = tot_cur_kpi["company_tax"]
 
 # Participación y barra de objetivo — igual que en Venta diaria/Venta fin
-# de semana: venta ecommerce del finde sobre venta total de la compañía
-# en el finde, contra el mismo objetivo de 3%.
+# de semana: venta ecommerce sobre venta total de la compañía, contra el
+# mismo objetivo de 3%. Acá se muestran dos: la del finde (solo esos 4
+# días) y la del mes completo al que pertenece el finde elegido (mismo
+# cálculo que la barra de "Venta fin de semana"/"Venta diaria").
 TARGET_PARTICIPACION = 0.03
 share_finde = (venta_cur_kpi / company_cur_kpi) if company_cur_kpi else 0
 progress_finde = min(share_finde / TARGET_PARTICIPACION, 1.0) * 100 if TARGET_PARTICIPACION else 0
+
+_mes_ref_year, _mes_ref_month = viernes_sel.year, viernes_sel.month
+_df_mes = df_actual[
+    (df_actual["date"].dt.year == _mes_ref_year) & (df_actual["date"].dt.month == _mes_ref_month)
+]
+acc_ecom_mensual = _df_mes["ecommerce_tax"].sum()
+acc_company_mensual = _df_mes["company_tax"].sum()
+share_mensual = (acc_ecom_mensual / acc_company_mensual) if acc_company_mensual else 0
+progress_mensual = min(share_mensual / TARGET_PARTICIPACION, 1.0) * 100 if TARGET_PARTICIPACION else 0
+mes_label_finde = f"{MESES_ES.get(_mes_ref_month, '').capitalize()} {_mes_ref_year}"
 
 def pct(v):
     return f"{v*100:.2f}%".replace(".", ",")
@@ -526,6 +538,26 @@ progress_html = f"""
     </div>
     <div class="progress-target">
       {(share_finde/TARGET_PARTICIPACION if TARGET_PARTICIPACION else 0):.0%}
+      <small>del objetivo</small>
+    </div>
+  </div>
+</div>
+"""
+
+progress_mensual_html = f"""
+<div class="progress-wrap">
+  <div class="progress-layout">
+    <div class="progress-main">
+      <div class="progress-track">
+        <div class="progress-fill" style="width:{progress_mensual:.1f}%;"></div>
+      </div>
+      <div class="progress-row">
+        <span>Participación mensual ({mes_label_finde}): {pct(share_mensual)}</span>
+        <span>Objetivo: {pct(TARGET_PARTICIPACION)}</span>
+      </div>
+    </div>
+    <div class="progress-target">
+      {(share_mensual/TARGET_PARTICIPACION if TARGET_PARTICIPACION else 0):.0%}
       <small>del objetivo</small>
     </div>
   </div>
@@ -713,6 +745,7 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
 <div class="section-desc">Indicadores del canal ecommerce — <b>{html.escape(label_cur)}</b> (viernes a lunes).</div>
 {kpis_html}
 {progress_html}
+{progress_mensual_html}
 
 <div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
 <div class="section-desc"><b>{html.escape(label_cur)}</b> vs <b>{html.escape(label_prev)}</b>.</div>
@@ -744,6 +777,7 @@ st.markdown(
 )
 st.markdown(kpis_html, unsafe_allow_html=True)
 st.markdown(progress_html, unsafe_allow_html=True)
+st.markdown(progress_mensual_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Comparativo vs año anterior
