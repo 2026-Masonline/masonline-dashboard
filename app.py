@@ -290,10 +290,9 @@ def merge_pedidos_72h_files(uploaded_files):
 r1, r2, r3, r4 = st.columns(4)
 f_pedidos = upload_box_reporte(
     r1, "PEDIDOS +72H",
-    "Archivo de Pedidos +72h. Si el export te lo separa en varios archivos "
-    "(ej. por mes), subilos todos juntos acá — se combinan solos.",
-    "f_pedidos",
-    accept_multiple_files=True,
+    "Archivo de Pedidos +72h. Subí un archivo por vez (si tenés varios meses, "
+    "uno a la vez, uno por uno).",
+    "f_pedidos"
 )
 f_reclamos = upload_box_reporte(
     r2, "RECLAMOS OPERATIVOS",
@@ -639,13 +638,17 @@ def procesar_archivo_sts(file_bytes):
 faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH, "Faltantes")
 
 pedidos_resumen_merge = None
-if f_pedidos:
-    merged_bytes, pedidos_resumen_merge = merge_pedidos_72h_files(f_pedidos)
+if f_pedidos is not None:
+    # Volvimos a subir de a un archivo por vez (uno por mes), pero seguimos
+    # pasando ese único archivo por el mismo procesamiento de antes: recorta
+    # columnas que no se usan y excluye Pick&Mix (PM) / RMA, para que lo que
+    # quede guardado ya salga liviano y limpio.
+    merged_bytes, pedidos_resumen_merge = merge_pedidos_72h_files([f_pedidos])
     if merged_bytes is not None:
         pedidos_guardado = _save_bytes_core(merged_bytes, SHARED_PEDIDOS_PATH, "Pedidos +72h")
     else:
         st.error(
-            "PEDIDOS +72H: no encontré la hoja esperada en ninguno de los archivos subidos "
+            "PEDIDOS +72H: no encontré la hoja esperada en el archivo subido "
             "(" + "; ".join(pedidos_resumen_merge) + ")."
         )
         pedidos_guardado = save_shared_bytes(None, SHARED_PEDIDOS_PATH, "Pedidos +72h")
@@ -655,7 +658,7 @@ else:
 if pedidos_resumen_merge:
     st.markdown(
         '<div style="font-size:11.5px;color:#6b7280;margin:-2px 0 6px;">'
-        'PEDIDOS +72H combinado: ' + " · ".join(pedidos_resumen_merge) + '</div>',
+        'PEDIDOS +72H: ' + " · ".join(pedidos_resumen_merge) + '</div>',
         unsafe_allow_html=True
     )
 
