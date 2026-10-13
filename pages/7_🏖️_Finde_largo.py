@@ -381,21 +381,36 @@ dias_prev = [_mismo_dia_año_pasado(d) for d in dias_sel]
 label_cur = f"{viernes_sel.strftime('%d/%m/%Y')} al {lunes_sel.strftime('%d/%m/%Y')}"
 label_prev = f"{viernes_prev.strftime('%d/%m/%Y')} al {lunes_prev.strftime('%d/%m/%Y')}"
 
-tot_cur = suma_rango(df_actual, viernes_sel, lunes_sel) or {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
+# "_kpi" = tarjetas de arriba: Pedidos Facturados "oficiales", los mismos
+# que Venta diaria/Venta fin de semana (de data.csv).
+# "_cmp" = tabla "Comparativo vs año anterior" y "Día a día": ahí Emi
+# pidió que se tome todo de "Vs de ventas" (los dos años), porque esa
+# planilla suma también los pedidos del canal/cliente Janis, que no están
+# en el número de Facturados de Venta diaria. Por eso el total de pedidos
+# de esta tabla puede no coincidir con el de las tarjetas de arriba — son
+# dos recortes distintos a propósito, no un error.
+tot_cur_kpi = suma_rango(df_actual, viernes_sel, lunes_sel) or {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
 tot_prev = suma_rango(df_vsventas, viernes_prev, lunes_prev)
 hay_prev = tot_prev is not None
 if not hay_prev:
     tot_prev = {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
 
-pedidos_cur, venta_cur, unidades_cur = tot_cur["orders"], tot_cur["ecommerce_tax"], tot_cur["units"]
-pedidos_prev, venta_prev, unidades_prev = tot_prev["orders"], tot_prev["ecommerce_tax"], tot_prev["units"]
-ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
-ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
+tot_cur_cmp = suma_rango(df_vsventas, viernes_sel, lunes_sel)
+hay_cur_cmp = tot_cur_cmp is not None
+if not hay_cur_cmp:
+    tot_cur_cmp = {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
 
-d_pedidos = pedidos_cur - pedidos_prev
-d_venta = venta_cur - venta_prev
-d_unidades = unidades_cur - unidades_prev
-d_ticket = ticket_cur - ticket_prev
+pedidos_cur_kpi, venta_cur_kpi, unidades_cur_kpi = tot_cur_kpi["orders"], tot_cur_kpi["ecommerce_tax"], tot_cur_kpi["units"]
+pedidos_prev, venta_prev, unidades_prev = tot_prev["orders"], tot_prev["ecommerce_tax"], tot_prev["units"]
+pedidos_cur_cmp, venta_cur_cmp, unidades_cur_cmp = tot_cur_cmp["orders"], tot_cur_cmp["ecommerce_tax"], tot_cur_cmp["units"]
+ticket_cur_kpi = (venta_cur_kpi / pedidos_cur_kpi) if pedidos_cur_kpi else 0
+ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
+ticket_cur_cmp = (venta_cur_cmp / pedidos_cur_cmp) if pedidos_cur_cmp else 0
+
+d_pedidos = pedidos_cur_kpi - pedidos_prev
+d_venta = venta_cur_kpi - venta_prev
+d_unidades = unidades_cur_kpi - unidades_prev
+d_ticket = ticket_cur_kpi - ticket_prev
 
 def delta_badge(v, is_money=False):
     if not hay_prev:
@@ -421,30 +436,36 @@ prev_unidades_txt = intfmt(unidades_prev) if hay_prev else "—"
 prev_ticket_txt = money(ticket_prev) if hay_prev else "—"
 col_prev_label = label_prev if hay_prev else f"{label_prev} (sin datos)"
 
+cur_cmp_pedidos_txt = intfmt(pedidos_cur_cmp) if hay_cur_cmp else "—"
+cur_cmp_venta_txt = money(venta_cur_cmp) if hay_cur_cmp else "—"
+cur_cmp_unidades_txt = intfmt(unidades_cur_cmp) if hay_cur_cmp else "—"
+cur_cmp_ticket_txt = money(ticket_cur_cmp) if hay_cur_cmp else "—"
+col_cur_cmp_label = label_cur if hay_cur_cmp else f"{label_cur} (sin datos)"
+
 kpis_html = f"""
 <div class="kpi-row">
   <div class="kpi-card">
     <div class="kpi-icon blue">🛒</div>
     <div class="kpi-label">Pedidos Facturados</div>
-    <div class="kpi-value">{intfmt(pedidos_cur)}</div>
+    <div class="kpi-value">{intfmt(pedidos_cur_kpi)}</div>
     <div>{delta_badge(d_pedidos, is_money=False)}</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-icon red">💰</div>
     <div class="kpi-label">Venta Ecommerce (con impuesto)</div>
-    <div class="kpi-value">{money(venta_cur)}</div>
+    <div class="kpi-value">{money(venta_cur_kpi)}</div>
     <div>{delta_badge(d_venta, is_money=True)}</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-icon green">📦</div>
     <div class="kpi-label">Unidades</div>
-    <div class="kpi-value">{intfmt(unidades_cur)}</div>
+    <div class="kpi-value">{intfmt(unidades_cur_kpi)}</div>
     <div>{delta_badge(d_unidades, is_money=False)}</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-icon orange">🏷️</div>
     <div class="kpi-label">Ticket promedio</div>
-    <div class="kpi-value">{money(ticket_cur)}</div>
+    <div class="kpi-value">{money(ticket_cur_kpi)}</div>
     <div>{delta_badge(d_ticket, is_money=True)}</div>
   </div>
 </div>
@@ -457,15 +478,15 @@ table_html = f"""
   <thead>
     <tr>
       <th>Indicador</th>
-      <th>{label_cur}</th>
+      <th>{col_cur_cmp_label}</th>
       <th>{col_prev_label}</th>
     </tr>
   </thead>
   <tbody>
-    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(pedidos_cur)}</td><td>{prev_pedidos_txt}</td></tr>
-    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(venta_cur)}</td><td>{prev_venta_txt}</td></tr>
-    <tr><td>📦 Unidades</td><td>{intfmt(unidades_cur)}</td><td>{prev_unidades_txt}</td></tr>
-    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_cur)}</td><td>{prev_ticket_txt}</td></tr>
+    <tr><td>🛒 Pedidos</td><td>{cur_cmp_pedidos_txt}</td><td>{prev_pedidos_txt}</td></tr>
+    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{cur_cmp_venta_txt}</td><td>{prev_venta_txt}</td></tr>
+    <tr><td>📦 Unidades</td><td>{cur_cmp_unidades_txt}</td><td>{prev_unidades_txt}</td></tr>
+    <tr><td>🏷️ Ticket promedio</td><td>{cur_cmp_ticket_txt}</td><td>{prev_ticket_txt}</td></tr>
   </tbody>
 </table>
 </div>
@@ -475,7 +496,10 @@ table_html = f"""
 footnote_html = (
     '<div style="color:#000000;font-size:11px;margin-top:14px;">'
     f'"{col_prev_label}" toma el mismo finde largo (viernes a lunes) un año antes, '
-    'mismas fechas de calendario, para que la comparación sea pareja.'
+    'mismas fechas de calendario, para que la comparación sea pareja. Esta tabla y la de '
+    '"Día a día" toman los dos años del archivo "Vs de ventas" (incluye pedidos del canal '
+    'Janis) — por eso el total de pedidos puede no coincidir con el de las tarjetas de '
+    'arriba, que muestran los Pedidos Facturados de Venta diaria.'
     '</div>'
 )
 
@@ -496,7 +520,7 @@ def variacion_html(v):
 dia_rows_html = ""
 for d_cur, d_prev in zip(dias_sel, dias_prev):
     nombre = DIA_NOMBRE.get(d_cur.weekday(), "")
-    fila_cur = df_actual[df_actual["date"] == d_cur]
+    fila_cur = df_vsventas[df_vsventas["date"] == d_cur]
     fila_prev = df_vsventas[df_vsventas["date"] == d_prev]
     venta_dia_cur = fila_cur["ecommerce_tax"].sum() if len(fila_cur) else None
     pedidos_dia_cur = fila_cur["orders"].sum() if len(fila_cur) else None
