@@ -206,6 +206,17 @@ def _find_sheet_pedidos(xl, required_cols):
             return df
     return None
 
+def _norm_txt_pedidos(v):
+    if pd.isna(v):
+        return ""
+    return str(v).replace("\xa0", " ").strip()
+
+def _get_col_ci_pedidos(df, name):
+    for c in df.columns:
+        if str(c).strip().lower() == name.lower():
+            return df[c]
+    return pd.Series([""] * len(df), index=df.index)
+
 def merge_pedidos_72h_files(uploaded_files):
     """El export de Pedidos +72h a veces viene partido en varios archivos
     (ej. uno por mes, porque el pedido más viejo que sigue sin entregar
@@ -236,6 +247,19 @@ def merge_pedidos_72h_files(uploaded_files):
         return None, resumen
 
     combinado = pd.concat(partes, ignore_index=True, sort=False)
+
+    # Excluir Pick&Mix (salesChannelPrefix = "PM") y devoluciones/RMA
+    # (commerceId con "RMA") — no son pedidos "sin mover" reales para este
+    # reporte. Mismo criterio que ya aplica Operativo.py, pero hecho acá
+    # para que el Excel combinado que queda guardado ya salga limpio.
+    _sales_prefix = _get_col_ci_pedidos(combinado, "salesChannelPrefix").apply(_norm_txt_pedidos).str.upper()
+    _commerce_id_raw = _get_col_ci_pedidos(combinado, "commerceId").apply(_norm_txt_pedidos).str.upper()
+    antes_filtro = len(combinado)
+    combinado = combinado[(_sales_prefix != "PM") & (~_commerce_id_raw.str.contains("RMA"))]
+    excluidos = antes_filtro - len(combinado)
+    if excluidos:
+        resumen.append(f"se excluyeron {excluidos} pedidos Pick&Mix (PM) / RMA")
+
     if "commerceId" in combinado.columns:
         antes = len(combinado)
         combinado = combinado.drop_duplicates(subset=["commerceId"], keep="last")
