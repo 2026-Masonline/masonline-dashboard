@@ -103,6 +103,35 @@ CSS_TEXT = """
         margin: -4px 0 14px;
     }
     .filtro-row > div[data-testid="stSelectbox"] { min-width: 320px; }
+
+    .progress-wrap {
+        background: white; border-radius: 14px; padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+        border: 1px solid #e8ebef; margin-top: 16px;
+    }
+    .progress-layout { display: flex; align-items: center; gap: 28px; }
+    .progress-main { flex: 1; }
+    .progress-track {
+        height: 16px; background: #e6e9ed; border-radius: 20px;
+        overflow: hidden; margin: 10px 0 8px;
+    }
+    .progress-fill { height: 100%; background: #2f9e66; border-radius: 20px; }
+    .progress-row {
+        display: flex; justify-content: space-between; color: #000000;
+        font-size: 13px;
+    }
+    .progress-target {
+        width: 150px; color: #208653; font-size: 30px; font-weight: 800;
+        text-align: right; line-height: 1;
+    }
+    .progress-target small {
+        display: block; color: #000000; font-size: 12px;
+        font-weight: 400; margin-top: 5px;
+    }
+    @media (max-width: 600px) {
+        .progress-layout { flex-direction: column; align-items: stretch; gap: 14px; }
+        .progress-target { width: auto; text-align: left; }
+    }
 """
 st.markdown(f"<style>{CSS_TEXT}</style>", unsafe_allow_html=True)
 
@@ -401,6 +430,18 @@ if not hay_cur_cmp:
     tot_cur_cmp = {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
 
 pedidos_cur_kpi, venta_cur_kpi, unidades_cur_kpi = tot_cur_kpi["orders"], tot_cur_kpi["ecommerce_tax"], tot_cur_kpi["units"]
+company_cur_kpi = tot_cur_kpi["company_tax"]
+
+# Participación y barra de objetivo — igual que en Venta diaria/Venta fin
+# de semana: venta ecommerce del finde sobre venta total de la compañía
+# en el finde, contra el mismo objetivo de 3%.
+TARGET_PARTICIPACION = 0.03
+share_finde = (venta_cur_kpi / company_cur_kpi) if company_cur_kpi else 0
+progress_finde = min(share_finde / TARGET_PARTICIPACION, 1.0) * 100 if TARGET_PARTICIPACION else 0
+
+def pct(v):
+    return f"{v*100:.2f}%".replace(".", ",")
+
 pedidos_prev, venta_prev, unidades_prev = tot_prev["orders"], tot_prev["ecommerce_tax"], tot_prev["units"]
 pedidos_cur_cmp, venta_cur_cmp, unidades_cur_cmp = tot_cur_cmp["orders"], tot_cur_cmp["ecommerce_tax"], tot_cur_cmp["units"]
 ticket_cur_kpi = (venta_cur_kpi / pedidos_cur_kpi) if pedidos_cur_kpi else 0
@@ -467,6 +508,26 @@ kpis_html = f"""
     <div class="kpi-label">Ticket promedio</div>
     <div class="kpi-value">{money(ticket_cur_kpi)}</div>
     <div>{delta_badge(d_ticket, is_money=True)}</div>
+  </div>
+</div>
+"""
+
+progress_html = f"""
+<div class="progress-wrap">
+  <div class="progress-layout">
+    <div class="progress-main">
+      <div class="progress-track">
+        <div class="progress-fill" style="width:{progress_finde:.1f}%;"></div>
+      </div>
+      <div class="progress-row">
+        <span>Participación del finde: {pct(share_finde)}</span>
+        <span>Objetivo: {pct(TARGET_PARTICIPACION)}</span>
+      </div>
+    </div>
+    <div class="progress-target">
+      {(share_finde/TARGET_PARTICIPACION if TARGET_PARTICIPACION else 0):.0%}
+      <small>del objetivo</small>
+    </div>
   </div>
 </div>
 """
@@ -595,6 +656,9 @@ st.markdown(f"""
     <div class="lbl">🏖️ FINDE LARGO</div>
     <div class="val">{viernes_sel.strftime('%d/%m')} al {lunes_sel.strftime('%d/%m')}</div>
     <small>vs. mismo finde largo {viernes_prev.year}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del finde: <span style="color:#2f9e66;">{pct(share_finde)}</span>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -639,12 +703,16 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
     <div class="lbl">🏖️ FINDE LARGO</div>
     <div class="val">{html.escape(viernes_sel.strftime('%d/%m'))} al {html.escape(lunes_sel.strftime('%d/%m'))}</div>
     <small>vs. mismo finde largo {viernes_prev.year}</small>
+    <div style="font-weight:800;font-size:16px;margin-top:6px;color:#20252b;">
+      Participación del finde: <span style="color:#2f9e66;">{html.escape(pct(share_finde))}</span>
+    </div>
   </div>
 </div>
 
 <div class="section">Resultados del finde largo</div>
 <div class="section-desc">Indicadores del canal ecommerce — <b>{html.escape(label_cur)}</b> (viernes a lunes).</div>
 {kpis_html}
+{progress_html}
 
 <div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
 <div class="section-desc"><b>{html.escape(label_cur)}</b> vs <b>{html.escape(label_prev)}</b>.</div>
@@ -675,6 +743,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(kpis_html, unsafe_allow_html=True)
+st.markdown(progress_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # Comparativo vs año anterior
