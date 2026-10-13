@@ -168,7 +168,7 @@ padding:12px 16px;margin:22px 0 14px;">
 </div>
 """, unsafe_allow_html=True)
 
-def upload_box_reporte(col, title, help_text, key):
+def upload_box_reporte(col, title, help_text, key, accept_multiple_files=False):
     with col:
         st.markdown(f"""
         <div class="upload-box">
@@ -176,13 +176,85 @@ def upload_box_reporte(col, title, help_text, key):
           <div class="upload-text">{help_text}</div>
         </div>
         """, unsafe_allow_html=True)
-        return st.file_uploader(title, type=["xlsx", "xls"], key=key, label_visibility="collapsed")
+        return st.file_uploader(
+            title, type=["xlsx", "xls"], key=key, label_visibility="collapsed",
+            accept_multiple_files=accept_multiple_files,
+        )
+
+# Columnas que identifican la hoja de "pedidos sin mover" dentro del Excel
+# (export "order-operation" por pedido) — mismas que busca Operativo.py.
+_PEDIDOS_72H_COLS = [
+    "commerceId", "commerceDateCreated", "deliveryFinishDate", "status",
+    "totalAmount", "shippingWarehouseName",
+]
+
+def _norm_cols_pedidos(df):
+    df = df.copy()
+    df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
+    return df
+
+def _find_sheet_pedidos(xl, required_cols):
+    required = {c.lower() for c in required_cols}
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = _norm_cols_pedidos(df)
+        cols = {c.lower() for c in df.columns}
+        if required.issubset(cols):
+            return df
+    return None
+
+def merge_pedidos_72h_files(uploaded_files):
+    """El export de Pedidos +72h a veces viene partido en varios archivos
+    (ej. uno por mes, porque el pedido más viejo que sigue sin entregar
+    puede ser de meses atrás). Como lo que importa acá es la FOTO COMPLETA
+    de ahora mismo, esta función junta todos los archivos subidos en uno
+    solo: lee de cada uno la hoja con las columnas esperadas, los apila, saca
+    duplicados exactos de "commerceId" (por si el mismo pedido aparece en más
+    de un archivo) y devuelve un único Excel en memoria (bytes) + un
+    resumen de cuántas filas aportó cada archivo, para mostrarlo en
+    pantalla. Si algún archivo no tiene la hoja esperada, lo salta (y lo
+    avisa) en vez de cortar todo el guardado."""
+    partes = []
+    resumen = []
+    for f in uploaded_files:
+        try:
+            xl = pd.ExcelFile(f)
+        except Exception:
+            resumen.append(f"{f.name}: no pude abrirlo")
+            continue
+        df = _find_sheet_pedidos(xl, _PEDIDOS_72H_COLS)
+        if df is None:
+            resumen.append(f"{f.name}: no encontré la hoja esperada, lo salteé")
+            continue
+        partes.append(df)
+        resumen.append(f"{f.name}: {len(df):,}".replace(",", "."))
+
+    if not partes:
+        return None, resumen
+
+    combinado = pd.concat(partes, ignore_index=True, sort=False)
+    if "commerceId" in combinado.columns:
+        antes = len(combinado)
+        combinado = combinado.drop_duplicates(subset=["commerceId"], keep="last")
+        duplicados = antes - len(combinado)
+        if duplicados:
+            resumen.append(f"se sacaron {duplicados} pedidos duplicados entre archivos")
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        combinado.to_excel(writer, index=False, sheet_name="Pedidos")
+    return buffer.getvalue(), resumen
 
 r1, r2, r3, r4 = st.columns(4)
 f_pedidos = upload_box_reporte(
     r1, "PEDIDOS +72H",
-    "Archivo de Pedidos +72h.",
-    "f_pedidos"
+    "Archivo de Pedidos +72h. Si el export te lo separa en varios archivos "
+    "(ej. por mes), subilos todos juntos acá — se combinan solos.",
+    "f_pedidos",
+    accept_multiple_files=True,
 )
 f_reclamos = upload_box_reporte(
     r2, "RECLAMOS OPERATIVOS",
@@ -335,6 +407,26 @@ def save_bytes_to_github(shared_path, content_bytes, label):
     except Exception:
         return False
 
+def _save_bytes_core(content, shared_path, label, stamp_date=False):
+    """Núcleo de save_shared_bytes: guarda estos bytes puntuales (local +
+    GitHub). Separado aparte para poder usarlo también con un archivo ya
+    combinado en memoria (varios Excel fusionados en uno), sin pasar por un
+    file_uploader de Streamlit."""
+    try:
+        shared_path.write_bytes(content)
+    except Exception:
+        pass
+    save_bytes_to_github(shared_path, content, label)
+    if stamp_date:
+        fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
+        date_path = shared_path.with_name(shared_path.name + ".date")
+        try:
+            date_path.write_text(fecha_hoy)
+        except Exception:
+            pass
+        save_bytes_to_github(date_path, fecha_hoy.encode("utf-8"), f"{label} (fecha)")
+    return True
+
 def save_shared_bytes(uploaded_file, shared_path, label="reporte", stamp_date=False):
     """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
     compartida (para esta misma sesión) Y lo sube a GitHub, para que quede
@@ -350,21 +442,7 @@ def save_shared_bytes(uploaded_file, shared_path, label="reporte", stamp_date=Fa
     anterior (On-Time y Fill Rate: si no se subió nada hoy, esa tarjeta
     tiene que mostrarse vacía en vez de arrastrar el dato de ayer)."""
     if uploaded_file is not None:
-        content = uploaded_file.getvalue()
-        try:
-            shared_path.write_bytes(content)
-        except Exception:
-            pass
-        save_bytes_to_github(shared_path, content, label)
-        if stamp_date:
-            fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
-            date_path = shared_path.with_name(shared_path.name + ".date")
-            try:
-                date_path.write_text(fecha_hoy)
-            except Exception:
-                pass
-            save_bytes_to_github(date_path, fecha_hoy.encode("utf-8"), f"{label} (fecha)")
-        return True
+        return _save_bytes_core(uploaded_file.getvalue(), shared_path, label, stamp_date)
 
     if shared_path.exists():
         try:
@@ -520,7 +598,28 @@ def procesar_archivo_sts(file_bytes):
     return {"ok": True, "data": d[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]]}
 
 faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH, "Faltantes")
-pedidos_guardado = save_shared_bytes(f_pedidos, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+
+pedidos_resumen_merge = None
+if f_pedidos:
+    merged_bytes, pedidos_resumen_merge = merge_pedidos_72h_files(f_pedidos)
+    if merged_bytes is not None:
+        pedidos_guardado = _save_bytes_core(merged_bytes, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+    else:
+        st.error(
+            "PEDIDOS +72H: no encontré la hoja esperada en ninguno de los archivos subidos "
+            "(" + "; ".join(pedidos_resumen_merge) + ")."
+        )
+        pedidos_guardado = save_shared_bytes(None, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+else:
+    pedidos_guardado = save_shared_bytes(None, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+
+if pedidos_resumen_merge:
+    st.markdown(
+        '<div style="font-size:11.5px;color:#6b7280;margin:-2px 0 6px;">'
+        'PEDIDOS +72H combinado: ' + " · ".join(pedidos_resumen_merge) + '</div>',
+        unsafe_allow_html=True
+    )
+
 pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH, "Pickers")
 reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH, "Reclamos Operativos")
 ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time", stamp_date=True)
