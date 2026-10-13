@@ -108,11 +108,83 @@ st.markdown(f"<style>{CSS_TEXT}</style>", unsafe_allow_html=True)
 
 LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
 
-# Esta pestaña no tiene uploader propio: usa el MISMO archivo "Vs de ventas"
-# que ya se sube en la pestaña "app" (tarjeta "COMPARATIVO") para la pestaña
-# Comparativo — acá se lee esa misma copia, para que el número de venta de
-# este finde largo sea siempre el mismo que el de Comparativo (y no otro
-# distinto, como pasaba cuando se mezclaban dos archivos de origen distinto).
+def money(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "$0"
+    av = abs(v)
+    if av < 1_000_000:
+        return f"${v:,.0f}".replace(",", ".")
+    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
+        txt = f"${v/1_000_000:,.3f} M"
+    else:
+        txt = f"${v/1_000_000_000:,.3f} MM"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+
+def intfmt(v):
+    return f"{int(round(v)):,}".replace(",", ".")
+
+MESES_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+DIA_NOMBRE = {4: "Viernes", 5: "Sábado", 6: "Domingo", 0: "Lunes"}
+
+def suma_rango(df_src, desde_ts, hasta_ts):
+    sub = df_src[(df_src["date"] >= desde_ts) & (df_src["date"] <= hasta_ts)]
+    if sub.empty:
+        return None
+    return {
+        "orders": sub["orders"].sum(),
+        "ecommerce_tax": sub["ecommerce_tax"].sum(),
+        "units": sub["units"].sum(),
+        "company_tax": sub["company_tax"].sum(),
+    }
+
+def _mismo_dia_año_pasado(ts):
+    try:
+        return ts.replace(year=ts.year - 1)
+    except ValueError:
+        # 29 de febrero sin equivalente el año anterior
+        return ts.replace(year=ts.year - 1, day=28)
+
+# ---------------------------------------------------------------------
+# FUENTE DE DATOS — dos archivos, cada uno con su rol:
+#
+# 1) "data.csv" (lo mismo que leen Venta diaria y Venta fin de semana):
+#    es la venta DEL AÑO EN CURSO, y es la que ella actualiza todos los
+#    días subiendo "Venta Con y sin Impuesto" en la pestaña app. Acá se
+#    usa para el lado "actual" del finde largo — así el número de venta
+#    de esta pestaña siempre coincide con lo que ella ve en su Excel día
+#    a día (antes se leía todo del archivo "Vs de ventas", pero ese
+#    archivo no se actualiza tan seguido para el año en curso y terminaba
+#    mostrando días desactualizados).
+#
+# 2) "Vs de ventas" (la que ya usa la pestaña Comparativo): se usa
+#    únicamente para el lado "año pasado" — un año ya cerrado no cambia,
+#    así que no importa que ese archivo no se actualice tan seguido.
+# ---------------------------------------------------------------------
+
+DATA_FILE = Path(__file__).resolve().parent.parent / "data.csv"
+
+try:
+    df_actual = pd.read_csv(DATA_FILE)
+    df_actual["date"] = pd.to_datetime(df_actual["date"], errors="coerce")
+    for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
+        df_actual[col] = pd.to_numeric(df_actual[col], errors="coerce").fillna(0)
+    df_actual = df_actual.dropna(subset=["date"])
+except Exception as e:
+    st.error(f"No se pudo leer data.csv: {e}")
+    st.stop()
+
+arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+df_actual = df_actual[df_actual["date"].dt.date < arg_today].copy()
+
+if df_actual.empty:
+    st.error("Todavía no hay datos cargados para un día anterior a hoy en el Dashboard de Ventas.")
+    st.stop()
+
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
 
@@ -178,34 +250,11 @@ def get_shared_bytes(shared_path):
 
 vsventas_bytes = get_shared_bytes(SHARED_VSVENTAS_PATH)
 
-if vsventas_bytes is None:
-    st.markdown("""
-    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-    padding:12px 16px;margin-bottom:14px;">
-      <div style="font-size:13px;font-weight:800;color:#000000;margin-bottom:5px;">
-        TODAVÍA NO HAY ARCHIVO CARGADO
-      </div>
-      <div style="font-size:12px;color:#000000;">
-        Subí el Excel "Vs de ventas" (con una hoja por año, ej. "2025" y "2026")
-        en la pestaña <b>app</b> (menú de la izquierda), tarjeta "COMPARATIVO".
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
-
-st.markdown(
-    '<div style="color:#000000;font-size:12px;margin:-6px 0 14px;">'
-    'Los datos se cargan desde la pestaña <b>app</b> (menú de la izquierda), tarjeta '
-    '"COMPARATIVO" — es el mismo archivo "Vs de ventas" que usa la pestaña Comparativo.'
-    '</div>',
-    unsafe_allow_html=True
-)
-
 # El archivo trae una hoja por año (ej. "2025", "2026"). Las hojas viejas
-# traen los totales ya armados por tienda y por día; la hoja 2026 en
-# cambio trae el detalle de pedidos sin armar (una fila por pedido) — se
-# detecta por sus columnas y se arman acá las mismas 4 columnas, con el
-# mismo criterio que usa Comparativo (sin PM ni RMA, día = fecha de
+# traen los totales ya armados por tienda y por día; alguna hoja puede
+# traer en cambio el detalle de pedidos sin armar (una fila por pedido) —
+# se detecta por sus columnas y se arman acá las mismas 4 columnas, con
+# el mismo criterio que usa Comparativo (sin PM ni RMA, día = fecha de
 # entrega).
 COL_VENTA = "Venta - Ecommerce"
 COL_PEDIDOS = "Pedidos Facturados con Venta Operativa - Ecommerce"
@@ -238,108 +287,77 @@ def _adaptar_hoja_detalle_pedidos(d):
     })
     return out
 
-try:
-    xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
-    frames = []
-    for sheet in xl.sheet_names:
-        d = xl.parse(sheet)
-        d.columns = [str(c).strip() for c in d.columns]
-        if _es_hoja_detalle_pedidos(d):
-            d = _adaptar_hoja_detalle_pedidos(d)
-        if "Fecha" not in d.columns:
-            continue
-        d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
-        d = d.dropna(subset=["Fecha"])
-        if len(d):
-            frames.append(d)
-    raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-except Exception as e:
-    st.error(f"No se pudo leer el archivo 'Vs de ventas': {e}")
-    st.stop()
-
-if raw.empty:
-    st.error("No encontré filas con fecha válida en el archivo 'Vs de ventas'.")
-    st.stop()
-
-for col in [COL_VENTA, COL_PEDIDOS, COL_UNIDADES, COL_FACTURACION]:
-    if col not in raw.columns:
-        raw[col] = 0
-    raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
-
-raw["date"] = raw["Fecha"].dt.normalize()
-df = raw.groupby("date", as_index=False).agg({
-    COL_VENTA: "sum", COL_PEDIDOS: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum"
-}).rename(columns={
-    COL_VENTA: "ecommerce_tax", COL_PEDIDOS: "orders",
-    COL_UNIDADES: "units", COL_FACTURACION: "company_tax"
-})
-
-# Siempre se excluye el día de hoy (todavía no cerró).
-arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df = df[df["date"].dt.date < arg_today].copy()
-
-if df.empty:
-    st.error("Todavía no hay datos cargados para un día anterior a hoy.")
-    st.stop()
-
-def money(v):
+def _cargar_vsventas(vsventas_bytes):
+    """Devuelve un df con columnas date/ecommerce_tax/orders/units/company_tax
+    (uno por día, todas las hojas/años juntos), o un DataFrame vacío si
+    todavía no hay archivo cargado o no se pudo leer."""
+    cols_vacias = ["date", "ecommerce_tax", "orders", "units", "company_tax"]
+    if vsventas_bytes is None:
+        return pd.DataFrame(columns=cols_vacias)
     try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return "$0"
-    av = abs(v)
-    if av < 1_000_000:
-        return f"${v:,.0f}".replace(",", ".")
-    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
-        txt = f"${v/1_000_000:,.3f} M"
-    else:
-        txt = f"${v/1_000_000_000:,.3f} MM"
-    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+        xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
+        frames = []
+        for sheet in xl.sheet_names:
+            d = xl.parse(sheet)
+            d.columns = [str(c).strip() for c in d.columns]
+            if _es_hoja_detalle_pedidos(d):
+                d = _adaptar_hoja_detalle_pedidos(d)
+            if "Fecha" not in d.columns:
+                continue
+            d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+            d = d.dropna(subset=["Fecha"])
+            if len(d):
+                frames.append(d)
+        raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame(columns=cols_vacias)
 
-def intfmt(v):
-    return f"{int(round(v)):,}".replace(",", ".")
+    if raw.empty:
+        return pd.DataFrame(columns=cols_vacias)
 
-MESES_ES = {
-    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
-    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
-}
-DIA_NOMBRE = {4: "Viernes", 5: "Sábado", 6: "Domingo", 0: "Lunes"}
+    for col in [COL_VENTA, COL_PEDIDOS, COL_UNIDADES, COL_FACTURACION]:
+        if col not in raw.columns:
+            raw[col] = 0
+        raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
 
-def suma_rango(desde_ts, hasta_ts):
-    sub = df[(df["date"] >= desde_ts) & (df["date"] <= hasta_ts)]
-    if sub.empty:
-        return None
-    return {
-        "orders": sub["orders"].sum(),
-        "ecommerce_tax": sub["ecommerce_tax"].sum(),
-        "units": sub["units"].sum(),
-        "company_tax": sub["company_tax"].sum(),
-    }
+    raw["date"] = raw["Fecha"].dt.normalize()
+    return raw.groupby("date", as_index=False).agg({
+        COL_VENTA: "sum", COL_PEDIDOS: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum"
+    }).rename(columns={
+        COL_VENTA: "ecommerce_tax", COL_PEDIDOS: "orders",
+        COL_UNIDADES: "units", COL_FACTURACION: "company_tax"
+    })
 
-def _mismo_dia_año_pasado(ts):
-    try:
-        return ts.replace(year=ts.year - 1)
-    except ValueError:
-        # 29 de febrero sin equivalente el año anterior
-        return ts.replace(year=ts.year - 1, day=28)
+df_vsventas = _cargar_vsventas(vsventas_bytes)
+
+st.markdown(
+    '<div style="color:#000000;font-size:12px;margin:-6px 0 14px;">'
+    'La venta de este finde largo sale del Dashboard de Ventas (lo mismo que ves en '
+    '"Venta diaria"/"Venta fin de semana", actualizado cada vez que subís "Venta Con y sin '
+    'Impuesto" en la pestaña app). La comparación contra el año pasado sale del archivo '
+    '"Vs de ventas" (tarjeta COMPARATIVO en app) — como ese año ya cerró, no hace falta '
+    'actualizarlo tan seguido.'
+    '</div>',
+    unsafe_allow_html=True
+)
 
 # ---------------------------------------------------------------------
 # Elegís vos el fin de semana: el desplegable lista todos los viernes con
-# datos cargados (de cualquier mes/año), del más reciente al más antiguo.
-# El "finde largo" es ese viernes + los 3 días siguientes (sáb/dom/lun),
-# estén o no todavía cargados los 4.
+# datos cargados en el Dashboard de Ventas (de cualquier mes/año), del
+# más reciente al más antiguo. El "finde largo" es ese viernes + los 3
+# días siguientes (sáb/dom/lun), estén o no todavía cargados los 4.
 # ---------------------------------------------------------------------
 
-viernes_disponibles = sorted(df[df["date"].dt.weekday == 4]["date"].unique(), reverse=True)
+viernes_disponibles = sorted(df_actual[df_actual["date"].dt.weekday == 4]["date"].unique(), reverse=True)
 
 if not viernes_disponibles:
-    st.error("Todavía no encontré ningún viernes cargado en el archivo 'Vs de ventas' para armar un finde largo.")
+    st.error("Todavía no encontré ningún viernes cargado en el Dashboard de Ventas para armar un finde largo.")
     st.stop()
 
 def _opcion_label(viernes_ts):
     viernes_ts = pd.Timestamp(viernes_ts)
     lunes_ts = viernes_ts + pd.Timedelta(days=3)
-    dias_presentes = df[(df["date"] >= viernes_ts) & (df["date"] <= lunes_ts)]["date"].nunique()
+    dias_presentes = df_actual[(df_actual["date"] >= viernes_ts) & (df_actual["date"] <= lunes_ts)]["date"].nunique()
     mes_label = f"{MESES_ES.get(viernes_ts.month, '').capitalize()} {viernes_ts.year}"
     marca = "✓ 4/4 días" if dias_presentes == 4 else f"{dias_presentes}/4 días"
     return f"Viernes {viernes_ts.strftime('%d/%m')} – Lunes {lunes_ts.strftime('%d/%m')} ({mes_label}) · {marca}"
@@ -363,8 +381,8 @@ dias_prev = [_mismo_dia_año_pasado(d) for d in dias_sel]
 label_cur = f"{viernes_sel.strftime('%d/%m/%Y')} al {lunes_sel.strftime('%d/%m/%Y')}"
 label_prev = f"{viernes_prev.strftime('%d/%m/%Y')} al {lunes_prev.strftime('%d/%m/%Y')}"
 
-tot_cur = suma_rango(viernes_sel, lunes_sel) or {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
-tot_prev = suma_rango(viernes_prev, lunes_prev)
+tot_cur = suma_rango(df_actual, viernes_sel, lunes_sel) or {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
+tot_prev = suma_rango(df_vsventas, viernes_prev, lunes_prev)
 hay_prev = tot_prev is not None
 if not hay_prev:
     tot_prev = {"orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0}
@@ -478,8 +496,8 @@ def variacion_html(v):
 dia_rows_html = ""
 for d_cur, d_prev in zip(dias_sel, dias_prev):
     nombre = DIA_NOMBRE.get(d_cur.weekday(), "")
-    fila_cur = df[df["date"] == d_cur]
-    fila_prev = df[df["date"] == d_prev]
+    fila_cur = df_actual[df_actual["date"] == d_cur]
+    fila_prev = df_vsventas[df_vsventas["date"] == d_prev]
     venta_dia_cur = fila_cur["ecommerce_tax"].sum() if len(fila_cur) else None
     pedidos_dia_cur = fila_cur["orders"].sum() if len(fila_cur) else None
     venta_dia_prev = fila_prev["ecommerce_tax"].sum() if len(fila_prev) else None
