@@ -524,26 +524,6 @@ kpis_html = f"""
 </div>
 """
 
-progress_html = f"""
-<div class="progress-wrap">
-  <div class="progress-layout">
-    <div class="progress-main">
-      <div class="progress-track">
-        <div class="progress-fill" style="width:{progress_finde:.1f}%;"></div>
-      </div>
-      <div class="progress-row">
-        <span>Participación del finde: {pct(share_finde)}</span>
-        <span>Objetivo: {pct(TARGET_PARTICIPACION)}</span>
-      </div>
-    </div>
-    <div class="progress-target">
-      {(share_finde/TARGET_PARTICIPACION if TARGET_PARTICIPACION else 0):.0%}
-      <small>del objetivo</small>
-    </div>
-  </div>
-</div>
-"""
-
 progress_mensual_html = f"""
 <div class="progress-wrap">
   <div class="progress-layout">
@@ -744,7 +724,6 @@ body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, 
 <div class="section">Resultados del finde largo</div>
 <div class="section-desc">Indicadores del canal ecommerce — <b>{html.escape(label_cur)}</b> (viernes a lunes).</div>
 {kpis_html}
-{progress_html}
 {progress_mensual_html}
 
 <div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
@@ -776,7 +755,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(kpis_html, unsafe_allow_html=True)
-st.markdown(progress_html, unsafe_allow_html=True)
 st.markdown(progress_mensual_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
