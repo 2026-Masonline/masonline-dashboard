@@ -10,6 +10,7 @@ import html
 import tempfile
 import io
 import re
+from PIL import Image, ImageDraw, ImageFont
 
 st.set_page_config(
     page_title="MásOnline | Ecommerce",
@@ -712,6 +713,301 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# RESUMEN EN IMAGEN (PNG): una tarjeta lista para compartir (WhatsApp,
+# redes), con el resumen diario y mensual de Compañía vs eCommerce.
+# Se dibuja con Pillow (no depende de un navegador), así que es liviana
+# en memoria para Streamlit Cloud.
+# ---------------------------------------------------------------------
+_FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
+_RESUMEN_FONT_BOLD_PATH = _FONTS_DIR / "DejaVuSans-Bold.ttf"
+_RESUMEN_FONT_REG_PATH = _FONTS_DIR / "DejaVuSans.ttf"
+
+
+def _resumen_font(bold, size):
+    candidatos = (
+        [_RESUMEN_FONT_BOLD_PATH, _RESUMEN_FONT_REG_PATH]
+        if bold else [_RESUMEN_FONT_REG_PATH, _RESUMEN_FONT_BOLD_PATH]
+    )
+    # Si no están los archivos en /fonts del repo, probamos rutas típicas
+    # del sistema (pueden existir igual en el servidor), y si no, el font
+    # genérico de Pillow para que la función nunca rompa la página.
+    candidatos += [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for c in candidatos:
+        try:
+            return ImageFont.truetype(str(c), size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _resumen_text_w(draw, txt, f):
+    bbox = draw.textbbox((0, 0), txt, font=f)
+    return bbox[2] - bbox[0]
+
+
+def _resumen_text_center(draw, cx, y, txt, f, fill):
+    w = _resumen_text_w(draw, txt, f)
+    draw.text((cx - w / 2, y), txt, font=f, fill=fill)
+
+
+def _resumen_rr(draw, box, radius, fill, corners=None):
+    try:
+        if corners is not None:
+            draw.rounded_rectangle(box, radius=radius, fill=fill, corners=corners)
+            return
+    except TypeError:
+        pass
+    draw.rounded_rectangle(box, radius=radius, fill=fill)
+
+
+def _resumen_icon_calendar(draw, cx, cy, size, color):
+    r = size / 2
+    box = [cx - r, cy - r * 0.85, cx + r, cy + r * 0.95]
+    draw.rounded_rectangle(box, radius=4, outline=color, width=3)
+    draw.line([box[0] + 3, box[1] + size * 0.28, box[2] - 3, box[1] + size * 0.28], fill=color, width=3)
+    draw.line([cx - r * 0.5, box[1] - size * 0.12, cx - r * 0.5, box[1] + size * 0.12], fill=color, width=3)
+    draw.line([cx + r * 0.5, box[1] - size * 0.12, cx + r * 0.5, box[1] + size * 0.12], fill=color, width=3)
+
+
+def _resumen_icon_bag(draw, cx, cy, size, color):
+    bw = size * 0.95
+    bh = size * 0.85
+    top = cy - bh * 0.42
+    bot = cy + bh * 0.58
+    left = cx - bw * 0.5
+    right = cx + bw * 0.5
+    draw.rounded_rectangle([left, top, right, bot], radius=max(2, bw * 0.12), fill=color)
+    handle_box = [cx - bw * 0.3, top - bw * 0.42, cx + bw * 0.3, top + bw * 0.22]
+    draw.arc(handle_box, 185, 355, fill=color, width=max(3, int(size * 0.12)))
+    fold_y = top + bh * 0.26
+    draw.line([left + bw * 0.14, fold_y, right - bw * 0.14, fold_y], fill="white", width=2)
+
+
+def _resumen_shade(hexcolor, factor):
+    hexcolor = hexcolor.lstrip("#")
+    r0, g0, b0 = int(hexcolor[0:2], 16), int(hexcolor[2:4], 16), int(hexcolor[4:6], 16)
+    r1 = int(r0 + (255 - r0) * factor) if factor > 0 else int(r0 * (1 + factor))
+    g1 = int(g0 + (255 - g0) * factor) if factor > 0 else int(g0 * (1 + factor))
+    b1 = int(b0 + (255 - b0) * factor) if factor > 0 else int(b0 * (1 + factor))
+    return (max(0, min(255, r1)), max(0, min(255, g1)), max(0, min(255, b1)))
+
+
+def _resumen_icon_cube(draw, cx, cy, size, color):
+    s = size * 0.56
+    top_pt = (cx, cy - s)
+    right_pt = (cx + s * 0.92, cy - s * 0.46)
+    left_pt = (cx - s * 0.92, cy - s * 0.46)
+    center_pt = (cx, cy)
+    bot_left_pt = (cx - s * 0.92, cy + s * 0.5)
+    bot_right_pt = (cx + s * 0.92, cy + s * 0.5)
+    bottom_pt = (cx, cy + s * 1.0)
+    draw.polygon([top_pt, right_pt, center_pt, left_pt], fill=_resumen_shade(color, 0.42))
+    draw.polygon([left_pt, center_pt, bottom_pt, bot_left_pt], fill=_resumen_shade(color, 0.12))
+    draw.polygon([right_pt, bot_right_pt, bottom_pt, center_pt], fill=_resumen_shade(color, -0.18))
+
+
+def _resumen_icon_percent(draw, cx, cy, size, color):
+    r = size * 0.5
+    draw.line([cx - r * 0.55, cy + r * 0.55, cx + r * 0.55, cy - r * 0.55], fill=color, width=5)
+    sr = size * 0.16
+    draw.ellipse([cx - r * 0.55 - sr, cy - r * 0.55 - sr, cx - r * 0.55 + sr, cy - r * 0.55 + sr], fill=color)
+    draw.ellipse([cx + r * 0.55 - sr, cy + r * 0.55 - sr, cx + r * 0.55 + sr, cy + r * 0.55 + sr], fill=color)
+
+
+def generar_resumen_imagen(
+    fecha_diaria_label, mes_label,
+    daily_company, daily_ecom, daily_orders, daily_units, share_daily_v,
+    mes_company, mes_ecom, mes_orders, mes_units, share_mes_v,
+):
+    W, H = 1600, 650
+    C_BG = "#ffffff"
+    C_BORDER = "#cfe0f2"
+    C_TEXT_DARK = "#1b2430"
+    C_GRAY = "#6b7280"
+    C_BLUE = "#1f5fae"
+    C_RED = "#e8432c"
+    C_ORANGE = "#f5a623"
+    C_PINK_BG = "#fdeceb"
+    C_BLUELIGHT_BG = "#eaf2fb"
+    C_CREAM_BG = "#fef6e7"
+    C_CARD_BORDER = "#e8ebef"
+
+    img = Image.new("RGB", (W, H), C_BG)
+    d = ImageDraw.Draw(img)
+
+    f_title = _resumen_font(True, 30)
+    f_subtitle = _resumen_font(True, 19)
+    f_badge_label = _resumen_font(True, 15)
+    f_badge_value = _resumen_font(True, 32)
+    f_panel_header = _resumen_font(True, 21)
+    f_panel_subheader = _resumen_font(True, 15)
+    f_col_label = _resumen_font(True, 15)
+    f_col_value = _resumen_font(True, 26)
+    f_mini_label = _resumen_font(False, 13)
+    f_mini_value = _resumen_font(True, 21)
+    f_share_label = _resumen_font(True, 15)
+    f_share_value = _resumen_font(True, 24)
+    f_footer = _resumen_font(True, 14)
+    f_footer_reg = _resumen_font(False, 14)
+
+    d.rounded_rectangle([6, 6, W - 6, H - 6], radius=26, outline=C_BORDER, width=4)
+
+    logo_img = None
+    if LOGO_FILE.exists():
+        try:
+            logo_img = Image.open(LOGO_FILE).convert("RGBA")
+        except Exception:
+            logo_img = None
+
+    if logo_img is not None:
+        lw, lh = logo_img.size
+        target_h = 56
+        target_w = int(lw * target_h / lh)
+        logo_resized = logo_img.resize((target_w, target_h))
+        img.paste(logo_resized, (48, 48), logo_resized)
+    else:
+        d.text((48, 58), "MásOnline", font=_resumen_font(True, 34), fill=C_TEXT_DARK)
+
+    _resumen_text_center(d, W / 2 + 20, 48, "VENTAS COMPAÑÍA VS ECOMMERCE", f_title, C_TEXT_DARK)
+    _resumen_text_center(d, W / 2 + 20, 86, "RESUMEN DE VENTAS", f_subtitle, C_BLUE)
+
+    badge_box = [W - 310, 40, W - 48, 150]
+    _resumen_rr(d, badge_box, 18, C_PINK_BG)
+    _resumen_icon_calendar(d, badge_box[0] + 44, (badge_box[1] + badge_box[3]) / 2, 34, C_RED)
+    _resumen_text_center(d, (badge_box[0] + badge_box[2]) / 2 + 24, badge_box[1] + 20, "DIARIO", f_badge_label, C_BLUE)
+    _resumen_text_center(d, (badge_box[0] + badge_box[2]) / 2 + 24, badge_box[1] + 42, fecha_diaria_label, f_badge_value, C_TEXT_DARK)
+
+    d.line([48, 172, W - 48, 172], fill=C_CARD_BORDER, width=2)
+
+    panel_y0 = 200
+    panel_y1 = 568
+    gap = 24
+    panel_w = (W - 48 * 2 - gap) / 2
+    panels = [
+        dict(
+            x0=48, header_color=C_RED, header_lines=["VENTA DIARIA"],
+            company=daily_company, ecom=daily_ecom, orders=daily_orders, units=daily_units,
+            share=share_daily_v, share_label="SHARE ECOMMERCE DIARIO", bottom_bg=C_PINK_BG,
+        ),
+        dict(
+            x0=48 + panel_w + gap, header_color=C_ORANGE, header_lines=["VENTA MENSUAL", mes_label],
+            company=mes_company, ecom=mes_ecom, orders=mes_orders, units=mes_units,
+            share=share_mes_v, share_label="SHARE ECOMMERCE MENSUAL", bottom_bg=C_CREAM_BG,
+        ),
+    ]
+
+    header_h = 78
+    bottom_h = 64
+
+    for p in panels:
+        x0 = p["x0"]
+        x1 = x0 + panel_w
+
+        _resumen_rr(d, [x0, panel_y0, x1, panel_y1], 16, "#ffffff")
+        d.rounded_rectangle([x0, panel_y0, x1, panel_y1], radius=16, outline=C_CARD_BORDER, width=2)
+
+        _resumen_rr(d, [x0, panel_y0, x1, panel_y0 + header_h], 16, p["header_color"], corners=(True, True, False, False))
+        header_text_color = "#ffffff" if p["header_color"] == C_RED else C_TEXT_DARK
+        cx = (x0 + x1) / 2
+        if len(p["header_lines"]) == 1:
+            _resumen_text_center(d, cx, panel_y0 + 24, p["header_lines"][0], f_panel_header, header_text_color)
+        else:
+            _resumen_text_center(d, cx, panel_y0 + 14, p["header_lines"][0], f_panel_header, header_text_color)
+            _resumen_text_center(d, cx, panel_y0 + 44, p["header_lines"][1], f_panel_subheader, header_text_color)
+
+        _resumen_rr(d, [x0, panel_y1 - bottom_h, x1, panel_y1], 16, p["bottom_bg"], corners=(False, False, True, True))
+
+        body_top = panel_y0 + header_h
+        pad = 34
+
+        col_w = (panel_w - pad * 2 - 20) / 2
+        colA_x = x0 + pad
+        colB_x = x0 + pad + col_w + 20
+        row1_y = body_top + 24
+
+        d.text((colA_x, row1_y), "COMPAÑÍA", font=f_col_label, fill=C_GRAY)
+        d.text((colB_x, row1_y), "ECOMMERCE", font=f_col_label, fill=C_RED)
+
+        pill_y0 = row1_y + 26
+        pill_h = 58
+        _resumen_rr(d, [colA_x, pill_y0, colA_x + col_w, pill_y0 + pill_h], 12, C_BLUELIGHT_BG)
+        _resumen_rr(d, [colB_x, pill_y0, colB_x + col_w, pill_y0 + pill_h], 12, C_PINK_BG)
+        d.text((colA_x + 16, pill_y0 + 14), money(p["company"]), font=f_col_value, fill=C_TEXT_DARK)
+        d.text((colB_x + 16, pill_y0 + 14), money(p["ecom"]), font=f_col_value, fill=C_RED)
+
+        divider_y = pill_y0 + pill_h + 26
+        d.line([x0 + pad, divider_y, x1 - pad, divider_y], fill=C_CARD_BORDER, width=2)
+
+        row2_y = divider_y + 20
+        icon_r = 26
+        icon_cx_a = colA_x + icon_r
+        icon_cx_b = colB_x + icon_r
+        icon_cy = row2_y + icon_r
+
+        d.ellipse([icon_cx_a - icon_r, icon_cy - icon_r, icon_cx_a + icon_r, icon_cy + icon_r], fill=C_PINK_BG)
+        _resumen_icon_bag(d, icon_cx_a, icon_cy, icon_r * 0.9, C_RED)
+        d.ellipse([icon_cx_b - icon_r, icon_cy - icon_r, icon_cx_b + icon_r, icon_cy + icon_r], fill=C_CREAM_BG)
+        _resumen_icon_cube(d, icon_cx_b, icon_cy, icon_r * 0.95, C_ORANGE)
+
+        text_x_a = icon_cx_a + icon_r + 14
+        text_x_b = icon_cx_b + icon_r + 14
+        d.text((text_x_a, row2_y - 2), "PEDIDOS ECOMMERCE", font=f_mini_label, fill=C_GRAY)
+        d.text((text_x_a, row2_y + 16), intfmt(p["orders"]), font=f_mini_value, fill=C_TEXT_DARK)
+        d.text((text_x_b, row2_y - 2), "UNIDADES ECOMMERCE", font=f_mini_label, fill=C_GRAY)
+        d.text((text_x_b, row2_y + 16), intfmt(p["units"]), font=f_mini_value, fill=C_TEXT_DARK)
+
+        share_cy = panel_y1 - bottom_h / 2
+        _resumen_icon_percent(d, x0 + pad + 10, share_cy, 26, C_RED)
+        d.text((x0 + pad + 34, share_cy - 10), p["share_label"], font=f_share_label, fill=C_GRAY)
+        val_txt = pct(p["share"])
+        vw = _resumen_text_w(d, val_txt, f_share_value)
+        d.text((x1 - pad - vw, share_cy - 13), val_txt, font=f_share_value, fill=C_RED)
+
+    footer_y = 598
+    if logo_img is not None:
+        lw, lh = logo_img.size
+        th = 22
+        tw = int(lw * th / lh)
+        small_logo = logo_img.resize((tw, th))
+        img.paste(small_logo, (48, footer_y - 2), small_logo)
+        fx = 48 + tw + 12
+    else:
+        d.text((48, footer_y), "MásOnline", font=_resumen_font(True, 18), fill=C_TEXT_DARK)
+        fx = 48 + 110
+    d.line([fx - 6, footer_y, fx - 6, footer_y + 20], fill=C_CARD_BORDER, width=2)
+    d.text((fx + 6, footer_y + 2), "OPERACIONES ECOMMERCE", font=f_footer, fill=C_GRAY)
+
+    foot_right = f"Datos con impuesto. Período: {mes_label.title()}."
+    fw = _resumen_text_w(d, foot_right, f_footer_reg)
+    d.text((W - 48 - fw, footer_y + 2), foot_right, font=f_footer_reg, fill=C_GRAY)
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+try:
+    _resumen_png_bytes = generar_resumen_imagen(
+        fecha_diaria_label=latest["date"].strftime("%d-%m"),
+        mes_label=f"{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}",
+        daily_company=latest["company_tax"], daily_ecom=latest["ecommerce_tax"],
+        daily_orders=latest["orders"], daily_units=latest["units"], share_daily_v=share_daily,
+        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders, mes_units=acc_units,
+        share_mes_v=share,
+    )
+    st.download_button(
+        "🖼️ Descargar resumen (imagen)",
+        data=_resumen_png_bytes,
+        file_name=f"resumen_ventas_{latest['date'].strftime('%Y%m%d')}.png",
+        mime="image/png",
+    )
+except Exception as _e:
+    st.caption(f"No pude armar la imagen de resumen ({_e}).")
 
 # ---------------------------------------------------------------------
 # HTML DESCARGABLE: copia independiente del dashboard, sin Streamlit.
