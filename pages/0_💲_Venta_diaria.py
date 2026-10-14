@@ -7,6 +7,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
 import html
+import tempfile
+import io
+import re
 
 st.set_page_config(
     page_title="MásOnline | Ecommerce",
@@ -202,6 +205,203 @@ if len(df_tiendas):
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df = df[df["date"].dt.date < arg_today].copy()
+
+# ---------------------------------------------------------------------
+# Pedidos: de acá en más salen siempre de "Vs de ventas" (el mismo archivo
+# que usan Comparativo y Finde largo), no de "Pedidos Facturados" de Venta
+# Con y sin Impuesto. Motivo: "Pedidos Facturados" se sigue completando
+# varios días después de cargado el archivo (un mismo día puede pasar de
+# 709 a 1.151 pedidos recién días más tarde), y eso hacía que la Venta
+# diaria y el Excel de Emi no coincidieran según cuándo se había actualizado
+# cada uno. "Vs de ventas" cuenta por fecha de ENTREGA (deliveryFinishDate),
+# que no se corrige de la misma manera.
+# La venta ($) y la participación NO cambian: siguen saliendo de "Venta Con
+# y sin Impuesto" (data.csv), sin ningún cambio. Esto solo reemplaza la
+# columna "orders" (pedidos), tanto el total por día como el desglose por
+# tienda, en todas las pestañas de esta página.
+SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
+
+
+def _pedidos_github_headers():
+    token = st.secrets.get("GITHUB_TOKEN") if hasattr(st, "secrets") else None
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+
+def _pedidos_fetch_from_github(shared_path):
+    headers = _pedidos_github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
+    try:
+        req = urllib.request.Request(url, headers=raw_headers, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return response.read()
+    except Exception:
+        return None
+
+
+def _pedidos_get_shared_bytes(shared_path):
+    if shared_path.exists():
+        try:
+            data = shared_path.read_bytes()
+            if data:
+                return data
+        except Exception:
+            pass
+    content = _pedidos_fetch_from_github(shared_path)
+    if content:
+        try:
+            shared_path.parent.mkdir(parents=True, exist_ok=True)
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
+    return None
+
+
+_PEDIDOS_RAW_COLS = {
+    "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
+    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+}
+_COL_PEDIDOS_VIEJO = "Pedidos Facturados con Venta Operativa - Ecommerce"
+
+
+def _pedidos_norm_codigo(v):
+    if pd.isna(v):
+        return ""
+    try:
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(int(float(v)))
+    except (TypeError, ValueError):
+        return str(v).strip()
+
+
+def _pedidos_codigo_tienda(v, tienda_codes):
+    """El código de depósito de 'Vs de ventas' (shippingWarehouseReferenceId)
+    a veces viene con prefijos del sistema (ej. 'Inv-Full-1017', 'wm-1012',
+    'RT-STS-PP-1044') en vez del código pelado. Probamos primero tal cual, y
+    si no matchea, buscamos entre los números que trae el string cuál es un
+    código de tienda ya conocido (de data_tiendas.csv)."""
+    s = _pedidos_norm_codigo(v)
+    if s in tienda_codes:
+        return s
+    candidatos = re.findall(r"\d{3,6}", s)
+    for c in candidatos:
+        if c in tienda_codes:
+            return c
+    return candidatos[-1] if candidatos else s
+
+
+def _pedidos_es_hoja_detalle(d):
+    return _PEDIDOS_RAW_COLS.issubset(set(d.columns))
+
+
+def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
+    d = d.copy()
+    es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
+    es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
+    d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
+    if "shippingWarehouseReferenceId" in d.columns:
+        tienda_col = d["shippingWarehouseReferenceId"].apply(
+            lambda v: _pedidos_codigo_tienda(v, tienda_codes)
+        )
+    else:
+        tienda_col = ""
+    out = pd.DataFrame({
+        "date": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
+        "Tienda": tienda_col,
+        "pedidos": 1,
+    })
+    return out.dropna(subset=["date"])
+
+
+def _pedidos_es_hoja_vieja(d):
+    return {"Fecha", "Tienda", _COL_PEDIDOS_VIEJO}.issubset(set(d.columns))
+
+
+def _pedidos_adaptar_hoja_vieja(d):
+    d = d.copy()
+    out = pd.DataFrame({
+        "date": pd.to_datetime(d["Fecha"], errors="coerce").dt.normalize(),
+        "Tienda": d["Tienda"].apply(_pedidos_norm_codigo),
+        "pedidos": pd.to_numeric(d[_COL_PEDIDOS_VIEJO], errors="coerce").fillna(0),
+    })
+    return out.dropna(subset=["date"])
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
+    cols_dia = ["date", "orders_vsventas"]
+    cols_tienda = ["date", "Tienda", "orders_vsventas"]
+    vacio_dia = pd.DataFrame(columns=cols_dia)
+    vacio_tienda = pd.DataFrame(columns=cols_tienda)
+    if not vsventas_bytes:
+        return vacio_dia, vacio_tienda
+    tienda_codes = set(tienda_codes_tuple)
+    try:
+        xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
+        partes = []
+        for sheet in xl.sheet_names:
+            d = xl.parse(sheet)
+            d.columns = [str(c).strip() for c in d.columns]
+            if _pedidos_es_hoja_detalle(d):
+                partes.append(_pedidos_adaptar_hoja_detalle(d, tienda_codes))
+            elif _pedidos_es_hoja_vieja(d):
+                partes.append(_pedidos_adaptar_hoja_vieja(d))
+        if not partes:
+            return vacio_dia, vacio_tienda
+        todo = pd.concat(partes, ignore_index=True, sort=False)
+    except Exception:
+        return vacio_dia, vacio_tienda
+
+    pedidos_tienda = (
+        todo.groupby(["date", "Tienda"], as_index=False)["pedidos"].sum()
+        .rename(columns={"pedidos": "orders_vsventas"})
+    )
+    pedidos_dia = (
+        todo.groupby("date", as_index=False)["pedidos"].sum()
+        .rename(columns={"pedidos": "orders_vsventas"})
+    )
+    return pedidos_dia, pedidos_tienda
+
+
+_tienda_codes_conocidos = tuple(sorted(set(df_tiendas["Tienda"].astype(str)))) if len(df_tiendas) else tuple()
+_vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
+_pedidos_dia_vs, _pedidos_tienda_vs = _cargar_pedidos_vsventas(
+    _vsventas_bytes_pedidos, _tienda_codes_conocidos
+)
+
+# Reemplazo con respaldo: si para una fecha puntual "Vs de ventas" todavía
+# no tiene datos (por ejemplo, no se subió una versión más nueva), se usa
+# como respaldo el valor de Pedidos Facturados, para que la página no se
+# quede sin número ese día.
+df = df.rename(columns={"orders": "orders_facturados"})
+df = df.merge(_pedidos_dia_vs, on="date", how="left")
+df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["orders_facturados"])
+df = df.drop(columns=["orders_vsventas"])
+
+if len(df_tiendas):
+    df_tiendas = df_tiendas.rename(columns={"orders": "orders_facturados"})
+    df_tiendas = df_tiendas.merge(_pedidos_tienda_vs, on=["date", "Tienda"], how="left")
+    df_tiendas["orders"] = df_tiendas["orders_vsventas"].where(
+        df_tiendas["orders_vsventas"].notna(), df_tiendas["orders_facturados"]
+    )
+    df_tiendas = df_tiendas.drop(columns=["orders_vsventas"])
+# ---------------------------------------------------------------------
 
 _MESES_ES = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
