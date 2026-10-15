@@ -214,8 +214,11 @@ df = df[df["date"].dt.date < arg_today].copy()
 # varios días después de cargado el archivo (un mismo día puede pasar de
 # 709 a 1.151 pedidos recién días más tarde), y eso hacía que la Venta
 # diaria y el Excel de Emi no coincidieran según cuándo se había actualizado
-# cada uno. "Vs de ventas" cuenta por fecha de ENTREGA (deliveryFinishDate),
-# que no se corrige de la misma manera.
+# cada uno. Acá contamos por fecha de CREACIÓN del pedido (commerceDateCreated),
+# que no se corrige de la misma manera, y además coincide con la base de la
+# venta $ (que también es por fecha de facturación/creación, no de entrega).
+# Nota: esto es distinto de Comparativo y Finde largo, que cuentan por fecha
+# de ENTREGA (deliveryFinishDate) — ahí se dejó así a propósito, no se tocó.
 # La venta ($) y la participación NO cambian: siguen saliendo de "Venta Con
 # y sin Impuesto" (data.csv), sin ningún cambio. Esto solo reemplaza la
 # columna "orders" (pedidos), tanto el total por día como el desglose por
@@ -316,6 +319,10 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
     d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
+    # El archivo a veces trae el mismo pedido repetido (filas idénticas, más
+    # de una vez de punta a punta) — nos quedamos con un solo registro por
+    # pedido (commerceSequentialId) para no duplicar el conteo.
+    d = d.drop_duplicates(subset=["commerceSequentialId"])
     if "shippingWarehouseReferenceId" in d.columns:
         tienda_col = d["shippingWarehouseReferenceId"].apply(
             lambda v: _pedidos_codigo_tienda(v, tienda_codes)
@@ -323,7 +330,7 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
     else:
         tienda_col = ""
     out = pd.DataFrame({
-        "date": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
+        "date": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
         "Tienda": tienda_col,
         "pedidos": 1,
     })
