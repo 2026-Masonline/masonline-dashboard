@@ -314,7 +314,10 @@ def _pedidos_es_hoja_detalle(d):
     return _PEDIDOS_RAW_COLS.issubset(set(d.columns))
 
 
-def _pedidos_adaptar_hoja_detalle(d, tienda_codes, date_col):
+def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
+    """Devuelve una fila por pedido con AMBAS fechas (creación y entrega) ya
+    calculadas, para poder armar los dos criterios (creación/entrega) leyendo
+    y filtrando el archivo una sola vez, en vez de dos."""
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
@@ -330,11 +333,12 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes, date_col):
     else:
         tienda_col = ""
     out = pd.DataFrame({
-        "date": pd.to_datetime(d[date_col], errors="coerce").dt.normalize(),
+        "date_creacion": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
+        "date_entrega": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
         "Tienda": tienda_col,
         "pedidos": 1,
     })
-    return out.dropna(subset=["date"])
+    return out
 
 
 def _pedidos_es_hoja_vieja(d):
@@ -342,23 +346,31 @@ def _pedidos_es_hoja_vieja(d):
 
 
 def _pedidos_adaptar_hoja_vieja(d):
+    # La hoja vieja (formato agregado, años anteriores) solo trae una fecha
+    # por fila — se usa esa misma fecha para los dos criterios.
     d = d.copy()
+    fecha = pd.to_datetime(d["Fecha"], errors="coerce").dt.normalize()
     out = pd.DataFrame({
-        "date": pd.to_datetime(d["Fecha"], errors="coerce").dt.normalize(),
+        "date_creacion": fecha,
+        "date_entrega": fecha,
         "Tienda": d["Tienda"].apply(_pedidos_norm_codigo),
         "pedidos": pd.to_numeric(d[_COL_PEDIDOS_VIEJO], errors="coerce").fillna(0),
     })
-    return out.dropna(subset=["date"])
+    return out
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple, date_col):
+def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
+    """Lee 'Vs de ventas' UNA sola vez y arma los dos criterios de pedidos
+    (fecha de creación y fecha de entrega) juntos, para no tener que abrir y
+    filtrar el archivo (que puede ser grande) dos veces."""
     cols_dia = ["date", "orders_vsventas"]
     cols_tienda = ["date", "Tienda", "orders_vsventas"]
     vacio_dia = pd.DataFrame(columns=cols_dia)
     vacio_tienda = pd.DataFrame(columns=cols_tienda)
+    vacio = (vacio_dia, vacio_tienda, vacio_dia, vacio_tienda)
     if not vsventas_bytes:
-        return vacio_dia, vacio_tienda
+        return vacio
     tienda_codes = set(tienda_codes_tuple)
     try:
         xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
@@ -367,31 +379,38 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple, date_col):
             d = xl.parse(sheet)
             d.columns = [str(c).strip() for c in d.columns]
             if _pedidos_es_hoja_detalle(d):
-                partes.append(_pedidos_adaptar_hoja_detalle(d, tienda_codes, date_col))
+                partes.append(_pedidos_adaptar_hoja_detalle(d, tienda_codes))
             elif _pedidos_es_hoja_vieja(d):
                 partes.append(_pedidos_adaptar_hoja_vieja(d))
         if not partes:
-            return vacio_dia, vacio_tienda
+            return vacio
         todo = pd.concat(partes, ignore_index=True, sort=False)
     except Exception:
-        return vacio_dia, vacio_tienda
+        return vacio
 
-    pedidos_tienda = (
-        todo.groupby(["date", "Tienda"], as_index=False)["pedidos"].sum()
-        .rename(columns={"pedidos": "orders_vsventas"})
-    )
-    pedidos_dia = (
-        todo.groupby("date", as_index=False)["pedidos"].sum()
-        .rename(columns={"pedidos": "orders_vsventas"})
-    )
-    return pedidos_dia, pedidos_tienda
+    def _agg(date_col):
+        base = todo.dropna(subset=[date_col]).rename(columns={date_col: "date"})
+        pedidos_tienda = (
+            base.groupby(["date", "Tienda"], as_index=False)["pedidos"].sum()
+            .rename(columns={"pedidos": "orders_vsventas"})
+        )
+        pedidos_dia = (
+            base.groupby("date", as_index=False)["pedidos"].sum()
+            .rename(columns={"pedidos": "orders_vsventas"})
+        )
+        return pedidos_dia, pedidos_tienda
+
+    pedidos_dia_creacion, pedidos_tienda_creacion = _agg("date_creacion")
+    pedidos_dia_entrega, pedidos_tienda_entrega = _agg("date_entrega")
+    return pedidos_dia_creacion, pedidos_tienda_creacion, pedidos_dia_entrega, pedidos_tienda_entrega
 
 
 _tienda_codes_conocidos = tuple(sorted(set(df_tiendas["Tienda"].astype(str)))) if len(df_tiendas) else tuple()
 _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
-_pedidos_dia_vs, _pedidos_tienda_vs = _cargar_pedidos_vsventas(
-    _vsventas_bytes_pedidos, _tienda_codes_conocidos, "commerceDateCreated"
-)
+(
+    _pedidos_dia_vs, _pedidos_tienda_vs,
+    _pedidos_dia_vs_entrega, _pedidos_tienda_vs_entrega,
+) = _cargar_pedidos_vsventas(_vsventas_bytes_pedidos, _tienda_codes_conocidos)
 
 # Reemplazo con respaldo: si para una fecha puntual "Vs de ventas" todavía
 # no tiene datos (por ejemplo, no se subió una versión más nueva), se usa
@@ -411,14 +430,10 @@ if len(df_tiendas):
     df_tiendas = df_tiendas.drop(columns=["orders_vsventas"])
 
 # Pedidos por fecha de ENTREGA (deliveryFinishDate), además de los de arriba
-# (fecha de creación): las tarjetas "DIARIO" y "MENSUAL" (las de dos paneles
-# lado a lado, en "Dashboard completo", "Resumen para GDN" y en la imagen de
-# resumen descargable) muestran pedidos por fecha de entrega, a pedido de
-# Emi — el resto de la página (MES EN CURSO, Top 5 tiendas, etc.) sigue
-# usando fecha de creación, sin cambios.
-_pedidos_dia_vs_entrega, _pedidos_tienda_vs_entrega = _cargar_pedidos_vsventas(
-    _vsventas_bytes_pedidos, _tienda_codes_conocidos, "deliveryFinishDate"
-)
+# (fecha de creación): la tarjeta "DIARIO" (en "Dashboard completo", "Resumen
+# para GDN" y en la imagen de resumen descargable) muestra pedidos por fecha
+# de entrega, a pedido de Emi — el resto de la página (MES EN CURSO, MENSUAL,
+# Top 5 tiendas, etc.) sigue usando fecha de creación, sin cambios.
 _pedidos_dia_vs_entrega = _pedidos_dia_vs_entrega.rename(
     columns={"orders_vsventas": "orders_vsventas_entrega"}
 )
@@ -745,7 +760,7 @@ st.markdown(f"""
       Participación del día: <span style="color:#2f9e66;">{pct(share_daily)}</span>
     </div>
     <div style="font-weight:800;font-size:16px;margin-top:4px;color:#20252b;">
-      Pedidos del día: <span style="color:#e8432c;">{intfmt(latest["orders"])}</span>
+      Pedidos del día: <span style="color:#e8432c;">{intfmt(latest["orders_entrega"])}</span>
     </div>
   </div>
 </div>
@@ -1399,7 +1414,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
       Participación del día: <span style="color:#2f9e66;">{html.escape(pct(share_daily))}</span>
     </div>
     <div style="font-weight:800;font-size:16px;margin-top:4px;color:#20252b;">
-      Pedidos del día: <span style="color:#e8432c;">{html.escape(intfmt(latest["orders"]))}</span>
+      Pedidos del día: <span style="color:#e8432c;">{html.escape(intfmt(latest["orders_entrega"]))}</span>
     </div>
   </div>
 </div>
