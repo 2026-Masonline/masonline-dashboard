@@ -1034,7 +1034,7 @@ try:
         mes_label=f"{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}",
         daily_company=latest["company_tax"], daily_ecom=latest["ecommerce_tax"],
         daily_orders=latest["orders_entrega"], daily_units=latest["units"], share_daily_v=share_daily,
-        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders_entrega, mes_units=acc_units,
+        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders, mes_units=acc_units,
         share_mes_v=share,
     )
     st.download_button(
@@ -1641,7 +1641,7 @@ with tab1:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1895,7 +1895,7 @@ with tab2:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1981,7 +1981,7 @@ with tab3:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
