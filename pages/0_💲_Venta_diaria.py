@@ -314,7 +314,7 @@ def _pedidos_es_hoja_detalle(d):
     return _PEDIDOS_RAW_COLS.issubset(set(d.columns))
 
 
-def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
+def _pedidos_adaptar_hoja_detalle(d, tienda_codes, date_col):
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
@@ -330,7 +330,7 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
     else:
         tienda_col = ""
     out = pd.DataFrame({
-        "date": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
+        "date": pd.to_datetime(d[date_col], errors="coerce").dt.normalize(),
         "Tienda": tienda_col,
         "pedidos": 1,
     })
@@ -352,7 +352,7 @@ def _pedidos_adaptar_hoja_vieja(d):
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
+def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple, date_col):
     cols_dia = ["date", "orders_vsventas"]
     cols_tienda = ["date", "Tienda", "orders_vsventas"]
     vacio_dia = pd.DataFrame(columns=cols_dia)
@@ -367,7 +367,7 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
             d = xl.parse(sheet)
             d.columns = [str(c).strip() for c in d.columns]
             if _pedidos_es_hoja_detalle(d):
-                partes.append(_pedidos_adaptar_hoja_detalle(d, tienda_codes))
+                partes.append(_pedidos_adaptar_hoja_detalle(d, tienda_codes, date_col))
             elif _pedidos_es_hoja_vieja(d):
                 partes.append(_pedidos_adaptar_hoja_vieja(d))
         if not partes:
@@ -390,7 +390,7 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
 _tienda_codes_conocidos = tuple(sorted(set(df_tiendas["Tienda"].astype(str)))) if len(df_tiendas) else tuple()
 _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
 _pedidos_dia_vs, _pedidos_tienda_vs = _cargar_pedidos_vsventas(
-    _vsventas_bytes_pedidos, _tienda_codes_conocidos
+    _vsventas_bytes_pedidos, _tienda_codes_conocidos, "commerceDateCreated"
 )
 
 # Reemplazo con respaldo: si para una fecha puntual "Vs de ventas" todavía
@@ -409,6 +409,35 @@ if len(df_tiendas):
         df_tiendas["orders_vsventas"].notna(), df_tiendas["orders_facturados"]
     )
     df_tiendas = df_tiendas.drop(columns=["orders_vsventas"])
+
+# Pedidos por fecha de ENTREGA (deliveryFinishDate), además de los de arriba
+# (fecha de creación): las tarjetas "DIARIO" y "MENSUAL" (las de dos paneles
+# lado a lado, en "Dashboard completo", "Resumen para GDN" y en la imagen de
+# resumen descargable) muestran pedidos por fecha de entrega, a pedido de
+# Emi — el resto de la página (MES EN CURSO, Top 5 tiendas, etc.) sigue
+# usando fecha de creación, sin cambios.
+_pedidos_dia_vs_entrega, _pedidos_tienda_vs_entrega = _cargar_pedidos_vsventas(
+    _vsventas_bytes_pedidos, _tienda_codes_conocidos, "deliveryFinishDate"
+)
+_pedidos_dia_vs_entrega = _pedidos_dia_vs_entrega.rename(
+    columns={"orders_vsventas": "orders_vsventas_entrega"}
+)
+_pedidos_tienda_vs_entrega = _pedidos_tienda_vs_entrega.rename(
+    columns={"orders_vsventas": "orders_vsventas_entrega"}
+)
+
+df = df.merge(_pedidos_dia_vs_entrega, on="date", how="left")
+df["orders_entrega"] = df["orders_vsventas_entrega"].where(
+    df["orders_vsventas_entrega"].notna(), df["orders_facturados"]
+)
+df = df.drop(columns=["orders_vsventas_entrega"])
+
+if len(df_tiendas):
+    df_tiendas = df_tiendas.merge(_pedidos_tienda_vs_entrega, on=["date", "Tienda"], how="left")
+    df_tiendas["orders_entrega"] = df_tiendas["orders_vsventas_entrega"].where(
+        df_tiendas["orders_vsventas_entrega"].notna(), df_tiendas["orders_facturados"]
+    )
+    df_tiendas = df_tiendas.drop(columns=["orders_vsventas_entrega"])
 # ---------------------------------------------------------------------
 
 _MESES_ES = [
@@ -525,6 +554,7 @@ days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
 acc_orders = current["orders"].sum()
+acc_orders_entrega = current["orders_entrega"].sum()
 acc_units = current["units"].sum()
 
 share = acc_ecom / acc_company if acc_company else 0
@@ -1003,8 +1033,8 @@ try:
         fecha_diaria_label=latest["date"].strftime("%d-%m"),
         mes_label=f"{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}",
         daily_company=latest["company_tax"], daily_ecom=latest["ecommerce_tax"],
-        daily_orders=latest["orders"], daily_units=latest["units"], share_daily_v=share_daily,
-        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders, mes_units=acc_units,
+        daily_orders=latest["orders_entrega"], daily_units=latest["units"], share_daily_v=share_daily,
+        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders_entrega, mes_units=acc_units,
         share_mes_v=share,
     )
     st.download_button(
@@ -1576,7 +1606,7 @@ with tab1:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders"])}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders_entrega"])}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1611,7 +1641,7 @@ with tab1:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1830,7 +1860,7 @@ with tab2:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders"])}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["orders_entrega"])}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1865,7 +1895,7 @@ with tab2:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1951,7 +1981,7 @@ with tab3:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
