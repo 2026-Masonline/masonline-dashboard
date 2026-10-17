@@ -1114,6 +1114,35 @@ def load_section(uploaded_file, required_cols):
     and return the dataframe matching required_cols, or None."""
     return load_section_from_xl(safe_open_excel(uploaded_file), required_cols)
 
+def load_all_sheets_from_xl(xl, required_cols, required=True):
+    """Como load_section_from_xl, pero en vez de quedarse con la PRIMERA hoja
+    que matchea las columnas esperadas, lee y junta TODAS las hojas que las
+    tengan. Pensado para el archivo de Pedidos cuando viene separado por mes
+    (una hoja por mes — "Enero", "Febrero", ..., "Octubre" — todas con el
+    mismo esquema de columnas): si nos quedáramos con la primera hoja nomás,
+    perderíamos todos los meses menos ese."""
+    if xl is None:
+        return None
+    required_set = {c.lower() for c in required_cols}
+    partes = []
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if required_set.issubset(cols):
+            partes.append(df)
+    if not partes:
+        if required:
+            st.error(
+                "No encontré ninguna hoja con las columnas esperadas "
+                f"({', '.join(required_cols)}) en el archivo subido."
+            )
+        return None
+    return pd.concat(partes, ignore_index=True, sort=False)
+
 def _fr_read_positional(xl, sheet_name):
     """Lee una hoja de Fill Rate por POSICIÓN (6 columnas: Tienda, Unidades,
     No entregado, Reemplazo, Monto, FR%) en vez de por nombre de columna,
@@ -2027,11 +2056,20 @@ if df_picker_raw is None:
     # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
     df_picker_raw = load_section_from_xl(xl_reporte, _PICKERS_COLS, required=False)
 xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes), "Pedidos +72h") if pedidos_bytes is not None else None
-df_pedidos_raw = load_section_from_xl(
+# El archivo de Pedidos ahora puede venir separado por mes (una hoja por
+# mes, ej. "Enero".."Octubre", en vez de una sola hoja larga) — juntamos
+# todas las hojas que tengan el esquema esperado, no solo la primera.
+df_pedidos_raw = load_all_sheets_from_xl(
     xl_pedidos,
     ["commerceId", "commerceDateCreated", "deliveryFinishDate", "status", "totalAmount", "shippingWarehouseName"],
     required=False
 )
+if df_pedidos_raw is not None and "commerceId" in df_pedidos_raw.columns:
+    # Los meses que se tocan (ej. fin de Septiembre / principio de Octubre)
+    # a veces traen el mismo pedido repetido en las dos hojas — nos
+    # quedamos con un solo registro por pedido para no duplicar conteos
+    # (ni en "+72h sin mover" ni en "Cancelados").
+    df_pedidos_raw = df_pedidos_raw.drop_duplicates(subset=["commerceId"])
 
 candidate_times = []
 
@@ -2054,12 +2092,12 @@ if df_pedidos_raw is not None:
     d["Estado"] = d.get("status", "").apply(norm_txt)
     d["Monto"] = d.get("totalAmount").apply(parse_pedidos_monto)
     fecha_creacion = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
-    # "Sin mover +72h" se mide contra el FIN de la ventana de entrega
-    # prometida (deliveryFinishDate), no contra la fecha del pedido: cuenta
-    # como atrasado un pedido al que ya se le pasaron 72h de esa fecha y
-    # todavía no figura como entregado. Los cancelados se sacan de acá y van
-    # a la sección de Cancelados aparte (más abajo).
-    d["Fecha"] = pd.to_datetime(d.get("deliveryFinishDate"), errors="coerce")
+    # "Sin mover +72h" se mide contra la fecha de CREACIÓN del pedido
+    # (commerceDateCreated), a pedido de Emi: cuenta como atrasado un pedido
+    # al que ya le pasaron 72h desde que se creó y todavía no figura como
+    # entregado. Los cancelados se sacan de acá y van a la sección de
+    # Cancelados aparte (más abajo).
+    d["Fecha"] = fecha_creacion
     d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
     d = d.dropna(subset=["Fecha"])
     if fecha_creacion.notna().any():
