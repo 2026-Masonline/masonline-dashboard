@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import calendar
+import tempfile
+import io
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -114,6 +116,149 @@ try:
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
     st.stop()
+
+# ---------------------------------------------------------------------
+# Pedidos: igual que en Venta diaria (Dashboard de Ventas), de acá en más
+# salen de "Vs de ventas" contados por fecha de CREACIÓN (commerceDateCreated)
+# en vez de la columna "orders" de data.csv ("Pedidos Facturados"). Esto es
+# para que esta página coincida con el número de Venta diaria — "Pedidos
+# Facturados" se sigue completando varios días después de cargado el
+# archivo, así que sin este reemplazo los dos terminaban mostrando números
+# distintos para el mismo mes. Si para alguna fecha puntual "Vs de ventas"
+# todavía no tiene datos, se usa como respaldo el valor viejo de "orders",
+# para no quedarse sin número ese día.
+SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
+
+
+def _pedidos_github_headers():
+    token = st.secrets.get("GITHUB_TOKEN") if hasattr(st, "secrets") else None
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+
+def _pedidos_fetch_from_github(shared_path):
+    headers = _pedidos_github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
+    try:
+        req = urllib.request.Request(url, headers=raw_headers, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return response.read()
+    except Exception:
+        return None
+
+
+def _pedidos_get_shared_bytes(shared_path):
+    if shared_path.exists():
+        try:
+            data = shared_path.read_bytes()
+            if data:
+                return data
+        except Exception:
+            pass
+    content = _pedidos_fetch_from_github(shared_path)
+    if content:
+        try:
+            shared_path.parent.mkdir(parents=True, exist_ok=True)
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
+    return None
+
+
+_PEDIDOS_RAW_COLS = {
+    "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
+    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+}
+_COL_PEDIDOS_VIEJO = "Pedidos Facturados con Venta Operativa - Ecommerce"
+
+
+def _pedidos_es_hoja_detalle(d):
+    return _PEDIDOS_RAW_COLS.issubset(set(d.columns))
+
+
+def _pedidos_adaptar_hoja_detalle(d):
+    d = d.copy()
+    es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
+    es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
+    d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
+    # El archivo a veces trae el mismo pedido repetido (filas idénticas, más
+    # de una vez de punta a punta) — nos quedamos con un solo registro por
+    # pedido (commerceSequentialId) para no duplicar el conteo.
+    d = d.drop_duplicates(subset=["commerceSequentialId"])
+    out = pd.DataFrame({
+        "date": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
+        "pedidos": 1,
+    })
+    return out
+
+
+def _pedidos_es_hoja_vieja(d):
+    return {"Fecha", "Tienda", _COL_PEDIDOS_VIEJO}.issubset(set(d.columns))
+
+
+def _pedidos_adaptar_hoja_vieja(d):
+    # La hoja vieja (formato agregado, años anteriores) solo trae una fecha
+    # por fila (de creación y entrega, no se distinguen).
+    d = d.copy()
+    out = pd.DataFrame({
+        "date": pd.to_datetime(d["Fecha"], errors="coerce").dt.normalize(),
+        "pedidos": pd.to_numeric(d[_COL_PEDIDOS_VIEJO], errors="coerce").fillna(0),
+    })
+    return out
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _cargar_pedidos_vsventas_dia(vsventas_bytes):
+    """Lee 'Vs de ventas' y arma el total de pedidos por día, contados por
+    fecha de CREACIÓN del pedido (igual que Venta diaria)."""
+    vacio = pd.DataFrame(columns=["date", "orders_vsventas"])
+    if not vsventas_bytes:
+        return vacio
+    try:
+        xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
+        partes = []
+        for sheet in xl.sheet_names:
+            d = xl.parse(sheet)
+            d.columns = [str(c).strip() for c in d.columns]
+            if _pedidos_es_hoja_detalle(d):
+                partes.append(_pedidos_adaptar_hoja_detalle(d))
+            elif _pedidos_es_hoja_vieja(d):
+                partes.append(_pedidos_adaptar_hoja_vieja(d))
+        if not partes:
+            return vacio
+        todo = pd.concat(partes, ignore_index=True, sort=False)
+    except Exception:
+        return vacio
+    base = todo.dropna(subset=["date"])
+    return (
+        base.groupby("date", as_index=False)["pedidos"].sum()
+        .rename(columns={"pedidos": "orders_vsventas"})
+    )
+
+
+_vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
+_pedidos_dia_vs = _cargar_pedidos_vsventas_dia(_vsventas_bytes_pedidos)
+
+df = df.rename(columns={"orders": "orders_facturados"})
+df = df.merge(_pedidos_dia_vs, on="date", how="left")
+df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["orders_facturados"])
+df = df.drop(columns=["orders_vsventas"])
+# ---------------------------------------------------------------------
 
 # Esta página muestra la misma info de fin de semana que ya está en la
 # pestaña "Venta fin de semana" del Dashboard de Ventas. Los datos se
