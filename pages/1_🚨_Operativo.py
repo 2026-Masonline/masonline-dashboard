@@ -1172,10 +1172,17 @@ def _cargar_pedidos_completo(pedidos_bytes):
     df = load_all_sheets_from_xl(xl, _PEDIDOS_RAW_COLS_OP, required=False)
     if df is not None and "commerceId" in df.columns:
         # Los meses que se tocan (ej. fin de Septiembre / principio de
-        # Octubre) a veces traen el mismo pedido repetido en las dos hojas
+        # Octubre) a veces traen el mismo pedido repetido en varias hojas
         # — nos quedamos con un solo registro por pedido para no duplicar
-        # conteos (ni en "+72h sin mover" ni en "Cancelados").
-        df = df.drop_duplicates(subset=["commerceId"])
+        # conteos (ni en "+72h sin mover" ni en "Cancelados"). IMPORTANTE:
+        # keep="last" (no el default "first"), porque las hojas vienen en
+        # orden cronológico (Enero..Octubre) y cuando un pedido se repite,
+        # la hoja más nueva tiene su estado más actualizado — con "first" se
+        # quedaba con el estado VIEJO (ej. seguía marcado "pendiente" aunque
+        # ya figuraba entregado en una hoja posterior), inflando "sin mover
+        # +72h" con pedidos que en realidad ya se habían resuelto. Mismo
+        # criterio que ya usa app.py al combinar estas hojas (keep="last").
+        df = df.drop_duplicates(subset=["commerceId"], keep="last")
     return df
 
 def _fr_read_positional(xl, sheet_name):
@@ -2124,7 +2131,16 @@ if df_pedidos_raw is not None:
     # entregado. Los cancelados se sacan de acá y van a la sección de
     # Cancelados aparte (más abajo).
     d["Fecha"] = fecha_creacion
+    # "Sin mover" = de verdad nunca avanzó: no alcanza con que todavía no
+    # figure "delivered" — la mayoría de los pedidos no entregados YA tienen
+    # una entrega programada (fecha/hora asignada, estado "readyForDelivery"
+    # o similar), es decir, están en camino, no estancados. Por eso también
+    # exigimos que NO tengan fecha de entrega asignada (deliveryFinishDate
+    # vacío): confirmado con Emi que esos pedidos en camino no deben contar
+    # acá (antes sí contaban, e inflaba mucho la card).
+    fecha_entrega_programada = pd.to_datetime(d.get("deliveryFinishDate"), errors="coerce")
     d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
+    d = d[fecha_entrega_programada.loc[d.index].isna()]
     d = d.dropna(subset=["Fecha"])
     if fecha_creacion.notna().any():
         candidate_times.append(fecha_creacion.max())
