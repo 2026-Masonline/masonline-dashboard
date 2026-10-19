@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import tempfile
+import calendar
 from pathlib import Path
 import base64
 from datetime import datetime
@@ -669,9 +670,18 @@ ultimo_finde_section_html = f"""
 """
 
 # ---------------------------------------------------------------------
-# Día a día: misma fecha del mes (día 1, 2, 3...) de este año vs el mismo
-# día del mes del año anterior. El archivo ya trae el valor de CADA día
-# puntual (no acumulado), así que se usa directo, sin restar nada.
+# Día a día: de lunes a viernes, una fila por día (misma fecha del mes —
+# día 1, 2, 3...— de este año vs el mismo día del mes del año anterior).
+# Sábado y domingo, en cambio, se funden en una sola fila (el sábado se
+# muestra junto con el domingo siguiente, igual que ya hace "Venta fin de
+# semana") — el domingo nunca aparece como fila propia. Qué días forman
+# cada "finde" se decide por el calendario del año EN CURSO (según cuándo
+# cae el fin de semana este año); la comparación contra el año anterior
+# sigue siendo por número de día del mes (no por día de la semana), así
+# que el grupo "día 4 y 5" de este año se compara contra la suma de los
+# días 4 y 5 del año anterior, caigan en el día de la semana que caigan.
+# El archivo ya trae el valor de CADA día puntual (no acumulado), así que
+# se usa directo, sin restar nada.
 # ---------------------------------------------------------------------
 
 _DIA_A_DIA_COLS = ["dia", "ecommerce_tax", "orders", "units", "company_tax"]
@@ -688,11 +698,44 @@ def dia_a_dia(year, month):
     sub["dia"] = sub["date"].dt.day
     return sub[_DIA_A_DIA_COLS]
 
-dia_cur = dia_a_dia(cur_year, cur_month)
-dia_cur = dia_cur[dia_cur["dia"] <= n]
-dia_prev = dia_a_dia(cur_year - 1, cur_month)
+dia_cur_full = dia_a_dia(cur_year, cur_month)
+dia_prev_full = dia_a_dia(cur_year - 1, cur_month)
 
-dia_cmp = dia_cur.merge(dia_prev, on="dia", how="left", suffixes=("", "_prev"))
+def _grupos_dia_a_dia(year, month, hasta_dia):
+    """Lista de (dias_del_grupo, es_finde) para un mes, agrupando sábado +
+    domingo (según el calendario de ESE año) en un solo grupo y dejando
+    lunes a viernes como grupos de un día. Un grupo entra en la lista
+    apenas arrancó (su primer día es <= hasta_dia), aunque el segundo día
+    del finde todavía no haya llegado (se suma como 0 hasta que llegue,
+    igual que en Venta fin de semana)."""
+    dias_en_mes = calendar.monthrange(year, month)[1]
+    grupos = []
+    dia = 1
+    while dia <= dias_en_mes:
+        weekday = pd.Timestamp(year=year, month=month, day=dia).weekday()  # Lunes=0 ... Domingo=6
+        if weekday == 5 and dia + 1 <= dias_en_mes:  # Sábado seguido de domingo
+            dias_grupo = [dia, dia + 1]
+            dia += 2
+        else:
+            dias_grupo = [dia]
+            dia += 1
+        if dias_grupo[0] > hasta_dia:
+            break
+        grupos.append((dias_grupo, weekday == 5))
+    return grupos
+
+grupos_cur = _grupos_dia_a_dia(cur_year, cur_month, n)
+
+def _suma_grupo(dia_df, dias_grupo):
+    sub = dia_df[dia_df["dia"].isin(dias_grupo)]
+    if sub.empty:
+        return None
+    return {
+        "ecommerce_tax": sub["ecommerce_tax"].sum(),
+        "orders": sub["orders"].sum(),
+        "units": sub["units"].sum(),
+        "company_tax": sub["company_tax"].sum(),
+    }
 
 def variacion_html(v):
     if v is None:
@@ -702,18 +745,27 @@ def variacion_html(v):
     sign = "+" if v >= 0 else "−"
     return f'<span style="color:{cls};font-weight:700;">{arrow} {sign}{abs(v) * 100:.1f}%</span>'
 
+def _label_grupo(dias_grupo, es_finde):
+    if es_finde:
+        return f"{dias_grupo[0]} y {dias_grupo[1]} (finde)"
+    return str(dias_grupo[0])
+
 dia_rows_html = ""
-for _, r in dia_cmp.iterrows():
-    hay_prev_dia = pd.notna(r.get("ecommerce_tax_prev"))
-    venta_prev_txt = money(r["ecommerce_tax_prev"]) if hay_prev_dia else "—"
+for dias_grupo, es_finde in grupos_cur:
+    tot_cur_dia = _suma_grupo(dia_cur_full, dias_grupo) or {
+        "ecommerce_tax": 0, "orders": 0, "units": 0, "company_tax": 0
+    }
+    tot_prev_dia = _suma_grupo(dia_prev_full, dias_grupo)
+    hay_prev_dia = tot_prev_dia is not None
+    venta_prev_txt = money(tot_prev_dia["ecommerce_tax"]) if hay_prev_dia else "—"
     variacion = (
-        (r["ecommerce_tax"] / r["ecommerce_tax_prev"] - 1)
-        if hay_prev_dia and r["ecommerce_tax_prev"] else None
+        (tot_cur_dia["ecommerce_tax"] / tot_prev_dia["ecommerce_tax"] - 1)
+        if hay_prev_dia and tot_prev_dia["ecommerce_tax"] else None
     )
     dia_rows_html += (
         '<tr style="border-top:1px solid #f1f3f5;">'
-        f'<td style="padding:10px 16px;color:#000000;font-weight:700;">{int(r["dia"])}</td>'
-        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{money(r["ecommerce_tax"])}</td>'
+        f'<td style="padding:10px 16px;color:#000000;font-weight:700;">{_label_grupo(dias_grupo, es_finde)}</td>'
+        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{money(tot_cur_dia["ecommerce_tax"])}</td>'
         f'<td style="padding:10px 16px;color:#000000;text-align:center;">{venta_prev_txt}</td>'
         f'<td style="padding:10px 16px;text-align:center;">{variacion_html(variacion)}</td>'
         '</tr>'
@@ -745,7 +797,7 @@ else:
 
 dia_section_html = f"""
 <div class="section" style="margin-top:30px;">Día a día vs {cur_year - 1}</div>
-<div class="section-desc">Venta Ecommerce (con impuesto) de cada día del mes, comparada con el mismo día de {mes_nombre} {cur_year - 1} (no el mismo día de la semana, el mismo número de día).</div>
+<div class="section-desc">Venta Ecommerce (con impuesto) de cada día del mes, comparada con el mismo número de día de {mes_nombre} {cur_year - 1} (no el mismo día de la semana). Sábado y domingo se suman en una sola fila; de lunes a viernes, un día por fila.</div>
 {dia_table_html}
 """
 
