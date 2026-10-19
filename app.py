@@ -203,8 +203,36 @@ def _norm_cols_pedidos(df):
     df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
     return df
 
-def _find_sheet_pedidos(xl, required_cols):
+def _open_excel_pedidos(f):
+    """Abre el Excel de Pedidos +72h. Si está instalada la librería
+    python-calamine, la usa (motor en Rust, mucho más rápido que el default
+    openpyxl — con un archivo de varias decenas de MB como el que ahora
+    viene separado por mes, la diferencia es de minutos a segundos). Si no
+    está instalada, o falla por lo que sea, sigue con el motor normal: nunca
+    rompe el guardado por esto."""
+    try:
+        return pd.ExcelFile(f, engine="calamine")
+    except Exception:
+        try:
+            if hasattr(f, "seek"):
+                f.seek(0)
+        except Exception:
+            pass
+        return pd.ExcelFile(f)
+
+def _read_all_sheets_pedidos(xl, required_cols):
+    """Antes esta función (como _find_sheet_pedidos) se quedaba con la
+    PRIMERA hoja que tuviera las columnas esperadas. Eso andaba bien
+    mientras el export venía en un archivo por mes, pero ahora el export
+    "Estados +72" viene en UN SOLO archivo con UNA HOJA POR MES (Enero,
+    Febrero, ..., Octubre, todas con el mismo esquema de columnas) — con la
+    versión vieja, nos quedábamos solo con la primera hoja (Enero) y
+    perdíamos los otros 9 meses en silencio, que es lo que explicaba los
+    "0 pedidos" / "Fecha de corte" vieja que venía mostrando el dashboard.
+    Ahora lee y junta TODAS las hojas del archivo que tengan las columnas
+    esperadas."""
     required = {c.lower() for c in required_cols}
+    partes = []
     for name in xl.sheet_names:
         try:
             df = xl.parse(name)
@@ -213,8 +241,10 @@ def _find_sheet_pedidos(xl, required_cols):
         df = _norm_cols_pedidos(df)
         cols = {c.lower() for c in df.columns}
         if required.issubset(cols):
-            return df
-    return None
+            partes.append(df)
+    if not partes:
+        return None
+    return pd.concat(partes, ignore_index=True, sort=False)
 
 def _norm_txt_pedidos(v):
     if pd.isna(v):
@@ -228,27 +258,30 @@ def _get_col_ci_pedidos(df, name):
     return pd.Series([""] * len(df), index=df.index)
 
 def merge_pedidos_72h_files(uploaded_files):
-    """El export de Pedidos +72h a veces viene partido en varios archivos
-    (ej. uno por mes, porque el pedido más viejo que sigue sin entregar
-    puede ser de meses atrás). Como lo que importa acá es la FOTO COMPLETA
-    de ahora mismo, esta función junta todos los archivos subidos en uno
-    solo: lee de cada uno la hoja con las columnas esperadas, los apila, saca
-    duplicados exactos de "commerceId" (por si el mismo pedido aparece en más
-    de un archivo) y devuelve un único Excel en memoria (bytes) + un
-    resumen de cuántas filas aportó cada archivo, para mostrarlo en
-    pantalla. Si algún archivo no tiene la hoja esperada, lo salta (y lo
-    avisa) en vez de cortar todo el guardado."""
+    """El export de Pedidos +72h puede venir de dos formas: partido en
+    varios archivos (ej. uno por mes, cada uno con una sola hoja), o en UN
+    solo archivo con UNA HOJA POR MES (ej. "Estados +72.xlsx": Enero,
+    Febrero, ..., Octubre). Como lo que importa acá es la FOTO COMPLETA de
+    ahora mismo, esta función junta TODO — de cada archivo subido, lee y
+    apila todas las hojas que tengan las columnas esperadas (no solo la
+    primera) —, saca duplicados exactos de "commerceId" (por si el mismo
+    pedido aparece en más de una hoja/archivo, típico cuando los rangos de
+    fecha de un mes y el siguiente se pisan un poco) y devuelve un único
+    Excel en memoria (bytes) + un resumen de cuántas filas aportó cada
+    archivo, para mostrarlo en pantalla. Si algún archivo no tiene ninguna
+    hoja con las columnas esperadas, lo salta (y lo avisa) en vez de cortar
+    todo el guardado."""
     partes = []
     resumen = []
     for f in uploaded_files:
         try:
-            xl = pd.ExcelFile(f)
+            xl = _open_excel_pedidos(f)
         except Exception:
             resumen.append(f"{f.name}: no pude abrirlo")
             continue
-        df = _find_sheet_pedidos(xl, _PEDIDOS_72H_COLS)
+        df = _read_all_sheets_pedidos(xl, _PEDIDOS_72H_COLS)
         if df is None:
-            resumen.append(f"{f.name}: no encontré la hoja esperada, lo salteé")
+            resumen.append(f"{f.name}: no encontré ninguna hoja con las columnas esperadas, lo salteé")
             continue
         # Recortar a las columnas que realmente se usan ANTES de apilar —
         # así no se arrastran en memoria las decenas de columnas del export
@@ -256,7 +289,9 @@ def merge_pedidos_72h_files(uploaded_files):
         cols_presentes = [c for c in _PEDIDOS_72H_COLS_UTILES if c in df.columns]
         df = df[cols_presentes].copy()
         partes.append(df)
-        resumen.append(f"{f.name}: {len(df):,}".replace(",", "."))
+        n_hojas = len(xl.sheet_names)
+        detalle_hojas = f" en {n_hojas} hojas" if n_hojas > 1 else ""
+        resumen.append(f"{f.name}: {len(df):,}".replace(",", ".") + detalle_hojas)
 
     if not partes:
         return None, resumen
@@ -290,8 +325,8 @@ def merge_pedidos_72h_files(uploaded_files):
 r1, r2, r3, r4 = st.columns(4)
 f_pedidos = upload_box_reporte(
     r1, "PEDIDOS +72H",
-    "Archivo de Pedidos +72h. Subí un archivo por vez (si tenés varios meses, "
-    "uno a la vez, uno por uno).",
+    "Archivo de Pedidos +72h (ej. 'Estados +72.xlsx', con una hoja por mes). "
+    "Subí el archivo completo, con todos los meses adentro.",
     "f_pedidos"
 )
 f_reclamos = upload_box_reporte(
@@ -393,7 +428,7 @@ def fetch_shared_from_github(shared_path):
     raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
     try:
         request_get = urllib.request.Request(url, headers=raw_headers, method="GET")
-        with urllib.request.urlopen(request_get, timeout=30) as response:
+        with urllib.request.urlopen(request_get, timeout=120) as response:
             return response.read()
     except Exception:
         return None
@@ -417,7 +452,7 @@ def save_bytes_to_github(shared_path, content_bytes, label):
         sha = None
         request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(request_get, timeout=30) as response:
+            with urllib.request.urlopen(request_get, timeout=120) as response:
                 sha = json.loads(response.read().decode("utf-8"))["sha"]
         except urllib.error.HTTPError as e_get:
             if e_get.code != 404:
@@ -439,7 +474,7 @@ def save_bytes_to_github(shared_path, content_bytes, label):
             headers={**headers, "Content-Type": "application/json"},
             method="PUT",
         )
-        with urllib.request.urlopen(request_put, timeout=30) as response:
+        with urllib.request.urlopen(request_put, timeout=120) as response:
             response.read()
         return True
     except Exception:
