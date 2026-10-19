@@ -1143,6 +1143,41 @@ def load_all_sheets_from_xl(xl, required_cols, required=True):
         return None
     return pd.concat(partes, ignore_index=True, sort=False)
 
+_PEDIDOS_RAW_COLS_OP = [
+    "commerceId", "commerceDateCreated", "deliveryFinishDate", "status",
+    "totalAmount", "shippingWarehouseName",
+]
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cargar_pedidos_completo(pedidos_bytes):
+    """Abre y junta TODAS las hojas del archivo de Pedidos (que ahora puede
+    venir separado por mes y pesar varias decenas de MB). Esto se cachea
+    porque, sin cachear, Streamlit volvía a abrir y parsear el archivo
+    ENTERO en cada click (cambiar de mes, de tienda, etc.) — con un archivo
+    de ~300 mil filas eso tarda más de un minuto y usa varios cientos de MB
+    cada vez, que es lo que hacía sentir la página "colgada" o en 0."""
+    if pedidos_bytes is None:
+        return None
+    try:
+        # Motor calamine (si está instalada la librería python-calamine):
+        # igual de correcto que el default (openpyxl) pero varias veces más
+        # rápido para un archivo de este tamaño — pasa de ~48s a ~7s en este
+        # archivo. Si no está instalada, o falla, se sigue con el default.
+        xl = pd.ExcelFile(io.BytesIO(pedidos_bytes), engine="calamine")
+    except Exception:
+        try:
+            xl = pd.ExcelFile(io.BytesIO(pedidos_bytes))
+        except Exception:
+            return None
+    df = load_all_sheets_from_xl(xl, _PEDIDOS_RAW_COLS_OP, required=False)
+    if df is not None and "commerceId" in df.columns:
+        # Los meses que se tocan (ej. fin de Septiembre / principio de
+        # Octubre) a veces traen el mismo pedido repetido en las dos hojas
+        # — nos quedamos con un solo registro por pedido para no duplicar
+        # conteos (ni en "+72h sin mover" ni en "Cancelados").
+        df = df.drop_duplicates(subset=["commerceId"])
+    return df
+
 def _fr_read_positional(xl, sheet_name):
     """Lee una hoja de Fill Rate por POSICIÓN (6 columnas: Tienda, Unidades,
     No entregado, Reemplazo, Monto, FR%) en vez de por nombre de columna,
@@ -2055,21 +2090,12 @@ if df_picker_raw is None:
     # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
     # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
     df_picker_raw = load_section_from_xl(xl_reporte, _PICKERS_COLS, required=False)
-xl_pedidos = safe_open_excel(io.BytesIO(pedidos_bytes), "Pedidos +72h") if pedidos_bytes is not None else None
 # El archivo de Pedidos ahora puede venir separado por mes (una hoja por
-# mes, ej. "Enero".."Octubre", en vez de una sola hoja larga) — juntamos
-# todas las hojas que tengan el esquema esperado, no solo la primera.
-df_pedidos_raw = load_all_sheets_from_xl(
-    xl_pedidos,
-    ["commerceId", "commerceDateCreated", "deliveryFinishDate", "status", "totalAmount", "shippingWarehouseName"],
-    required=False
-)
-if df_pedidos_raw is not None and "commerceId" in df_pedidos_raw.columns:
-    # Los meses que se tocan (ej. fin de Septiembre / principio de Octubre)
-    # a veces traen el mismo pedido repetido en las dos hojas — nos
-    # quedamos con un solo registro por pedido para no duplicar conteos
-    # (ni en "+72h sin mover" ni en "Cancelados").
-    df_pedidos_raw = df_pedidos_raw.drop_duplicates(subset=["commerceId"])
+# mes, ej. "Enero".."Octubre", en vez de una sola hoja larga, y pesar
+# varias decenas de MB) — _cargar_pedidos_completo junta todas las hojas y
+# saca duplicados, y está cacheada para no volver a abrir/parsear el
+# archivo entero en cada click (eso era lo que lo dejaba en 0 / colgado).
+df_pedidos_raw = _cargar_pedidos_completo(pedidos_bytes)
 
 candidate_times = []
 
