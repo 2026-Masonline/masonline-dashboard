@@ -2131,16 +2131,15 @@ if df_pedidos_raw is not None:
     # entregado. Los cancelados se sacan de acá y van a la sección de
     # Cancelados aparte (más abajo).
     d["Fecha"] = fecha_creacion
-    # "Sin mover" = de verdad nunca avanzó: no alcanza con que todavía no
-    # figure "delivered" — la mayoría de los pedidos no entregados YA tienen
-    # una entrega programada (fecha/hora asignada, estado "readyForDelivery"
-    # o similar), es decir, están en camino, no estancados. Por eso también
-    # exigimos que NO tengan fecha de entrega asignada (deliveryFinishDate
-    # vacío): confirmado con Emi que esos pedidos en camino no deben contar
-    # acá (antes sí contaban, e inflaba mucho la card).
-    fecha_entrega_programada = pd.to_datetime(d.get("deliveryFinishDate"), errors="coerce")
+    # NOTA: se probó también exigir que el pedido no tuviera ninguna entrega
+    # programada (deliveryFinishDate vacío) para contar como "sin mover",
+    # pero se revirtió: casi todos los pedidos realmente viejos (de meses
+    # anteriores, que Emi confirma que siguen pendientes) YA tienen una
+    # fecha de entrega asignada (quedó agendada en su momento) aunque nunca
+    # se haya concretado — exigir que no tuvieran entrega programada los
+    # dejaba afuera por completo. Volvemos al criterio simple: no cancelado
+    # y no entregado, sin importar si tiene o no una entrega programada.
     d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
-    d = d[fecha_entrega_programada.loc[d.index].isna()]
     d = d.dropna(subset=["Fecha"])
     if fecha_creacion.notna().any():
         candidate_times.append(fecha_creacion.max())
