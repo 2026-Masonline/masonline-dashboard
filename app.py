@@ -436,10 +436,14 @@ def fetch_shared_from_github(shared_path):
 def save_bytes_to_github(shared_path, content_bytes, label):
     """Guarda este reporte en GitHub (carpeta shared_uploads/) para que
     quede disponible para siempre, igual que los datos de Venta, y no haga
-    falta volver a subirlo cada vez que la app se reinicia."""
+    falta volver a subirlo cada vez que la app se reinicia.
+
+    Devuelve (ok, error): error es None si salió bien, o un texto corto
+    describiendo qué falló (se usa para poder avisar en pantalla cuando el
+    respaldo en GitHub no se hizo, en vez de fallar en silencio)."""
     headers = _github_headers()
     if not headers:
-        return False
+        return False, "no hay credenciales de GitHub configuradas (GITHUB_TOKEN)"
     import urllib.request
     import urllib.error
     import json
@@ -476,20 +480,34 @@ def save_bytes_to_github(shared_path, content_bytes, label):
         )
         with urllib.request.urlopen(request_put, timeout=120) as response:
             response.read()
-        return True
-    except Exception:
-        return False
+        return True, None
+    except urllib.error.HTTPError as e:
+        try:
+            detalle = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            detalle = ""
+        return False, f"HTTP {e.code} {e.reason} {detalle}".strip()
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
 
-def _save_bytes_core(content, shared_path, label, stamp_date=False):
+def _save_bytes_core(content, shared_path, label, stamp_date=False, _status_out=None):
     """Núcleo de save_shared_bytes: guarda estos bytes puntuales (local +
     GitHub). Separado aparte para poder usarlo también con un archivo ya
     combinado en memoria (varios Excel fusionados en uno), sin pasar por un
-    file_uploader de Streamlit."""
+    file_uploader de Streamlit.
+
+    Si se pasa _status_out (un dict vacío), se lo completa con el resultado
+    real del guardado en GitHub ({"github_ok": bool, "github_err": str|None})
+    para poder avisar en pantalla si el respaldo permanente falló, en vez de
+    asumir que salió bien."""
     try:
         shared_path.write_bytes(content)
     except Exception:
         pass
-    save_bytes_to_github(shared_path, content, label)
+    github_ok, github_err = save_bytes_to_github(shared_path, content, label)
+    if _status_out is not None:
+        _status_out["github_ok"] = github_ok
+        _status_out["github_err"] = github_err
     if stamp_date:
         fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
         date_path = shared_path.with_name(shared_path.name + ".date")
@@ -680,7 +698,18 @@ if f_pedidos is not None:
     # quede guardado ya salga liviano y limpio.
     merged_bytes, pedidos_resumen_merge = merge_pedidos_72h_files([f_pedidos])
     if merged_bytes is not None:
-        pedidos_guardado = _save_bytes_core(merged_bytes, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+        _pedidos_github_status = {}
+        pedidos_guardado = _save_bytes_core(
+            merged_bytes, SHARED_PEDIDOS_PATH, "Pedidos +72h",
+            _status_out=_pedidos_github_status,
+        )
+        if _pedidos_github_status.get("github_ok") is False:
+            st.error(
+                "⚠️ PEDIDOS +72H: se guardó para esta sesión, pero el respaldo "
+                "permanente en GitHub FALLÓ, así que si la app se reinicia vas a "
+                "perder este archivo y los números van a volver a aparecer en 0. "
+                "Detalle técnico: " + str(_pedidos_github_status.get("github_err"))
+            )
     else:
         st.error(
             "PEDIDOS +72H: no encontré la hoja esperada en el archivo subido "
