@@ -122,15 +122,17 @@ except Exception as e:
     st.stop()
 
 # ---------------------------------------------------------------------
-# Pedidos: igual que en Venta diaria (Dashboard de Ventas), de acá en más
-# salen de "Vs de ventas" contados por fecha de CREACIÓN (commerceDateCreated)
-# en vez de la columna "orders" de data.csv ("Pedidos Facturados"). Esto es
-# para que esta página coincida con el número de Venta diaria — "Pedidos
-# Facturados" se sigue completando varios días después de cargado el
-# archivo, así que sin este reemplazo los dos terminaban mostrando números
-# distintos para el mismo mes. Si para alguna fecha puntual "Vs de ventas"
-# todavía no tiene datos, se usa como respaldo el valor viejo de "orders",
-# para no quedarse sin número ese día.
+# Pedidos: de acá en más salen de "Vs de ventas" contados por fecha de
+# ENTREGA (deliveryFinishDate) en vez de la columna "orders" de data.csv
+# ("Pedidos Facturados") — mismo criterio que ya usa Comparativo, a pedido
+# de Emi, para que esta página coincida con el número de Comparativo.
+# (Antes se probó por fecha de creación, como Venta diaria, pero eso
+# todavía no está unificado en todas las pestañas — así que por ahora
+# Venta fin de semana puede no coincidir con el "MENSUAL" de Venta diaria,
+# que sigue siendo por fecha de creación.)
+# Si para alguna fecha puntual "Vs de ventas" todavía no tiene datos, se
+# usa como respaldo el valor viejo de "orders", para no quedarse sin
+# número ese día.
 SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
 
@@ -205,7 +207,7 @@ def _pedidos_adaptar_hoja_detalle(d):
     # pedido (commerceSequentialId) para no duplicar el conteo.
     d = d.drop_duplicates(subset=["commerceSequentialId"])
     out = pd.DataFrame({
-        "date": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
+        "date": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
         "pedidos": 1,
     })
     return out
@@ -229,7 +231,7 @@ def _pedidos_adaptar_hoja_vieja(d):
 @st.cache_data(ttl=180, show_spinner=False)
 def _cargar_pedidos_vsventas_dia(vsventas_bytes):
     """Lee 'Vs de ventas' y arma el total de pedidos por día, contados por
-    fecha de CREACIÓN del pedido (igual que Venta diaria)."""
+    fecha de ENTREGA del pedido (igual que Comparativo)."""
     vacio = pd.DataFrame(columns=["date", "orders_vsventas"])
     if not vsventas_bytes:
         return vacio
