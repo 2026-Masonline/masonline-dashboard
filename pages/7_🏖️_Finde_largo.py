@@ -284,7 +284,10 @@ vsventas_bytes = get_shared_bytes(SHARED_VSVENTAS_PATH)
 # traer en cambio el detalle de pedidos sin armar (una fila por pedido) —
 # se detecta por sus columnas y se arman acá las mismas 4 columnas, con
 # el mismo criterio que usa Comparativo (sin PM ni RMA, día = fecha de
-# entrega).
+# CREACIÓN del pedido — antes era fecha de entrega, pero eso hacía que esta
+# pestaña y Comparativo dieran números de pedidos distintos a los de Venta
+# diaria/Venta fin de semana para el mismo rango; a pedido de Emi, ahora
+# las cuatro pestañas cuentan por fecha de creación).
 COL_VENTA = "Venta - Ecommerce"
 COL_PEDIDOS = "Pedidos Facturados con Venta Operativa - Ecommerce"
 COL_UNIDADES = "Cantidad Venta Operativa - Ecommerce"
@@ -308,7 +311,7 @@ def _adaptar_hoja_detalle_pedidos(d):
         errors="coerce"
     ).fillna(0)
     out = pd.DataFrame({
-        "Fecha": pd.to_datetime(d["deliveryFinishDate"], errors="coerce"),
+        "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
         COL_VENTA: monto,
         COL_FACTURACION: monto,
         COL_UNIDADES: pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce").fillna(0),
@@ -358,6 +361,24 @@ def _cargar_vsventas(vsventas_bytes):
     })
 
 df_vsventas = _cargar_vsventas(vsventas_bytes)
+
+# Pedidos de las tarjetas "_kpi" (arriba): igual que en Venta diaria/Venta
+# fin de semana, reemplazamos "orders" de data.csv ("Pedidos Facturados")
+# por el conteo de "Vs de ventas" por fecha de CREACIÓN — ya lo tenemos
+# armado en df_vsventas (mismo df que arma la tabla "_cmp"), así que
+# alcanza con cruzarlo por fecha. Si para algún día puntual "Vs de ventas"
+# no tiene datos, se usa como respaldo el valor viejo de "orders", para no
+# quedarse sin número ese día. Esto hace que el número de pedidos de esta
+# pestaña coincida con el de Venta diaria/Venta fin de semana.
+df_actual = df_actual.rename(columns={"orders": "orders_facturados"})
+df_actual = df_actual.merge(
+    df_vsventas[["date", "orders"]].rename(columns={"orders": "orders_vsventas"}),
+    on="date", how="left",
+)
+df_actual["orders"] = df_actual["orders_vsventas"].where(
+    df_actual["orders_vsventas"].notna(), df_actual["orders_facturados"]
+)
+df_actual = df_actual.drop(columns=["orders_vsventas"])
 
 st.markdown(
     '<div style="color:#000000;font-size:12px;margin:-6px 0 14px;">'
