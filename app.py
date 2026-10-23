@@ -220,6 +220,47 @@ def _open_excel_pedidos(f):
             pass
         return pd.ExcelFile(f)
 
+_ESTADOS_PEDIDOS_VALIDOS = {
+    "delivered", "canceled", "cancelled", "readyfordelivery",
+    "readyforinternaldistribution", "indelivery", "notdelivered",
+    "needsrescheduling", "readyforinvoice", "readyforpicking",
+    "processingrepacking", "validatingpayments", "cancelationrequested",
+    "fulfillinginternaldistribution", "picking", "needsintervention",
+}
+
+def _reparar_status_pedidos(df, sheet_name):
+    """Alguna hoja del export puede venir con las columnas corridas una
+    posición a partir de 'rescheduledDelivery' (se vio en la hoja
+    Septiembre: 'status' quedaba vacío o con un número suelto, y el
+    verdadero estado del pedido — 'delivered', 'canceled', etc. — terminaba
+    adentro de 'isNPO'). Si eso pasa, cualquier pedido realmente entregado
+    de esa hoja queda con 'status' vacío, y como vacío no es "delivered" ni
+    "canceled", el dashboard lo cuenta como "sin mover +72h" — miles de
+    pedidos de más, todos de esa hoja. Lo detectamos comparando qué
+    columna ('status' o 'isNPO') tiene más pinta de traer estados de
+    verdad, y si 'isNPO' gana por mucho, usamos esa como el estado real."""
+    if "status" not in df.columns or "isNPO" not in df.columns:
+        return df
+
+    def _frac_validos(serie):
+        serie = serie.dropna().astype(str).str.strip().str.lower()
+        if not len(serie):
+            return 0.0
+        return serie.isin(_ESTADOS_PEDIDOS_VALIDOS).mean()
+
+    frac_status = _frac_validos(df["status"])
+    frac_isnpo = _frac_validos(df["isNPO"])
+    if frac_isnpo > 0.5 and frac_isnpo > frac_status + 0.3:
+        df = df.copy()
+        df["status"] = df["isNPO"]
+        st.warning(
+            f"⚠️ PEDIDOS +72H: la hoja '{sheet_name}' venía con las columnas "
+            "corridas (el estado real del pedido estaba en la columna de al "
+            "lado) — se corrigió automáticamente antes de guardar, pero "
+            "convendría avisarle a quien genera el archivo."
+        )
+    return df
+
 def _read_all_sheets_pedidos(xl, required_cols):
     """Antes esta función (como _find_sheet_pedidos) se quedaba con la
     PRIMERA hoja que tuviera las columnas esperadas. Eso andaba bien
@@ -241,6 +282,7 @@ def _read_all_sheets_pedidos(xl, required_cols):
         df = _norm_cols_pedidos(df)
         cols = {c.lower() for c in df.columns}
         if required.issubset(cols):
+            df = _reparar_status_pedidos(df, name)
             partes.append(df)
     if not partes:
         return None
