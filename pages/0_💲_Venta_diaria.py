@@ -627,9 +627,17 @@ tiendas_dia = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders
 if len(df_tiendas):
     filas_dia = df_tiendas[df_tiendas["date"] == latest_tienda_date]
     if len(filas_dia):
+        # "Pedidos" en el Top 5 del DÍA va por fecha de ENTREGA (orders_entrega),
+        # no de creación, a pedido de Emi: así coincide con "pedidos entregados"
+        # que ella mira directo en la plataforma para ese día (antes mostraba
+        # pedidos CREADOS ese día, que es un número distinto — ej. una tienda
+        # con 8 pedidos creados el día pero 78 entregados ese mismo día, por
+        # pedidos de días anteriores que se entregaron recién ese día). El Top
+        # 5 del MES (tiendas_resumen, más abajo) se deja por fecha de creación,
+        # para que siga coincidiendo con la card "MES EN CURSO" de más arriba.
         tiendas_dia = (
             filas_dia.groupby(["Tienda", "Nombre"], as_index=False)
-            .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
+            .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders_entrega", "sum"))
         )
 
 def top_tiendas(df_in, metric, n=5):
