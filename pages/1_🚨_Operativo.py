@@ -1434,13 +1434,32 @@ def badge(level, label):
     icons = {"good": "●", "warning": "▲", "serious": "▲", "critical": "✕", "neutral": "●"}
     return f'<span class="badge {level}">{icons.get(level,"●")} {label}</span>'
 
-def table_html(df):
+_TABLE_HTML_MAX_FILAS = 500
+
+def table_html(df, max_filas=_TABLE_HTML_MAX_FILAS):
     """Tabla de detalle, con el estilo .dashtable en vez del default de pandas.
     Va envuelta en un contenedor con scroll horizontal para que en el celular,
     si la tabla no entra en el ancho de la pantalla, se pueda desplazar en vez
-    de romper el diseño de la página."""
+    de romper el diseño de la página.
+
+    Tope de filas: generar una tabla HTML con varios miles de filas (ej. un
+    archivo con un problema de datos que infla "sin mover +72h" a 28 mil
+    pedidos, o Cancelados con 6 mil+) puede llegar a trabar el navegador por
+    completo ("la página no responde"). Como estas tablas siempre vienen ya
+    ordenadas por lo más urgente/reciente antes de llamar a table_html, cortar
+    acá deja ver siempre lo más relevante primero."""
+    total = len(df)
+    truncado = total > max_filas
+    if truncado:
+        df = df.head(max_filas)
     inner = df.to_html(escape=False, index=False, classes="dashtable", border=0)
-    return f'<div class="table-scroll">{inner}</div>'
+    aviso = (
+        f'<div style="padding:8px 4px;color:#9ca3af;font-size:12px;">'
+        f'Mostrando los primeros {max_filas:,} de {total:,} registros — '
+        'usá los filtros de arriba (tienda, mes, estado) para acotar.</div>'.replace(",", ".")
+        if truncado else ""
+    )
+    return f'<div class="table-scroll">{inner}</div>{aviso}'
 
 def kpi_card(label, value, sub, cls=""):
     return f"""
