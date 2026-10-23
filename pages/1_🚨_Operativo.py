@@ -2532,7 +2532,7 @@ if any_data_loaded:
     """, unsafe_allow_html=True)
 
     auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
-    col_aud, col_tda, col_mes = st.columns([1, 2, 1])
+    col_aud, col_tda, col_mes, col_estado = st.columns([1, 2, 1, 1])
     with col_aud:
         st.markdown('<div class="field-label">Auditor</div>', unsafe_allow_html=True)
         auditor_sel = st.selectbox(
@@ -2590,6 +2590,24 @@ if any_data_loaded:
         m for m in _meses_ordenados if _meses_labels[m] == mes_sel
     )
 
+    # Filtro por Estado del pedido (ej. "readyForDelivery", "notDelivered",
+    # "picking"...): solo aplica a la sección de Pedidos +72h, que es la que
+    # trae el estado real del export de Pedidos. Reclamos/Cancelados/
+    # Faltantes tienen su propio "Estado" con otro significado (reclamo
+    # abierto/cerrado, siempre "cancelado", etc.), así que este filtro no los
+    # toca — así se puede, por ejemplo, ver solo los pedidos en
+    # "readyForDelivery" sin tocar el resto de las tarjetas.
+    estados_disponibles = sorted(
+        {e for e in (pedidos_72h["Estado"].unique() if pedidos_72h is not None else []) if e}
+    )
+    with col_estado:
+        st.markdown('<div class="field-label">Estado del pedido</div>', unsafe_allow_html=True)
+        estado_sel = st.selectbox(
+            "Estado del pedido", ["Todos los estados"] + estados_disponibles,
+            label_visibility="collapsed"
+        )
+    filtro_estado = None if estado_sel == "Todos los estados" else estado_sel
+
     def ftr(d, date_col=None):
         if d is None:
             return d
@@ -2603,6 +2621,8 @@ if any_data_loaded:
         return out
 
     pedidos_f = ftr(pedidos_72h, "Fecha")
+    if filtro_estado is not None and pedidos_f is not None and "Estado" in pedidos_f.columns:
+        pedidos_f = pedidos_f[pedidos_f["Estado"] == filtro_estado]
     reclamos_f = ftr(reclamos, "Fecha")
     prepa_f = ftr(ontime_prepa)
     fr_f = ftr(fill_rate)
@@ -2610,7 +2630,10 @@ if any_data_loaded:
     falt_f = ftr(faltantes, "FechaArchivo")
     pickers_f = ftr(pickers)
 
-    filtro_activo = filtro_tienda is not None or filtro_auditor is not None or filtro_mes is not None
+    filtro_activo = (
+        filtro_tienda is not None or filtro_auditor is not None
+        or filtro_mes is not None or filtro_estado is not None
+    )
 
     # ---- KPI row ----
     kpis = build_kpis(
