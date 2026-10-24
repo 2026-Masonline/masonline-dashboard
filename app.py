@@ -87,6 +87,86 @@ st.markdown("""
 <div class="hero-sub">E-COMMERCE &nbsp;·&nbsp; CARGA DE DATOS</div>
 """, unsafe_allow_html=True)
 
+# ---------------------------------------------------------------------
+# Card "VENTA HOY": muestra la fila de HOY tal cual viene en data.csv, sin
+# esperar a que el día cierre (a diferencia de Venta diaria, que siempre
+# muestra el ÚLTIMO DÍA CERRADO). Son números PARCIALES — van a seguir
+# subiendo durante el día, a medida que se vuelva a subir el Excel "Venta
+# Con y sin Impuesto" con datos más actualizados de hoy.
+# ---------------------------------------------------------------------
+def _venta_hoy_money(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "$0"
+    av = abs(v)
+    if av < 1_000_000:
+        return f"${v:,.0f}".replace(",", ".")
+    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
+        txt = f"${v/1_000_000:,.3f} M"
+    else:
+        txt = f"${v/1_000_000_000:,.3f} MM"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+
+def _venta_hoy_pct(v):
+    return f"{v*100:.2f}%".replace(".", ",")
+
+def _venta_hoy_intfmt(v):
+    return f"{int(v):,}".replace(",", ".")
+
+_hoy_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+_fila_hoy = base_df[base_df["date"].dt.date == _hoy_ar] if len(base_df) else base_df
+if len(_fila_hoy):
+    _hoy_company = _fila_hoy["company_tax"].sum()
+    _hoy_ecom = _fila_hoy["ecommerce_tax"].sum()
+    _hoy_orders = _fila_hoy["orders"].sum()
+    _hoy_units = _fila_hoy["units"].sum()
+    _hoy_share = (_hoy_ecom / _hoy_company) if _hoy_company else 0
+    st.markdown(f"""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.05);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:13px;font-weight:800;color:#20252b;">
+          VENTA HOY &nbsp;{_hoy_ar.strftime('%d/%m/%Y')}
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#e8432c;background:#fdeceb;
+        padding:3px 10px;border-radius:20px;">
+          EN VIVO · PARCIAL
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;">
+        <div><div style="font-size:11px;color:#9ca3af;">COMPAÑÍA</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{_venta_hoy_money(_hoy_company)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">ECOMMERCE</div>
+          <div style="font-size:19px;font-weight:800;color:#e8432c;">{_venta_hoy_money(_hoy_ecom)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">SHARE</div>
+          <div style="font-size:19px;font-weight:800;color:#208653;">{_venta_hoy_pct(_hoy_share)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{_venta_hoy_intfmt(_hoy_orders)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{_venta_hoy_intfmt(_hoy_units)}</div></div>
+      </div>
+      <div style="font-size:11px;color:#9ca3af;margin-top:10px;">
+        Parcial — el día todavía no cerró, estos números van a seguir subiendo.
+        Pedidos = "Pedidos Facturados" tal cual viene del Excel (no el ajustado por
+        fecha de entrega que usan otras pestañas).
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown(f"""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.05);">
+      <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:4px;">
+        VENTA HOY &nbsp;{_hoy_ar.strftime('%d/%m/%Y')}
+      </div>
+      <div style="font-size:12px;color:#6b7280;">
+        Todavía no hay datos de hoy — subí el Excel "Venta Con y sin Impuesto"
+        del mes en curso (con la fila de hoy adentro) para verlos acá.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown("""
 <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
 padding:12px 16px;margin-bottom:14px;">
