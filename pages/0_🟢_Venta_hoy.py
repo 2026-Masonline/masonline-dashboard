@@ -4,6 +4,9 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
+import tempfile
+import io
+import re
 
 st.set_page_config(
     page_title="MásOnline | Venta hoy",
@@ -360,8 +363,139 @@ def pct(v):
 def intfmt(v):
     return f"{int(v):,}".replace(",", ".")
 
+# ---------------------------------------------------------------------
+# Método de entrega + pedidos por tienda de HOY: esto NO sale de "Venta Con
+# y sin Impuesto" (no trae esa info) — sale del archivo de Pedidos ("Vs de
+# ventas"), el mismo que ya se sube para Comparativo / Venta fin de semana.
+# Si todavía no se subió ese archivo, esta parte queda vacía hasta que se
+# suba (no hace falta volver a subirlo acá, es compartido entre pestañas).
+# ---------------------------------------------------------------------
+SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
+
+def _vh_pedidos_github_headers():
+    token = st.secrets.get("GITHUB_TOKEN") if hasattr(st, "secrets") else None
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+def _vh_pedidos_fetch_from_github(shared_path):
+    headers = _vh_pedidos_github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
+    try:
+        req = urllib.request.Request(url, headers=raw_headers, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return response.read()
+    except Exception:
+        return None
+
+def _vh_pedidos_get_shared_bytes(shared_path):
+    if shared_path.exists():
+        try:
+            data = shared_path.read_bytes()
+            if data:
+                return data
+        except Exception:
+            pass
+    content = _vh_pedidos_fetch_from_github(shared_path)
+    if content:
+        try:
+            shared_path.parent.mkdir(parents=True, exist_ok=True)
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
+    return None
+
+_VH_PEDIDOS_RAW_COLS = {
+    "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
+    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+}
+
+_VH_METODO_ENTREGA_LABELS = {
+    "delivery": "Envío a domicilio",
+    "store_pickup": "Retiro en tienda",
+    "drive_through": "Pickup (drive-through)",
+}
+
+def _vh_metodo_entrega_label(v):
+    s = str(v).strip() if v is not None and not pd.isna(v) else ""
+    return _VH_METODO_ENTREGA_LABELS.get(s, s if s else "Sin especificar")
+
+def _vh_pedidos_codigo_tienda(v, tienda_codes):
+    if pd.isna(v):
+        s = ""
+    else:
+        try:
+            s = str(int(float(v))) if isinstance(v, float) and v == int(v) else str(v).strip()
+        except (TypeError, ValueError):
+            s = str(v).strip()
+    if s in tienda_codes:
+        return s
+    candidatos = re.findall(r"\d{3,6}", s)
+    for c in candidatos:
+        if c in tienda_codes:
+            return c
+    return candidatos[-1] if candidatos else s
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
+    """Pedidos creados HOY, con su método de entrega y tienda — para los
+    desgloses de abajo. Cacheado 3 minutos por archivo+día."""
+    if vsventas_bytes is None:
+        return None
+    try:
+        xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
+    except Exception:
+        return None
+    tienda_codes = set(tienda_codes_tuple)
+    partes = []
+    for name in xl.sheet_names:
+        try:
+            d = xl.parse(name)
+        except Exception:
+            continue
+        d.columns = [str(c).replace("\xa0", " ").strip() for c in d.columns]
+        if not _VH_PEDIDOS_RAW_COLS.issubset(set(d.columns)):
+            continue
+        es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
+        es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
+        d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
+        d = d.drop_duplicates(subset=["commerceSequentialId"])
+        fecha = pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize()
+        d = d[fecha.astype(str).str[:10] == hoy_str]
+        if not len(d):
+            continue
+        tienda_col = (
+            d["shippingWarehouseReferenceId"].apply(lambda v: _vh_pedidos_codigo_tienda(v, tienda_codes))
+            if "shippingWarehouseReferenceId" in d.columns else ""
+        )
+        metodo_col = d["shippingsType"] if "shippingsType" in d.columns else ""
+        partes.append(pd.DataFrame({"Tienda": tienda_col, "Metodo": metodo_col}))
+    if not partes:
+        return pd.DataFrame(columns=["Tienda", "Metodo"])
+    out = pd.concat(partes, ignore_index=True, sort=False)
+    out = out.drop_duplicates()
+    return out
+
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 hoy_df = df[df["date"].dt.date == arg_today]
+
+_vsventas_bytes_hoy = _vh_pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
+_tienda_codes_hoy = tuple(sorted(TIENDA_MAP.keys()))
+pedidos_detalle_hoy = _vh_cargar_pedidos_hoy(_vsventas_bytes_hoy, _tienda_codes_hoy, arg_today.strftime("%Y-%m-%d"))
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -485,5 +619,103 @@ else:
         '<div class="empty-box">Todavía no hay desglose por tienda para hoy. '
         'Se completa solo la próxima vez que se suba el Excel desde "app" '
         '(si trae las columnas Tienda y Nombre).</div>',
+        unsafe_allow_html=True
+    )
+
+# ---------------------------------------------------------------------
+# Método de entrega + Tiendas con más pedidos (por CANTIDAD de pedidos,
+# no por venta) — fuente: archivo de Pedidos ("Vs de ventas"), filtrado a
+# los pedidos creados hoy.
+# ---------------------------------------------------------------------
+st.markdown('<div class="section">Método de entrega</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-desc">Cantidad de pedidos de hoy por método de entrega '
+    '(sale del archivo de Pedidos / "Vs de ventas", el mismo que se usa en Comparativo).</div>',
+    unsafe_allow_html=True
+)
+
+if pedidos_detalle_hoy is None:
+    st.markdown(
+        '<div class="empty-box">Todavía no se subió el archivo de Pedidos ("Vs de ventas"). '
+        'Se completa solo cuando ese archivo esté disponible (se sube en Comparativo / '
+        'Venta fin de semana / Venta diaria — es compartido entre pestañas).</div>',
+        unsafe_allow_html=True
+    )
+elif not len(pedidos_detalle_hoy):
+    st.markdown(
+        '<div class="empty-box">Todavía no hay pedidos registrados hoy en el archivo de Pedidos.</div>',
+        unsafe_allow_html=True
+    )
+else:
+    metodo_agg = (
+        pedidos_detalle_hoy.assign(MetodoLabel=pedidos_detalle_hoy["Metodo"].apply(_vh_metodo_entrega_label))
+        .groupby("MetodoLabel", as_index=False)
+        .size()
+        .rename(columns={"size": "Pedidos"})
+        .sort_values("Pedidos", ascending=False)
+    )
+    total_metodo = int(metodo_agg["Pedidos"].sum())
+    rows_html = ""
+    for i, r in enumerate(metodo_agg.itertuples(), start=1):
+        pct = (r.Pedidos / total_metodo * 100) if total_metodo else 0
+        rows_html += (
+            '<tr>'
+            f'<td>{i}</td>'
+            f'<td>{r.MetodoLabel}</td>'
+            f'<td style="text-align:center;font-weight:800;color:#208653;">{intfmt(r.Pedidos)}</td>'
+            f'<td style="text-align:right;">{pct:.1f}%</td>'
+            '</tr>'
+        )
+    st.markdown(
+        '<div class="rank-table-card">'
+        '<div class="table-scroll">'
+        '<table class="rank-table"><thead><tr>'
+        '<th></th><th>Método de entrega</th>'
+        '<th style="text-align:center;">Pedidos</th>'
+        '<th style="text-align:right;">% del total</th>'
+        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+        '</div></div>',
+        unsafe_allow_html=True
+    )
+
+st.markdown('<div class="section">Tiendas con más pedidos (hoy)</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-desc">Ranking por CANTIDAD de pedidos de hoy (no por venta) — '
+    'misma fuente que el método de entrega.</div>',
+    unsafe_allow_html=True
+)
+
+if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
+    tienda_pedidos_agg = (
+        pedidos_detalle_hoy.groupby("Tienda", as_index=False)
+        .size()
+        .rename(columns={"size": "Pedidos"})
+        .sort_values("Pedidos", ascending=False)
+    )
+    rows_html = ""
+    for i, r in enumerate(tienda_pedidos_agg.itertuples(), start=1):
+        codigo = str(r.Tienda)
+        nombre = TIENDA_MAP.get(codigo, "")
+        tienda_label = f"{codigo} - {nombre}" if nombre else codigo
+        rows_html += (
+            '<tr>'
+            f'<td>{i}</td>'
+            f'<td>{tienda_label}</td>'
+            f'<td style="text-align:center;font-weight:800;color:#208653;">{intfmt(r.Pedidos)}</td>'
+            '</tr>'
+        )
+    st.markdown(
+        '<div class="rank-table-card">'
+        '<div class="table-scroll">'
+        '<table class="rank-table"><thead><tr>'
+        '<th></th><th>Tienda</th>'
+        '<th style="text-align:center;">Pedidos</th>'
+        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+        '</div></div>',
+        unsafe_allow_html=True
+    )
+elif pedidos_detalle_hoy is not None:
+    st.markdown(
+        '<div class="empty-box">Todavía no hay pedidos registrados hoy en el archivo de Pedidos.</div>',
         unsafe_allow_html=True
     )
