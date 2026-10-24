@@ -1,0 +1,1230 @@
+import streamlit as st
+import pandas as pd
+import tempfile
+import io
+import json
+from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+st.set_page_config(
+    page_title="MásOnline | Ecommerce",
+    page_icon="📊",
+    layout="wide"
+)
+
+st.markdown("""
+<style>
+    .stApp { background: #ffffff; }
+    .block-container { max-width: 900px; padding: 2.6rem 1.2rem 1.2rem; }
+
+    .hero-brand { font-size: 28px; font-weight: 800; letter-spacing: -.5px; color:#20252b; margin-bottom: 3px; }
+    .hero-brand span { font-weight: 400; }
+    .hero-sub {
+        font-size: 11px; letter-spacing: 3px; margin-bottom: 24px;
+        opacity: .85; color:#20252b;
+    }
+
+    .upload-box {
+        background: white; border-radius: 14px; padding: 16px 18px 8px;
+        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.05);
+        margin-bottom: 6px; min-height: 82px;
+    }
+    .upload-current { border-top: 4px solid #ff5a1f; }
+    .upload-prev { border-top: 4px solid #2f9e66; }
+    .upload-ly { border-top: 4px solid #59636e; }
+
+    .upload-title { color:#20252b; font-size:14px; font-weight:800; }
+    .upload-text { color:#6b7280; font-size:12px; margin-top:5px; }
+
+    @media (max-width: 600px) {
+        .block-container { padding: 1.6rem 0.6rem 1rem; }
+    }
+</style>
+""", unsafe_allow_html=True)
+
+DATA_FILE = Path(__file__).resolve().parent / "data.csv"
+DATA_TIENDAS_FILE = Path(__file__).resolve().parent / "data_tiendas.csv"
+
+try:
+    base_df = pd.read_csv(DATA_FILE)
+    base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
+    for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
+        base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
+    base_df = base_df.dropna(subset=["date"])
+except Exception as e:
+    st.error(f"No se pudo leer data.csv: {e}")
+    st.stop()
+
+# Desglose por tienda (para "Top 10 tiendas" en Venta diaria). Es un archivo
+# aparte, "data_tiendas.csv", que puede no existir todavía la primera vez.
+TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
+
+def _empty_tiendas_df():
+    """DataFrame vacío con las columnas de data_tiendas.csv, pero con "date"
+    ya tipado como fecha — si no, cualquier filtro con .dt más adelante
+    explota con 'Can only use .dt accessor with datetimelike values' apenas
+    data_tiendas.csv todavía no existe en el repo (primera vez)."""
+    empty = pd.DataFrame(columns=TIENDAS_COLUMNS)
+    empty["date"] = pd.to_datetime(empty["date"])
+    return empty
+
+try:
+    if DATA_TIENDAS_FILE.exists():
+        base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
+        base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
+        base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
+        for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
+            base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
+        base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
+    else:
+        base_df_tiendas = _empty_tiendas_df()
+except Exception:
+    base_df_tiendas = _empty_tiendas_df()
+
+st.markdown("""
+<div class="hero-brand">Más<span>Online</span></div>
+<div class="hero-sub">E-COMMERCE &nbsp;·&nbsp; CARGA DE DATOS</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Card "VENTA HOY": muestra la fila de HOY tal cual viene en data.csv, sin
+# esperar a que el día cierre (a diferencia de Venta diaria, que siempre
+# muestra el ÚLTIMO DÍA CERRADO). Son números PARCIALES — van a seguir
+# subiendo durante el día, a medida que se vuelva a subir el Excel "Venta
+# Con y sin Impuesto" con datos más actualizados de hoy.
+# ---------------------------------------------------------------------
+def _venta_hoy_money(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "$0"
+    av = abs(v)
+    if av < 1_000_000:
+        return f"${v:,.0f}".replace(",", ".")
+    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
+        txt = f"${v/1_000_000:,.3f} M"
+    else:
+        txt = f"${v/1_000_000_000:,.3f} MM"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+
+def _venta_hoy_pct(v):
+    return f"{v*100:.2f}%".replace(".", ",")
+
+def _venta_hoy_intfmt(v):
+    return f"{int(v):,}".replace(",", ".")
+
+_hoy_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+_fila_hoy = base_df[base_df["date"].dt.date == _hoy_ar] if len(base_df) else base_df
+if len(_fila_hoy):
+    _hoy_company = _fila_hoy["company_tax"].sum()
+    _hoy_ecom = _fila_hoy["ecommerce_tax"].sum()
+    _hoy_orders = _fila_hoy["orders"].sum()
+    _hoy_units = _fila_hoy["units"].sum()
+    _hoy_share = (_hoy_ecom / _hoy_company) if _hoy_company else 0
+    st.markdown(f"""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.05);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:13px;font-weight:800;color:#20252b;">
+          VENTA HOY &nbsp;{_hoy_ar.strftime('%d/%m/%Y')}
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#e8432c;background:#fdeceb;
+        padding:3px 10px;border-radius:20px;">
+          EN VIVO · PARCIAL
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;">
+        <div><div style="font-size:11px;color:#9ca3af;">COMPAÑÍA</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{_venta_hoy_money(_hoy_company)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">ECOMMERCE</div>
+          <div style="font-size:19px;font-weight:800;color:#e8432c;">{_venta_hoy_money(_hoy_ecom)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">SHARE</div>
+          <div style="font-size:19px;font-weight:800;color:#208653;">{_venta_hoy_pct(_hoy_share)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{_venta_hoy_intfmt(_hoy_orders)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{_venta_hoy_intfmt(_hoy_units)}</div></div>
+      </div>
+      <div style="font-size:11px;color:#9ca3af;margin-top:10px;">
+        Parcial — el día todavía no cerró, estos números van a seguir subiendo.
+        Pedidos = "Pedidos Facturados" tal cual viene del Excel (no el ajustado por
+        fecha de entrega que usan otras pestañas).
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown(f"""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.05);">
+      <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:4px;">
+        VENTA HOY &nbsp;{_hoy_ar.strftime('%d/%m/%Y')}
+      </div>
+      <div style="font-size:12px;color:#6b7280;">
+        Todavía no hay datos de hoy — subí el Excel "Venta Con y sin Impuesto"
+        del mes en curso (con la fila de hoy adentro) para verlos acá.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:12px 16px;margin-bottom:14px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    ACTUALIZAR DATOS
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Subí acá el Excel "Venta Con y sin Impuesto". Una vez cargado y guardado, los datos
+    se ven solos en las pestañas Venta diaria y Venta fin de semana — no hace falta
+    subir el archivo de nuevo ahí.
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+u1, u2, u3 = st.columns(3)
+
+with u1:
+    st.markdown("""
+    <div class="upload-box upload-current">
+      <div class="upload-title">MES EN CURSO</div>
+      <div class="upload-text">Subí el Excel del mes en curso</div>
+    </div>
+    """, unsafe_allow_html=True)
+    upload_current = st.file_uploader(
+        "Archivo mes en curso",
+        type=["xlsx", "xls"],
+        key="upload_current",
+        label_visibility="collapsed",
+        help="Reporte Venta Con y sin Impuesto del mes en curso."
+    )
+
+with u2:
+    st.markdown("""
+    <div class="upload-box upload-prev">
+      <div class="upload-title">MES ANTERIOR</div>
+      <div class="upload-text">Subí el Excel del mes anterior</div>
+    </div>
+    """, unsafe_allow_html=True)
+    upload_prev = st.file_uploader(
+        "Archivo mes anterior",
+        type=["xlsx", "xls"],
+        key="upload_prev",
+        label_visibility="collapsed",
+        help="Reporte Venta Con y sin Impuesto del mes anterior."
+    )
+
+with u3:
+    st.markdown("""
+    <div class="upload-box upload-ly">
+      <div class="upload-title">MISMO PERÍODO AÑO PASADO</div>
+      <div class="upload-text">Subí el Excel del mismo mes, año pasado</div>
+    </div>
+    """, unsafe_allow_html=True)
+    upload_ly = st.file_uploader(
+        "Archivo año pasado",
+        type=["xlsx", "xls"],
+        key="upload_ly",
+        label_visibility="collapsed",
+        help="Reporte Venta Con y sin Impuesto del mismo mes del año pasado."
+    )
+
+# ---------------------------------------------------------------------
+# Reporte diario + Faltantes: se suben acá y quedan guardados en una carpeta
+# compartida en el servidor, para que las pestañas Operativo, Productividad
+# Pickers y Resumen los lean directo, sin tener que subirlos de nuevo ahí.
+# ---------------------------------------------------------------------
+
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:12px 16px;margin:22px 0 14px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    CARGAR REPORTES (Operativo)
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Ya no se sube más el Reporte diario combinado. Cada sección se sube en su
+    propio archivo, aparte: Pedidos +72h, Reclamos Operativos, On Time, Delivery,
+    Fill Rate, Faltantes y Pickers.
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+def upload_box_reporte(col, title, help_text, key, accept_multiple_files=False):
+    with col:
+        st.markdown(f"""
+        <div class="upload-box">
+          <div class="upload-title">{title}</div>
+          <div class="upload-text">{help_text}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return st.file_uploader(
+            title, type=["xlsx", "xls"], key=key, label_visibility="collapsed",
+            accept_multiple_files=accept_multiple_files,
+        )
+
+# Columnas que identifican la hoja de "pedidos sin mover" dentro del Excel
+# (export "order-operation" por pedido) — mismas que busca Operativo.py.
+_PEDIDOS_72H_COLS = [
+    "commerceId", "commerceDateCreated", "deliveryFinishDate", "status",
+    "totalAmount", "shippingWarehouseName",
+]
+
+# El export "order-operation" trae muchas columnas más (cliente, forma de
+# pago, items, etc.) que ninguna pestaña del dashboard usa. Nos quedamos solo
+# con estas antes de guardar el combinado — reduce bastante el tamaño del
+# archivo (y la memoria que ocupa cada vez que una pestaña lo vuelve a leer),
+# algo que pesa más todavía ahora que se pueden subir varios archivos juntos.
+_PEDIDOS_72H_COLS_UTILES = [
+    "commerceId", "salesChannelPrefix", "commerceDateCreated", "deliveryFinishDate",
+    "status", "totalAmount", "shippingWarehouseName", "shippingLocationName",
+]
+
+def _norm_cols_pedidos(df):
+    df = df.copy()
+    df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
+    return df
+
+def _open_excel_pedidos(f):
+    """Abre el Excel de Pedidos +72h. Si está instalada la librería
+    python-calamine, la usa (motor en Rust, mucho más rápido que el default
+    openpyxl — con un archivo de varias decenas de MB como el que ahora
+    viene separado por mes, la diferencia es de minutos a segundos). Si no
+    está instalada, o falla por lo que sea, sigue con el motor normal: nunca
+    rompe el guardado por esto."""
+    try:
+        return pd.ExcelFile(f, engine="calamine")
+    except Exception:
+        try:
+            if hasattr(f, "seek"):
+                f.seek(0)
+        except Exception:
+            pass
+        return pd.ExcelFile(f)
+
+_ESTADOS_PEDIDOS_VALIDOS = {
+    "delivered", "canceled", "cancelled", "readyfordelivery",
+    "readyforinternaldistribution", "indelivery", "notdelivered",
+    "needsrescheduling", "readyforinvoice", "readyforpicking",
+    "processingrepacking", "validatingpayments", "cancelationrequested",
+    "fulfillinginternaldistribution", "picking", "needsintervention",
+}
+
+def _reparar_status_pedidos(df, sheet_name):
+    """Alguna hoja del export puede venir con las columnas corridas una
+    posición a partir de 'rescheduledDelivery' (se vio en la hoja
+    Septiembre: 'status' quedaba vacío o con un número suelto, y el
+    verdadero estado del pedido — 'delivered', 'canceled', etc. — terminaba
+    adentro de 'isNPO'). Si eso pasa, cualquier pedido realmente entregado
+    de esa hoja queda con 'status' vacío, y como vacío no es "delivered" ni
+    "canceled", el dashboard lo cuenta como "sin mover +72h" — miles de
+    pedidos de más, todos de esa hoja. Lo detectamos comparando qué
+    columna ('status' o 'isNPO') tiene más pinta de traer estados de
+    verdad, y si 'isNPO' gana por mucho, usamos esa como el estado real."""
+    if "status" not in df.columns or "isNPO" not in df.columns:
+        return df
+
+    def _frac_validos(serie):
+        serie = serie.dropna().astype(str).str.strip().str.lower()
+        if not len(serie):
+            return 0.0
+        return serie.isin(_ESTADOS_PEDIDOS_VALIDOS).mean()
+
+    frac_status = _frac_validos(df["status"])
+    frac_isnpo = _frac_validos(df["isNPO"])
+    if frac_isnpo > 0.5 and frac_isnpo > frac_status + 0.3:
+        df = df.copy()
+        df["status"] = df["isNPO"]
+        st.warning(
+            f"⚠️ PEDIDOS +72H: la hoja '{sheet_name}' venía con las columnas "
+            "corridas (el estado real del pedido estaba en la columna de al "
+            "lado) — se corrigió automáticamente antes de guardar, pero "
+            "convendría avisarle a quien genera el archivo."
+        )
+    return df
+
+def _read_all_sheets_pedidos(xl, required_cols):
+    """Antes esta función (como _find_sheet_pedidos) se quedaba con la
+    PRIMERA hoja que tuviera las columnas esperadas. Eso andaba bien
+    mientras el export venía en un archivo por mes, pero ahora el export
+    "Estados +72" viene en UN SOLO archivo con UNA HOJA POR MES (Enero,
+    Febrero, ..., Octubre, todas con el mismo esquema de columnas) — con la
+    versión vieja, nos quedábamos solo con la primera hoja (Enero) y
+    perdíamos los otros 9 meses en silencio, que es lo que explicaba los
+    "0 pedidos" / "Fecha de corte" vieja que venía mostrando el dashboard.
+    Ahora lee y junta TODAS las hojas del archivo que tengan las columnas
+    esperadas."""
+    required = {c.lower() for c in required_cols}
+    partes = []
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = _norm_cols_pedidos(df)
+        cols = {c.lower() for c in df.columns}
+        if required.issubset(cols):
+            df = _reparar_status_pedidos(df, name)
+            partes.append(df)
+    if not partes:
+        return None
+    return pd.concat(partes, ignore_index=True, sort=False)
+
+def _norm_txt_pedidos(v):
+    if pd.isna(v):
+        return ""
+    return str(v).replace("\xa0", " ").strip()
+
+def _get_col_ci_pedidos(df, name):
+    for c in df.columns:
+        if str(c).strip().lower() == name.lower():
+            return df[c]
+    return pd.Series([""] * len(df), index=df.index)
+
+def merge_pedidos_72h_files(uploaded_files):
+    """El export de Pedidos +72h puede venir de dos formas: partido en
+    varios archivos (ej. uno por mes, cada uno con una sola hoja), o en UN
+    solo archivo con UNA HOJA POR MES (ej. "Estados +72.xlsx": Enero,
+    Febrero, ..., Octubre). Como lo que importa acá es la FOTO COMPLETA de
+    ahora mismo, esta función junta TODO — de cada archivo subido, lee y
+    apila todas las hojas que tengan las columnas esperadas (no solo la
+    primera) —, saca duplicados exactos de "commerceId" (por si el mismo
+    pedido aparece en más de una hoja/archivo, típico cuando los rangos de
+    fecha de un mes y el siguiente se pisan un poco) y devuelve un único
+    Excel en memoria (bytes) + un resumen de cuántas filas aportó cada
+    archivo, para mostrarlo en pantalla. Si algún archivo no tiene ninguna
+    hoja con las columnas esperadas, lo salta (y lo avisa) en vez de cortar
+    todo el guardado."""
+    partes = []
+    resumen = []
+    for f in uploaded_files:
+        try:
+            xl = _open_excel_pedidos(f)
+        except Exception:
+            resumen.append(f"{f.name}: no pude abrirlo")
+            continue
+        df = _read_all_sheets_pedidos(xl, _PEDIDOS_72H_COLS)
+        if df is None:
+            resumen.append(f"{f.name}: no encontré ninguna hoja con las columnas esperadas, lo salteé")
+            continue
+        # Recortar a las columnas que realmente se usan ANTES de apilar —
+        # así no se arrastran en memoria las decenas de columnas del export
+        # que ninguna pestaña necesita.
+        cols_presentes = [c for c in _PEDIDOS_72H_COLS_UTILES if c in df.columns]
+        df = df[cols_presentes].copy()
+        partes.append(df)
+        n_hojas = len(xl.sheet_names)
+        detalle_hojas = f" en {n_hojas} hojas" if n_hojas > 1 else ""
+        resumen.append(f"{f.name}: {len(df):,}".replace(",", ".") + detalle_hojas)
+
+    if not partes:
+        return None, resumen
+
+    combinado = pd.concat(partes, ignore_index=True, sort=False)
+
+    # Excluir Pick&Mix (salesChannelPrefix = "PM") y devoluciones/RMA
+    # (commerceId con "RMA") — no son pedidos "sin mover" reales para este
+    # reporte. Mismo criterio que ya aplica Operativo.py, pero hecho acá
+    # para que el Excel combinado que queda guardado ya salga limpio.
+    _sales_prefix = _get_col_ci_pedidos(combinado, "salesChannelPrefix").apply(_norm_txt_pedidos).str.upper()
+    _commerce_id_raw = _get_col_ci_pedidos(combinado, "commerceId").apply(_norm_txt_pedidos).str.upper()
+    antes_filtro = len(combinado)
+    combinado = combinado[(_sales_prefix != "PM") & (~_commerce_id_raw.str.contains("RMA"))]
+    excluidos = antes_filtro - len(combinado)
+    if excluidos:
+        resumen.append(f"se excluyeron {excluidos} pedidos Pick&Mix (PM) / RMA")
+
+    if "commerceId" in combinado.columns:
+        antes = len(combinado)
+        combinado = combinado.drop_duplicates(subset=["commerceId"], keep="last")
+        duplicados = antes - len(combinado)
+        if duplicados:
+            resumen.append(f"se sacaron {duplicados} pedidos duplicados entre archivos")
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        combinado.to_excel(writer, index=False, sheet_name="Pedidos")
+    return buffer.getvalue(), resumen
+
+r1, r2, r3, r4 = st.columns(4)
+f_pedidos = upload_box_reporte(
+    r1, "PEDIDOS +72H",
+    "Archivo de Pedidos +72h (ej. 'Estados +72.xlsx', con una hoja por mes). "
+    "Subí el archivo completo, con todos los meses adentro.",
+    "f_pedidos"
+)
+f_reclamos = upload_box_reporte(
+    r2, "RECLAMOS OPERATIVOS",
+    "Archivo nuevo de Reclamos Operativos, aparte del Reporte diario.",
+    "f_reclamos"
+)
+f_ontime = upload_box_reporte(
+    r3, "ON-TIME",
+    "Archivo nuevo de On Time, aparte del Reporte diario.",
+    "f_ontime"
+)
+f_delivery = upload_box_reporte(
+    r4, "DELIVERY",
+    "Archivo nuevo de Delivery, aparte del Reporte diario.",
+    "f_delivery"
+)
+
+r5, r6, r7, r8 = st.columns(4)
+f_fillrate = upload_box_reporte(
+    r5, "FILL RATE",
+    "Archivo nuevo de Fill Rate, aparte del Reporte diario.",
+    "f_fillrate"
+)
+f_faltantes = upload_box_reporte(r6, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+f_pickers = upload_box_reporte(
+    r7, "PICKERS",
+    "Archivo nuevo de Productividad Pickers, aparte del Reporte diario.",
+    "f_pickers"
+)
+f_vsventas = upload_box_reporte(
+    r8, "COMPARATIVO",
+    "Archivo 'Vs de ventas' (hojas 2025/2026) para la pestaña Comparativo.",
+    "f_vsventas"
+)
+
+r9, _r10, _r11, _r12 = st.columns(4)
+f_pedidos_sts = upload_box_reporte(
+    r9, "PEDIDOS STS",
+    "Archivo de Pedidos para la pestaña Pedidos STS (Mes, Número de pedido, Número de tienda).",
+    "f_pedidos_sts"
+)
+
+st.markdown(
+    '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
+    'Delivery todavía guarda el archivo pero no arma ninguna sección — eso lo '
+    'conectamos cuando tengamos un archivo de ejemplo. FILL RATE ya arma la '
+    'sección de Operativo con el archivo de Faltantes por depósito '
+    '(missing-item-by-wh). La tarjeta ON-TIME funciona igual que PICKERS: si '
+    'subís ahí el archivo de Productividad Pickers, también arma "Tiempo '
+    'promedio de preparación por tienda" y el % on time acumulado del mes en '
+    'Operativo. COMPARATIVO alimenta la pestaña Comparativo (resumen del mes '
+    'vs. mismo período del año anterior) — subí ahí el archivo "Vs de ventas" '
+    'con una hoja por año.</div>',
+    unsafe_allow_html=True
+)
+
+SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
+SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
+SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
+SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
+SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
+SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
+SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
+SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
+SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
+
+def _github_headers():
+    token = st.secrets.get("GITHUB_TOKEN")
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+def fetch_shared_from_github(shared_path):
+    """Trae de GitHub la última copia guardada de este reporte (para cuando
+    el servidor se reinició y la copia local temporal ya no está).
+
+    Pide el archivo en formato "raw" (Accept: vnd.github.raw+json) en vez
+    del formato normal (JSON + contenido en base64): el formato normal solo
+    trae el contenido completo para archivos de hasta 1 MB — con uno más
+    pesado (como Pedidos +72h, que ronda 1,6 MB), GitHub devuelve el
+    contenido vacío sin avisar, y acá terminaba leyéndose como un Excel de
+    0 bytes ("no pude determinar el formato del archivo"). El formato
+    "raw" no tiene ese límite (soporta hasta 100 MB)."""
+    headers = _github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
+    try:
+        request_get = urllib.request.Request(url, headers=raw_headers, method="GET")
+        with urllib.request.urlopen(request_get, timeout=120) as response:
+            return response.read()
+    except Exception:
+        return None
+
+def save_bytes_to_github(shared_path, content_bytes, label):
+    """Guarda este reporte en GitHub (carpeta shared_uploads/) para que
+    quede disponible para siempre, igual que los datos de Venta, y no haga
+    falta volver a subirlo cada vez que la app se reinicia.
+
+    Devuelve (ok, error): error es None si salió bien, o un texto corto
+    describiendo qué falló (se usa para poder avisar en pantalla cuando el
+    respaldo en GitHub no se hizo, en vez de fallar en silencio)."""
+    headers = _github_headers()
+    if not headers:
+        return False, "no hay credenciales de GitHub configuradas (GITHUB_TOKEN)"
+    import urllib.request
+    import urllib.error
+    import json
+    import base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+    try:
+        sha = None
+        request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request_get, timeout=120) as response:
+                sha = json.loads(response.read().decode("utf-8"))["sha"]
+        except urllib.error.HTTPError as e_get:
+            if e_get.code != 404:
+                raise
+            # 404 = todavía no existe ese archivo en el repo; se crea solo,
+            # sin mandar "sha" en el payload.
+
+        payload = {
+            "message": f"Actualizar reporte - {label}",
+            "content": base64.b64encode(content_bytes).decode("utf-8"),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+
+        request_put = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urllib.request.urlopen(request_put, timeout=120) as response:
+            response.read()
+        return True, None
+    except urllib.error.HTTPError as e:
+        try:
+            detalle = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            detalle = ""
+        return False, f"HTTP {e.code} {e.reason} {detalle}".strip()
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
+
+def _save_bytes_core(content, shared_path, label, stamp_date=False, _status_out=None):
+    """Núcleo de save_shared_bytes: guarda estos bytes puntuales (local +
+    GitHub). Separado aparte para poder usarlo también con un archivo ya
+    combinado en memoria (varios Excel fusionados en uno), sin pasar por un
+    file_uploader de Streamlit.
+
+    Si se pasa _status_out (un dict vacío), se lo completa con el resultado
+    real del guardado en GitHub ({"github_ok": bool, "github_err": str|None})
+    para poder avisar en pantalla si el respaldo permanente falló, en vez de
+    asumir que salió bien."""
+    try:
+        shared_path.write_bytes(content)
+    except Exception:
+        pass
+    github_ok, github_err = save_bytes_to_github(shared_path, content, label)
+    if _status_out is not None:
+        _status_out["github_ok"] = github_ok
+        _status_out["github_err"] = github_err
+    if stamp_date:
+        fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
+        date_path = shared_path.with_name(shared_path.name + ".date")
+        try:
+            date_path.write_text(fecha_hoy)
+        except Exception:
+            pass
+        save_bytes_to_github(date_path, fecha_hoy.encode("utf-8"), f"{label} (fecha)")
+    return True
+
+def save_shared_bytes(uploaded_file, shared_path, label="reporte", stamp_date=False):
+    """Si se subió un archivo nuevo en esta sesión, lo guarda en la carpeta
+    compartida (para esta misma sesión) Y lo sube a GitHub, para que quede
+    guardado para siempre y no haya que volver a subirlo cada vez que la
+    app se reinicia o se actualiza — igual que ya pasa con los datos de
+    Venta. Si no se subió nada nuevo, usa la copia local si existe, o si no
+    la trae de GitHub. Devuelve True si hay algo disponible (nuevo, local o
+    de GitHub).
+
+    Si stamp_date=True, además guarda (local y en GitHub) la fecha de hoy
+    (Argentina) en un archivito aparte "<nombre>.date", para que la página
+    que lee este reporte pueda saber si se subió hoy o es de un día
+    anterior (On-Time y Fill Rate: si no se subió nada hoy, esa tarjeta
+    tiene que mostrarse vacía en vez de arrastrar el dato de ayer)."""
+    if uploaded_file is not None:
+        return _save_bytes_core(uploaded_file.getvalue(), shared_path, label, stamp_date)
+
+    if shared_path.exists():
+        try:
+            # Si la copia local está vacía (0 bytes) la descarta y va
+            # directo a GitHub: un bug viejo (ya arreglado) podía dejar
+            # guardada ahí una copia vacía/corrupta de un archivo pesado —
+            # como todas las pestañas comparten esta misma carpeta
+            # temporal, sin este chequeo esa copia rota se seguía
+            # "confirmando como disponible" para siempre.
+            if shared_path.stat().st_size > 0:
+                return True
+        except Exception:
+            pass
+
+    content = fetch_shared_from_github(shared_path)
+    if content:
+        try:
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return True
+
+    return False
+
+# -----------------------------------------------------------------
+# Pedidos STS: a diferencia de los demás reportes (que guardan el Excel
+# entero tal cual se subió), este se procesa al vuelo apenas se sube acá
+# y se guarda YA SEPARADO POR MES — cada mes en su propio archivito
+# (pedidos_sts_<AAAA-MM>.csv) + un índice (pedidos_sts_index.json) con la
+# lista de meses cargados. Así, la pestaña Pedidos STS puede ir sumando
+# mes a mes sin que un archivo nuevo pise los meses anteriores, y sin
+# tener que guardar (ni volver a leer) el Excel pesado completo cada vez.
+# -----------------------------------------------------------------
+
+def _read_shared_bytes(shared_path):
+    """Como save_shared_bytes pero de solo lectura (sin un file_uploader
+    de por medio): copia local si existe y no está vacía, si no la trae
+    de GitHub y la cachea local para la próxima."""
+    if shared_path.exists():
+        try:
+            data = shared_path.read_bytes()
+            if data:
+                return data
+        except Exception:
+            pass
+    content = fetch_shared_from_github(shared_path)
+    if content:
+        try:
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
+    return None
+
+INDEX_PEDIDOS_STS_PATH = SHARED_DIR / "pedidos_sts_index.json"
+
+def _month_shared_path_sts(month_key):
+    return SHARED_DIR / f"pedidos_sts_{month_key}.csv"
+
+def load_index_pedidos_sts():
+    data = _read_shared_bytes(INDEX_PEDIDOS_STS_PATH)
+    if not data:
+        return []
+    try:
+        return sorted(set(json.loads(data.decode("utf-8"))), reverse=True)
+    except Exception:
+        return []
+
+def save_index_pedidos_sts(meses):
+    meses = sorted(set(meses), reverse=True)
+    content = json.dumps(meses).encode("utf-8")
+    try:
+        INDEX_PEDIDOS_STS_PATH.write_bytes(content)
+    except Exception:
+        pass
+    save_bytes_to_github(INDEX_PEDIDOS_STS_PATH, content, "Pedidos STS (índice de meses)")
+
+def save_month_df_sts(month_key, df_mes):
+    out = df_mes[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]].copy()
+    out["_mes_ord"] = out["_mes_ord"].astype(str)
+    content = out.to_csv(index=False).encode("utf-8")
+    path = _month_shared_path_sts(month_key)
+    try:
+        path.write_bytes(content)
+    except Exception:
+        pass
+    save_bytes_to_github(path, content, f"Pedidos STS {month_key}")
+    meses = load_index_pedidos_sts()
+    if month_key not in meses:
+        meses.append(month_key)
+        save_index_pedidos_sts(meses)
+
+def norm_cols(df):
+    df = df.copy()
+    df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
+    return df
+
+def norm_txt(v):
+    if pd.isna(v):
+        return ""
+    return str(v).replace("\xa0", " ").strip()
+
+def norm_codigo(v):
+    if pd.isna(v):
+        return ""
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return norm_txt(v)
+
+MESES_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+
+def mes_label(ts):
+    if pd.isna(ts):
+        return ""
+    return f"{MESES_ES.get(ts.month, ts.month).capitalize()} {ts.year}"
+
+REQUIRED_COLS_STS = ["commerceSequentialId", "shippingWarehouseReferenceId", "deliveryFinishDate"]
+
+def find_all_sheets_sts(xl, required_cols):
+    required = {c.lower() for c in required_cols}
+    frames = []
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if required.issubset(cols):
+            frames.append(df)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+def procesar_archivo_sts(file_bytes):
+    try:
+        xl = pd.ExcelFile(io.BytesIO(file_bytes))
+    except Exception:
+        return {"ok": False}
+    df_raw = find_all_sheets_sts(xl, REQUIRED_COLS_STS)
+    if df_raw is None:
+        return {"ok": False}
+    d = df_raw.copy()
+    d["_fecha"] = pd.to_datetime(d["deliveryFinishDate"], errors="coerce")
+    d = d.dropna(subset=["commerceSequentialId", "_fecha"]).copy()
+    d["Mes"] = d["_fecha"].apply(mes_label)
+    d["_mes_ord"] = d["_fecha"].dt.to_period("M")
+    d["Numero de pedido"] = d["commerceSequentialId"].apply(norm_codigo)
+    d["Numero de tienda"] = d["shippingWarehouseReferenceId"].apply(norm_codigo)
+    return {"ok": True, "data": d[["Mes", "Numero de pedido", "Numero de tienda", "_mes_ord"]]}
+
+faltantes_guardado = save_shared_bytes(f_faltantes, SHARED_FALTANTES_PATH, "Faltantes")
+
+pedidos_resumen_merge = None
+if f_pedidos is not None:
+    # Volvimos a subir de a un archivo por vez (uno por mes), pero seguimos
+    # pasando ese único archivo por el mismo procesamiento de antes: recorta
+    # columnas que no se usan y excluye Pick&Mix (PM) / RMA, para que lo que
+    # quede guardado ya salga liviano y limpio.
+    merged_bytes, pedidos_resumen_merge = merge_pedidos_72h_files([f_pedidos])
+    if merged_bytes is not None:
+        _pedidos_github_status = {}
+        pedidos_guardado = _save_bytes_core(
+            merged_bytes, SHARED_PEDIDOS_PATH, "Pedidos +72h",
+            _status_out=_pedidos_github_status,
+        )
+        if _pedidos_github_status.get("github_ok") is False:
+            st.error(
+                "⚠️ PEDIDOS +72H: se guardó para esta sesión, pero el respaldo "
+                "permanente en GitHub FALLÓ, así que si la app se reinicia vas a "
+                "perder este archivo y los números van a volver a aparecer en 0. "
+                "Detalle técnico: " + str(_pedidos_github_status.get("github_err"))
+            )
+    else:
+        st.error(
+            "PEDIDOS +72H: no encontré la hoja esperada en el archivo subido "
+            "(" + "; ".join(pedidos_resumen_merge) + ")."
+        )
+        pedidos_guardado = save_shared_bytes(None, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+else:
+    pedidos_guardado = save_shared_bytes(None, SHARED_PEDIDOS_PATH, "Pedidos +72h")
+
+if pedidos_resumen_merge:
+    st.markdown(
+        '<div style="font-size:11.5px;color:#6b7280;margin:-2px 0 6px;">'
+        'PEDIDOS +72H: ' + " · ".join(pedidos_resumen_merge) + '</div>',
+        unsafe_allow_html=True
+    )
+
+pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH, "Pickers")
+reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH, "Reclamos Operativos")
+ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time", stamp_date=True)
+delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH, "Delivery")
+fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate", stamp_date=True)
+vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH, "Comparativo (vs ventas)")
+
+if f_pedidos_sts is not None:
+    firma_sts = (f_pedidos_sts.name, f_pedidos_sts.size)
+    if st.session_state.get("_pedidos_sts_firma_app") != firma_sts:
+        with st.spinner("Procesando archivo de Pedidos STS…"):
+            resultado_sts = procesar_archivo_sts(f_pedidos_sts.getvalue())
+        if not resultado_sts["ok"]:
+            st.error(
+                "PEDIDOS STS: no encontré las columnas necesarias (commerceSequentialId, "
+                "shippingWarehouseReferenceId, deliveryFinishDate) en ninguna hoja de ese archivo."
+            )
+        else:
+            d_sts = resultado_sts["data"]
+            if d_sts.empty:
+                st.warning("PEDIDOS STS: el archivo no tiene pedidos con fecha de entrega válida.")
+            else:
+                resumen_sts = []
+                with st.spinner("Guardando por mes…"):
+                    for mes_ord, grupo in d_sts.groupby("_mes_ord"):
+                        month_key = str(mes_ord)
+                        save_month_df_sts(month_key, grupo)
+                        resumen_sts.append(
+                            f"{grupo['Mes'].iloc[0]} ({len(grupo):,} pedidos)".replace(",", ".")
+                        )
+                st.markdown(
+                    '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 10px;">'
+                    '● PEDIDOS STS guardado → ' + " · ".join(resumen_sts) +
+                    ' — ya lo podés ver en la pestaña Pedidos STS.</div>',
+                    unsafe_allow_html=True
+                )
+        st.session_state["_pedidos_sts_firma_app"] = firma_sts
+
+if pedidos_guardado or faltantes_guardado:
+    st.markdown(
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:-2px 0 2px;">'
+        '● Listo — ya lo podés ver en la pestaña Operativo.</div>',
+        unsafe_allow_html=True
+    )
+
+# Código de tienda (columna "Tienda" del Excel) -> nombre. Mismo listado que
+# se usa en "Productividad Pickers" (viene del archivo "Picker x tienda").
+TIENDA_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+def norm_tienda_code(v):
+    """El Excel trae el código de tienda como número (1002, 1002.0, etc.).
+    Lo normalizamos siempre a texto sin decimales, para que coincida con las
+    claves de TIENDA_MAP y con lo que ya se guarda en data_tiendas.csv."""
+    try:
+        return str(int(float(v)))
+    except (TypeError, ValueError):
+        return str(v).strip()
+
+def tienda_nombre(codigo):
+    return TIENDA_MAP.get(codigo, codigo)
+
+def normalize_uploaded_excel(file):
+    raw = pd.read_excel(file, sheet_name=0, header=None)
+    header_row = None
+
+    for i in range(min(10, len(raw))):
+        vals = raw.iloc[i].astype(str).str.strip().tolist()
+        if "Fecha" in vals and "Facturacion" in vals and "Venta - Ecommerce" in vals:
+            header_row = i
+            break
+
+    if header_row is None:
+        raise ValueError(
+            "No encontré las columnas Fecha, Facturacion y Venta - Ecommerce en el archivo."
+        )
+
+    d = pd.read_excel(file, sheet_name=0, header=header_row)
+
+    required = [
+        "Fecha",
+        "Facturacion",
+        "Venta - Ecommerce",
+        "Cantidad Venta Operativa - Ecommerce",
+        "Pedidos Facturados con Venta Operativa - Ecommerce"
+    ]
+
+    missing = [c for c in required if c not in d.columns]
+    if missing:
+        raise ValueError("Faltan columnas: " + ", ".join(missing))
+
+    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+
+    for c in required[1:]:
+        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
+
+    d = d.dropna(subset=["Fecha"])
+
+    out = d.groupby("Fecha", as_index=False).agg(
+        company_tax=("Facturacion", "sum"),
+        ecommerce_tax=("Venta - Ecommerce", "sum"),
+        orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
+        units=("Cantidad Venta Operativa - Ecommerce", "sum")
+    )
+
+    out = out.rename(columns={"Fecha": "date"})
+    out["source"] = "Reporte subido"
+
+    # Desglose por tienda, para "Top 10 tiendas" en Venta diaria. Si el
+    # archivo no trae columna "Tienda" (no debería pasar), seguimos igual,
+    # simplemente sin el desglose para ese archivo.
+    out_tiendas = _empty_tiendas_df()
+    if "Tienda" in d.columns:
+        dt = d.copy()
+        dt["Tienda"] = dt["Tienda"].apply(norm_tienda_code)
+        out_tiendas = dt.groupby(["Fecha", "Tienda"], as_index=False).agg(
+            company_tax=("Facturacion", "sum"),
+            ecommerce_tax=("Venta - Ecommerce", "sum"),
+            orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
+            units=("Cantidad Venta Operativa - Ecommerce", "sum")
+        )
+        out_tiendas = out_tiendas.rename(columns={"Fecha": "date"})
+        out_tiendas["Nombre"] = out_tiendas["Tienda"].apply(tienda_nombre)
+        out_tiendas = out_tiendas[TIENDAS_COLUMNS]
+
+    return out, out_tiendas
+
+df = base_df.copy()
+df_tiendas = base_df_tiendas.copy()
+
+def replace_period(uploaded_file, year, month, label):
+    global df, df_tiendas
+
+    if uploaded_file is None:
+        return
+
+    try:
+        incoming, incoming_tiendas = normalize_uploaded_excel(uploaded_file)
+
+        incoming = incoming[
+            (incoming["date"].dt.year == year) &
+            (incoming["date"].dt.month == month)
+        ].copy()
+
+        if incoming.empty:
+            st.error(f"{label}: no encontré datos de {month:02d}/{year} en el archivo.")
+            return
+
+        df = df[
+            ~(
+                (df["date"].dt.year == year) &
+                (df["date"].dt.month == month)
+            )
+        ].copy()
+
+        df = pd.concat([df, incoming], ignore_index=True)
+
+        df = (
+            df.sort_values("date")
+            .drop_duplicates(subset=["date"], keep="last")
+            .reset_index(drop=True)
+        )
+
+        if len(incoming_tiendas):
+            incoming_tiendas = incoming_tiendas[
+                (incoming_tiendas["date"].dt.year == year) &
+                (incoming_tiendas["date"].dt.month == month)
+            ].copy()
+
+            df_tiendas = df_tiendas[
+                ~(
+                    (df_tiendas["date"].dt.year == year) &
+                    (df_tiendas["date"].dt.month == month)
+                )
+            ].copy()
+
+            df_tiendas = pd.concat([df_tiendas, incoming_tiendas], ignore_index=True)
+
+            df_tiendas = (
+                df_tiendas.sort_values(["date", "Tienda"])
+                .drop_duplicates(subset=["date", "Tienda"], keep="last")
+                .reset_index(drop=True)
+            )
+
+        # GUARDAR LOS DATOS EN GITHUB
+        try:
+            import urllib.request
+            import urllib.error
+            import json
+            import base64
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            token = st.secrets.get("GITHUB_TOKEN")
+
+            if token:
+                repo = "2026-Masonline/masonline-dashboard"
+                path = "data.csv"
+                branch = "main"
+
+                url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "Masonline-Dashboard"
+                }
+
+                # Obtener SHA actual de data.csv
+                request_get = urllib.request.Request(
+                    f"{url}?ref={branch}",
+                    headers=headers,
+                    method="GET"
+                )
+
+                with urllib.request.urlopen(request_get, timeout=30) as response:
+                    github_file = json.loads(response.read().decode("utf-8"))
+
+                sha = github_file["sha"]
+
+                save_df = df.sort_values("date")
+
+                csv_text = save_df.to_csv(
+                    index=False,
+                    date_format="%Y-%m-%d"
+                )
+
+                content_b64 = base64.b64encode(
+                    csv_text.encode("utf-8")
+                ).decode("utf-8")
+
+                payload = {
+                    "message": f"Actualizar datos ecommerce - {label}",
+                    "content": content_b64,
+                    "sha": sha,
+                    "branch": branch
+                }
+
+                request_put = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        **headers,
+                        "Content-Type": "application/json"
+                    },
+                    method="PUT"
+                )
+
+                with urllib.request.urlopen(
+                    request_put,
+                    timeout=30
+                ) as response:
+                    response.read()
+
+                # Guardar también el desglose por tienda (data_tiendas.csv),
+                # para "Top 10 tiendas" en Venta diaria. Si esto falla no
+                # queremos tapar el éxito del guardado principal (data.csv),
+                # así que va aparte y en silencio (aviso chiquito nada más).
+                if len(df_tiendas):
+                    try:
+                        path_t = "data_tiendas.csv"
+                        url_t = f"https://api.github.com/repos/{repo}/contents/{path_t}"
+
+                        sha_t = None
+                        request_get_t = urllib.request.Request(
+                            f"{url_t}?ref={branch}",
+                            headers=headers,
+                            method="GET"
+                        )
+                        try:
+                            with urllib.request.urlopen(request_get_t, timeout=30) as response:
+                                sha_t = json.loads(response.read().decode("utf-8"))["sha"]
+                        except urllib.error.HTTPError as e_get:
+                            if e_get.code != 404:
+                                raise
+                            # 404 = todavía no existe data_tiendas.csv en el repo;
+                            # se crea solo, sin mandar "sha" en el payload.
+
+                        save_df_tiendas = df_tiendas.sort_values(["date", "Tienda"])
+                        csv_text_t = save_df_tiendas.to_csv(index=False, date_format="%Y-%m-%d")
+                        content_b64_t = base64.b64encode(csv_text_t.encode("utf-8")).decode("utf-8")
+
+                        payload_t = {
+                            "message": f"Actualizar datos por tienda - {label}",
+                            "content": content_b64_t,
+                            "branch": branch
+                        }
+                        if sha_t:
+                            payload_t["sha"] = sha_t
+
+                        request_put_t = urllib.request.Request(
+                            url_t,
+                            data=json.dumps(payload_t).encode("utf-8"),
+                            headers={**headers, "Content-Type": "application/json"},
+                            method="PUT"
+                        )
+                        with urllib.request.urlopen(request_put_t, timeout=30) as response:
+                            response.read()
+                    except Exception:
+                        st.caption(
+                            "⚠️ El desglose por tienda (Top 10 tiendas) no se pudo guardar esta vez — "
+                            "el resto de los datos sí se guardó bien."
+                        )
+
+                st.success(
+                    f"{label}: datos cargados y guardados correctamente."
+                )
+
+            else:
+                st.warning(
+                    "Los datos se cargaron para esta sesión, "
+                    "pero GITHUB_TOKEN no está configurado."
+                )
+
+        except Exception as github_error:
+            st.error(
+                f"Los datos se cargaron, pero no se pudieron guardar en GitHub: "
+                f"{github_error}"
+            )
+
+    except Exception as e:
+        st.error(f"{label}: no pude procesar el Excel: {e}")
+
+# Año/mes de cada tarjeta, calculados solos a partir de la fecha de hoy (hora
+# Argentina) en vez de quedar fijos en el código — así en Venta diaria no
+# hace falta tocar nada acá cuando empieza un mes nuevo: "Mes en curso" es
+# siempre el mes calendario actual, "Mes anterior" el inmediato anterior (con
+# el cambio de año bien resuelto en diciembre/enero), y "Mismo período año
+# pasado" el mismo mes pero del año anterior.
+from datetime import datetime as _datetime_hoy
+from zoneinfo import ZoneInfo as _ZoneInfo_hoy
+
+_hoy_ar = _datetime_hoy.now(_ZoneInfo_hoy("America/Argentina/Buenos_Aires")).date()
+_anio_actual, _mes_actual = _hoy_ar.year, _hoy_ar.month
+if _mes_actual == 1:
+    _anio_anterior, _mes_anterior = _anio_actual - 1, 12
+else:
+    _anio_anterior, _mes_anterior = _anio_actual, _mes_actual - 1
+
+replace_period(upload_current, _anio_actual, _mes_actual, "Mes en curso")
+replace_period(upload_prev, _anio_anterior, _mes_anterior, "Mes anterior")
+replace_period(upload_ly, _anio_actual - 1, _mes_actual, "Mismo período año pasado")
+
+if not (upload_current or upload_prev or upload_ly):
+    st.markdown(
+        '<div style="color:#6b7280;font-size:12px;margin-top:12px;">'
+        'Todavía no subiste ningún archivo en esta sesión. Para ver los últimos datos '
+        'guardados, andá a <b>Venta diaria</b> o <b>Venta fin de semana</b> en el menú '
+        'de la izquierda.'
+        '</div>',
+        unsafe_allow_html=True
+    )
