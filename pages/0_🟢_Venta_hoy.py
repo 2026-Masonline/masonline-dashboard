@@ -391,21 +391,35 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
                 if "shippingWarehouseReferenceId" in d_entrega.columns else ""
             )
             metodo_col = d_entrega["shippingsType"] if "shippingsType" in d_entrega.columns else ""
+            if "totalAmount" in d_entrega.columns:
+                # totalAmount a veces viene como texto con signo "$" (ej.
+                # "$85783.3") en vez de número — hay que limpiarlo antes de
+                # sumarlo, si no pd.to_numeric lo deja todo en NaN -> 0.
+                _monto_txt = (
+                    d_entrega["totalAmount"].astype(str)
+                    .str.replace("$", "", regex=False)
+                    .str.replace(",", "", regex=False)
+                    .str.strip()
+                )
+                monto_col = pd.to_numeric(_monto_txt, errors="coerce").fillna(0)
+            else:
+                monto_col = 0
             partes_entrega.append(pd.DataFrame({
                 "Id": d_entrega["commerceSequentialId"].values,
                 "Tienda": tienda_col,
                 "Metodo": metodo_col,
+                "Monto": monto_col,
             }))
 
     creados_count = len(ids_creados_hoy)
     if not partes_entrega:
-        return pd.DataFrame(columns=["Tienda", "Metodo"]), creados_count
+        return pd.DataFrame(columns=["Tienda", "Metodo", "Monto"]), creados_count
     out = pd.concat(partes_entrega, ignore_index=True, sort=False)
     # Dedup por ID de pedido (no por Tienda+Metodo juntos — varios pedidos
     # distintos de la misma tienda con el mismo método son normales y no
     # son duplicados).
     out = out.drop_duplicates(subset=["Id"])
-    return out[["Tienda", "Metodo"]], creados_count
+    return out[["Tienda", "Metodo", "Monto"]], creados_count
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 hoy_df = df[df["date"].dt.date == arg_today]
@@ -583,48 +597,63 @@ if pedidos_detalle_hoy is None:
     )
 else:
     entregados_count = len(pedidos_detalle_hoy)
-    metodo_agg = (
-        pedidos_detalle_hoy.assign(MetodoLabel=pedidos_detalle_hoy["Metodo"].apply(_vh_metodo_entrega_label))
-        .groupby("MetodoLabel", as_index=False)
-        .size()
-        .rename(columns={"size": "Pedidos"})
-        .set_index("MetodoLabel")["Pedidos"]
-        if entregados_count else pd.Series(dtype=int)
-    )
     _metodo_orden = ["Envío a domicilio", "Retiro en tienda", "Pickup (drive-through)"]
-    metodo_cards_html = ""
-    for metodo_label in _metodo_orden:
-        cant = int(metodo_agg.get(metodo_label, 0))
-        metodo_cards_html += (
-            '<div><div style="font-size:11px;color:#9ca3af;">' + metodo_label.upper() + '</div>'
-            f'<div style="font-size:19px;font-weight:800;color:#20252b;">{intfmt(cant)}</div></div>'
+    if entregados_count:
+        metodo_tmp = pedidos_detalle_hoy.assign(
+            MetodoLabel=pedidos_detalle_hoy["Metodo"].apply(_vh_metodo_entrega_label)
         )
-    # Por si aparece algún método nuevo que no está en la lista de arriba.
-    for metodo_label, cant in metodo_agg.items():
-        if metodo_label not in _metodo_orden:
-            metodo_cards_html += (
-                '<div><div style="font-size:11px;color:#9ca3af;">' + str(metodo_label).upper() + '</div>'
-                f'<div style="font-size:19px;font-weight:800;color:#20252b;">{intfmt(int(cant))}</div></div>'
-            )
-    st.markdown(f"""
-    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-    padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.05);">
-      <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:14px;">
-        <div><div style="font-size:11px;color:#9ca3af;">PEDIDOS ENTREGADOS HOY</div>
-          <div style="font-size:19px;font-weight:800;color:#208653;">{intfmt(entregados_count)}</div></div>
-        <div><div style="font-size:11px;color:#9ca3af;">PEDIDOS CREADOS HOY</div>
-          <div style="font-size:19px;font-weight:800;color:#20252b;">{intfmt(pedidos_creados_hoy_count)}</div></div>
-      </div>
-      <div style="font-size:11px;color:#9ca3af;font-weight:800;margin-bottom:6px;">MÉTODO DE ENTREGA (entregados hoy)</div>
-      <div style="display:flex;flex-wrap:wrap;gap:18px;">
-        {metodo_cards_html if entregados_count else '<div style="font-size:12px;color:#9ca3af;">Todavía no hay pedidos entregados hoy.</div>'}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+        metodo_agg = metodo_tmp.groupby("MetodoLabel", as_index=False).agg(
+            Pedidos=("MetodoLabel", "size"), Monto=("Monto", "sum")
+        ).set_index("MetodoLabel")
+        # Métodos conocidos primero (en el orden fijo de arriba), cualquier
+        # método nuevo que no esté en esa lista se agrega al final.
+        etiquetas = _metodo_orden + [m for m in metodo_agg.index if m not in _metodo_orden]
+    else:
+        metodo_agg = pd.DataFrame(columns=["Pedidos", "Monto"])
+        etiquetas = _metodo_orden
 
-st.markdown('<div class="section">Tiendas con más pedidos (hoy)</div>', unsafe_allow_html=True)
+    # Tarjeta "Pedidos entregados hoy" + "Pedidos creados hoy".
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #2f9e66;">
+          <div class="label" style="color:#208653;">PEDIDOS ENTREGADOS HOY</div>
+          <div class="value" style="color:#208653;">{intfmt(entregados_count)}</div>
+          <div class="small">Por fecha de entrega</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with cc2:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #59636e;">
+          <div class="label">PEDIDOS CREADOS HOY</div>
+          <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
+          <div class="small">Por fecha de creación</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown(
+        '<div style="font-size:13px;font-weight:800;color:#20252b;margin:16px 0 8px;">'
+        'MÉTODO DE ENTREGA (entregados hoy)</div>',
+        unsafe_allow_html=True
+    )
+    _metodo_colores = ["#f5a623", "#e8432c", "#59636e", "#2f9e66", "#3b82c4"]
+    metodo_cols = st.columns(len(etiquetas))
+    for i, metodo_label in enumerate(etiquetas):
+        cant = int(metodo_agg["Pedidos"].get(metodo_label, 0))
+        monto = float(metodo_agg["Monto"].get(metodo_label, 0))
+        color = _metodo_colores[i % len(_metodo_colores)]
+        with metodo_cols[i]:
+            st.markdown(f"""
+            <div class="card" style="border-top:4px solid {color};">
+              <div class="label" style="color:{color};">{metodo_label.upper()}</div>
+              <div class="value">{intfmt(cant)}</div>
+              <div class="small">{money(monto)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+st.markdown('<div class="section">Top 5 tiendas con más pedidos (hoy)</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="section-desc">Ranking por CANTIDAD de pedidos de hoy (no por venta) — '
+    '<div class="section-desc">Ranking por CANTIDAD de pedidos entregados hoy (no por venta) — '
     'misma fuente que el método de entrega.</div>',
     unsafe_allow_html=True
 )
@@ -635,6 +664,7 @@ if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
         .size()
         .rename(columns={"size": "Pedidos"})
         .sort_values("Pedidos", ascending=False)
+        .head(5)
     )
     rows_html = ""
     for i, r in enumerate(tienda_pedidos_agg.itertuples(), start=1):
