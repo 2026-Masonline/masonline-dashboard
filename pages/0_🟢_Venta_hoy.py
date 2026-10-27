@@ -483,12 +483,19 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
             if "shippingWarehouseReferenceId" in d.columns else ""
         )
         metodo_col = d["shippingsType"] if "shippingsType" in d.columns else ""
-        partes.append(pd.DataFrame({"Tienda": tienda_col, "Metodo": metodo_col}))
+        partes.append(pd.DataFrame({
+            "Id": d["commerceSequentialId"].values,
+            "Tienda": tienda_col,
+            "Metodo": metodo_col,
+        }))
     if not partes:
         return pd.DataFrame(columns=["Tienda", "Metodo"])
     out = pd.concat(partes, ignore_index=True, sort=False)
-    out = out.drop_duplicates()
-    return out
+    # Dedup por ID de pedido (no por Tienda+Metodo juntos — varios pedidos
+    # distintos de la misma tienda con el mismo método son normales y no
+    # son duplicados).
+    out = out.drop_duplicates(subset=["Id"])
+    return out[["Tienda", "Metodo"]]
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 hoy_df = df[df["date"].dt.date == arg_today]
