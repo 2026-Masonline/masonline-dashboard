@@ -317,14 +317,19 @@ def _pedidos_es_hoja_detalle(d):
 def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
     """Devuelve una fila por pedido con AMBAS fechas (creación y entrega) ya
     calculadas, para poder armar los dos criterios (creación/entrega) leyendo
-    y filtrando el archivo una sola vez, en vez de dos."""
+    y filtrando el archivo una sola vez, en vez de dos. Incluye el Id del
+    pedido (commerceSequentialId) para poder dedupear también ENTRE hojas
+    (el archivo puede traer varias solapas/sheets, por ejemplo una por
+    semana, con pedidos repetidos de una hoja a otra)."""
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
     d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
-    # El archivo a veces trae el mismo pedido repetido (filas idénticas, más
-    # de una vez de punta a punta) — nos quedamos con un solo registro por
-    # pedido (commerceSequentialId) para no duplicar el conteo.
+    # El archivo a veces trae el mismo pedido repetido dentro de una misma
+    # hoja (filas idénticas, más de una vez de punta a punta) — nos quedamos
+    # con un solo registro por pedido (commerceSequentialId) para no
+    # duplicar el conteo. El dedupe ENTRE hojas se hace después, en
+    # _cargar_pedidos_vsventas, una vez juntadas todas las hojas.
     d = d.drop_duplicates(subset=["commerceSequentialId"])
     if "shippingWarehouseReferenceId" in d.columns:
         tienda_col = d["shippingWarehouseReferenceId"].apply(
@@ -333,6 +338,7 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
     else:
         tienda_col = ""
     out = pd.DataFrame({
+        "Id": d["commerceSequentialId"].values,
         "date_creacion": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
         "date_entrega": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
         "Tienda": tienda_col,
@@ -351,6 +357,7 @@ def _pedidos_adaptar_hoja_vieja(d):
     d = d.copy()
     fecha = pd.to_datetime(d["Fecha"], errors="coerce").dt.normalize()
     out = pd.DataFrame({
+        "Id": pd.Series([pd.NA] * len(d)),
         "date_creacion": fecha,
         "date_entrega": fecha,
         "Tienda": d["Tienda"].apply(_pedidos_norm_codigo),
@@ -385,6 +392,18 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
         if not partes:
             return vacio
         todo = pd.concat(partes, ignore_index=True, sort=False)
+        # El archivo puede traer varias hojas (por ejemplo, una por semana) y
+        # un mismo pedido puede repetirse de una hoja a otra. El dedupe de
+        # _pedidos_adaptar_hoja_detalle solo saca duplicados DENTRO de cada
+        # hoja; acá sacamos los que quedan repetidos ENTRE hojas, por Id
+        # (commerceSequentialId) — así no se cuenta el mismo pedido varias
+        # veces en el total del mes. Las filas de la hoja vieja (formato
+        # agregado, sin Id) no se tocan: ya vienen una por fila/fecha.
+        con_id = todo["Id"].notna()
+        todo = pd.concat(
+            [todo[con_id].drop_duplicates(subset=["Id"]), todo[~con_id]],
+            ignore_index=True, sort=False,
+        )
     except Exception:
         return vacio
 
