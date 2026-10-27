@@ -559,8 +559,7 @@ st.markdown(
 if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
     tienda_pedidos_agg = (
         pedidos_detalle_hoy.groupby("Tienda", as_index=False)
-        .size()
-        .rename(columns={"size": "Pedidos"})
+        .agg(Pedidos=("Tienda", "size"), Monto=("Monto", "sum"))
         .sort_values("Pedidos", ascending=False)
         .head(5)
     )
@@ -574,6 +573,7 @@ if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
             f'<td>{i}</td>'
             f'<td>{tienda_label}</td>'
             f'<td style="text-align:center;font-weight:800;color:#208653;">{intfmt(r.Pedidos)}</td>'
+            f'<td style="text-align:right;font-weight:800;color:#20252b;">{money(r.Monto)}</td>'
             '</tr>'
         )
     st.markdown(
@@ -582,6 +582,7 @@ if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
         '<table class="rank-table"><thead><tr>'
         '<th></th><th>Tienda</th>'
         '<th style="text-align:center;">Pedidos</th>'
+        '<th style="text-align:right;">Total $</th>'
         f'</tr></thead><tbody>{rows_html}</tbody></table>'
         '</div></div>',
         unsafe_allow_html=True
