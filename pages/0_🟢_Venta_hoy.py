@@ -452,8 +452,10 @@ def _vh_pedidos_codigo_tienda(v, tienda_codes):
 
 @st.cache_data(ttl=180, show_spinner=False)
 def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
-    """Pedidos creados HOY, con su método de entrega y tienda — para los
-    desgloses de abajo. Cacheado 3 minutos por archivo+día."""
+    """Pedidos ENTREGADOS hoy (fecha de entrega, no de creación), con su
+    método de entrega y tienda — para los desgloses de abajo. Mismo
+    criterio que "pedidos entregados" en la plataforma / Venta diaria.
+    Cacheado 3 minutos por archivo+día."""
     if vsventas_bytes is None:
         return None
     try:
@@ -474,8 +476,8 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
         es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
         d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
         d = d.drop_duplicates(subset=["commerceSequentialId"])
-        fecha = pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize()
-        d = d[fecha.astype(str).str[:10] == hoy_str]
+        fecha_entrega = pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize()
+        d = d[fecha_entrega.astype(str).str[:10] == hoy_str]
         if not len(d):
             continue
         tienda_col = (
@@ -632,7 +634,7 @@ else:
 # ---------------------------------------------------------------------
 # Método de entrega + Tiendas con más pedidos (por CANTIDAD de pedidos,
 # no por venta) — fuente: archivo de Pedidos ("Vs de ventas"), filtrado a
-# los pedidos creados hoy.
+# los pedidos ENTREGADOS hoy (fecha de entrega, no de creación).
 # ---------------------------------------------------------------------
 st.markdown('<div class="section">Método de entrega</div>', unsafe_allow_html=True)
 st.markdown(
