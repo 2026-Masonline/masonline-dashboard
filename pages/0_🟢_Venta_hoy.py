@@ -152,6 +152,29 @@ TIENDA_MAP = {
     "3613": "Mendoza", "4001": "Campana",
 }
 
+# Formato de cada tienda (Full 1 / Full 2 / GM), del Excel "Tienda - Formato -
+# Coordinador" que pasó Emi (hoja "Tiendas", columna "Form").
+TIENDA_FORMATO = {
+    "1002": "Full 1", "1003": "Full 1", "1004": "Full 1", "1005": "GM", "1006": "Full 1",
+    "1007": "Full 2", "1008": "Full 1", "1010": "GM", "1011": "Full 1", "1012": "Full 2",
+    "1013": "GM", "1014": "Full 1", "1015": "GM", "1016": "GM", "1017": "GM", "1018": "GM",
+    "1020": "Full 1", "1021": "GM", "1022": "Full 2", "1023": "Full 2", "1024": "Full 1",
+    "1026": "Full 2", "1027": "GM", "1028": "GM", "1029": "GM", "1030": "GM", "1031": "Full 1",
+    "1032": "GM", "1033": "Full 2", "1035": "Full 1", "1036": "GM", "1037": "GM",
+    "1038": "Full 1", "1039": "GM", "1042": "Full 2", "1043": "GM", "1044": "GM",
+    "1045": "GM", "1046": "Full 2", "1050": "GM", "1051": "Full 2", "1052": "Full 2",
+    "1053": "Full 2", "1054": "Full 1", "1055": "Full 1", "1056": "Full 2", "1057": "Full 1",
+    "1058": "Full 1", "1059": "GM", "1060": "GM", "1061": "Full 2", "1067": "Full 2",
+    "1068": "GM", "1074": "Full 2", "1075": "GM", "1076": "GM", "1077": "Full 2",
+    "1078": "Full 2", "1080": "Full 1", "1081": "GM", "1082": "GM", "1084": "Full 2",
+    "1085": "GM", "1086": "GM", "1087": "Full 1", "1088": "Full 2", "1092": "GM",
+    "1093": "GM", "1096": "GM", "1097": "GM", "1098": "Full 2", "1099": "GM", "1100": "GM",
+    "1106": "GM", "1108": "Full 2", "1110": "GM", "1111": "Full 2", "1114": "Full 2",
+    "1115": "Full 1", "1116": "GM", "1119": "GM", "2997": "Full 1", "2998": "Full 1",
+    "2999": "Full 1", "3601": "Full 1", "3602": "Full 1", "3603": "Full 1", "3604": "Full 1",
+    "3605": "Full 1", "3606": "Full 1", "3608": "Full 1", "3613": "Full 1", "4001": "Full 2",
+}
+
 def _vh_norm_tienda_code(v):
     try:
         return str(int(float(v)))
@@ -544,6 +567,42 @@ else:
             st.markdown(f"""
             <div class="card" style="border-top:4px solid {color};">
               <div class="label" style="color:{color};">{metodo_label.upper()}</div>
+              <div class="value">{intfmt(cant)}</div>
+              <div class="small">{money(monto)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # Formato de tienda (Full 1 / Full 2 / GM) — mismo criterio (entregados
+    # hoy), agrupado por el formato de la tienda en vez de por método.
+    st.markdown(
+        '<div style="font-size:13px;font-weight:800;color:#20252b;margin:16px 0 8px;">'
+        'FORMATO DE TIENDA (entregados hoy)</div>',
+        unsafe_allow_html=True
+    )
+    _formato_orden = ["Full 1", "Full 2", "GM"]
+    if entregados_count:
+        formato_tmp = pedidos_detalle_hoy.assign(
+            FormatoLabel=pedidos_detalle_hoy["Tienda"].apply(
+                lambda t: TIENDA_FORMATO.get(str(t), "Sin formato")
+            )
+        )
+        formato_agg = formato_tmp.groupby("FormatoLabel", as_index=False).agg(
+            Pedidos=("FormatoLabel", "size"), Monto=("Monto", "sum")
+        ).set_index("FormatoLabel")
+        etiquetas_formato = _formato_orden + [f for f in formato_agg.index if f not in _formato_orden]
+    else:
+        formato_agg = pd.DataFrame(columns=["Pedidos", "Monto"])
+        etiquetas_formato = _formato_orden
+    _formato_colores = ["#2f9e66", "#3b82c4", "#e8432c", "#9ca3af"]
+    formato_cols = st.columns(len(etiquetas_formato))
+    for i, formato_label in enumerate(etiquetas_formato):
+        cant = int(formato_agg["Pedidos"].get(formato_label, 0))
+        monto = float(formato_agg["Monto"].get(formato_label, 0))
+        color = _formato_colores[i % len(_formato_colores)]
+        with formato_cols[i]:
+            st.markdown(f"""
+            <div class="card" style="border-top:4px solid {color};">
+              <div class="label" style="color:{color};">{formato_label.upper()}</div>
               <div class="value">{intfmt(cant)}</div>
               <div class="small">{money(monto)}</div>
             </div>
