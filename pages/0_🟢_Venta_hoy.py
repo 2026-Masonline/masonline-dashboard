@@ -608,6 +608,33 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
+def _vh_tabla_tiendas_pedidos(tienda_pedidos_agg):
+    rows_html = ""
+    for i, r in enumerate(tienda_pedidos_agg.itertuples(), start=1):
+        codigo = str(r.Tienda)
+        nombre = TIENDA_MAP.get(codigo, "")
+        tienda_label = f"{codigo} - {nombre}" if nombre else codigo
+        formato = TIENDA_FORMATO.get(codigo, "Sin formato")
+        rows_html += (
+            '<tr>'
+            f'<td>{i}</td>'
+            f'<td>{tienda_label}</td>'
+            f'<td>{formato}</td>'
+            f'<td style="text-align:center;font-weight:800;color:#208653;">{intfmt(r.Pedidos)}</td>'
+            f'<td style="text-align:right;font-weight:800;color:#20252b;">{money(r.Monto)}</td>'
+            '</tr>'
+        )
+    return (
+        '<div class="rank-table-card">'
+        '<div class="table-scroll">'
+        '<table class="rank-table"><thead><tr>'
+        '<th></th><th>Tienda</th><th>Formato</th>'
+        '<th style="text-align:center;">Pedidos</th>'
+        '<th style="text-align:right;">Total $</th>'
+        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+        '</div></div>'
+    )
+
 st.markdown('<div class="section">Top 5 tiendas con más pedidos (hoy)</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="section-desc">Ranking por CANTIDAD de pedidos entregados hoy (no por venta) — '
@@ -616,36 +643,19 @@ st.markdown(
 )
 
 if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
-    tienda_pedidos_agg = (
+    tienda_pedidos_agg_full = (
         pedidos_detalle_hoy.groupby("Tienda", as_index=False)
         .agg(Pedidos=("Tienda", "size"), Monto=("Monto", "sum"))
         .sort_values("Pedidos", ascending=False)
-        .head(5)
     )
-    rows_html = ""
-    for i, r in enumerate(tienda_pedidos_agg.itertuples(), start=1):
-        codigo = str(r.Tienda)
-        nombre = TIENDA_MAP.get(codigo, "")
-        tienda_label = f"{codigo} - {nombre}" if nombre else codigo
-        rows_html += (
-            '<tr>'
-            f'<td>{i}</td>'
-            f'<td>{tienda_label}</td>'
-            f'<td style="text-align:center;font-weight:800;color:#208653;">{intfmt(r.Pedidos)}</td>'
-            f'<td style="text-align:right;font-weight:800;color:#20252b;">{money(r.Monto)}</td>'
-            '</tr>'
-        )
+    st.markdown(_vh_tabla_tiendas_pedidos(tienda_pedidos_agg_full.head(5)), unsafe_allow_html=True)
+
+    st.markdown('<div class="section">Todas las tiendas (hoy)</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="rank-table-card">'
-        '<div class="table-scroll">'
-        '<table class="rank-table"><thead><tr>'
-        '<th></th><th>Tienda</th>'
-        '<th style="text-align:center;">Pedidos</th>'
-        '<th style="text-align:right;">Total $</th>'
-        f'</tr></thead><tbody>{rows_html}</tbody></table>'
-        '</div></div>',
+        '<div class="section-desc">Listado completo, misma fuente y orden que el Top 5.</div>',
         unsafe_allow_html=True
     )
+    st.markdown(_vh_tabla_tiendas_pedidos(tienda_pedidos_agg_full), unsafe_allow_html=True)
 elif pedidos_detalle_hoy is not None:
     st.markdown(
         '<div class="empty-box">Todavía no hay pedidos registrados hoy en el archivo de Pedidos.</div>',
