@@ -7,6 +7,7 @@ import base64
 import tempfile
 import io
 import re
+import html
 
 st.set_page_config(
     page_title="MásOnline | Venta hoy",
@@ -492,8 +493,6 @@ st.markdown(f"""
   </div>
   <div class="hero-date">
     {arg_today.strftime('%d/%m/%Y')}
-    <small>Venta de HOY (en vivo)</small>
-    <div class="live-badge">● EN VIVO · PARCIAL</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -660,4 +659,210 @@ elif pedidos_detalle_hoy is not None:
     st.markdown(
         '<div class="empty-box">Todavía no hay pedidos registrados hoy en el archivo de Pedidos.</div>',
         unsafe_allow_html=True
+    )
+
+# ---------------------------------------------------------------------
+# Descarga de un HTML standalone con el resumen de Pedidos de hoy (mismo
+# diseño que el dashboard), para mandar por mail o guardar aparte.
+# ---------------------------------------------------------------------
+if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
+    _dl_metodo_tmp = pedidos_detalle_hoy.assign(
+        MetodoLabel=pedidos_detalle_hoy["Metodo"].apply(_vh_metodo_entrega_label)
+    )
+    _dl_metodo_agg = _dl_metodo_tmp.groupby("MetodoLabel", as_index=False).agg(
+        Pedidos=("MetodoLabel", "size"), Monto=("Monto", "sum")
+    ).set_index("MetodoLabel")
+    _dl_metodo_orden = ["Envío a domicilio", "Retiro en tienda", "Pickup (drive-through)"]
+    _dl_metodo_etiquetas = _dl_metodo_orden + [m for m in _dl_metodo_agg.index if m not in _dl_metodo_orden]
+
+    _dl_formato_tmp = pedidos_detalle_hoy.assign(
+        FormatoLabel=pedidos_detalle_hoy["Tienda"].apply(lambda t: TIENDA_FORMATO.get(str(t), "Sin formato"))
+    )
+    _dl_formato_agg = _dl_formato_tmp.groupby("FormatoLabel", as_index=False).agg(
+        Pedidos=("FormatoLabel", "size"), Monto=("Monto", "sum")
+    ).set_index("FormatoLabel")
+    _dl_formato_orden = ["Full 1", "Full 2", "GM"]
+    _dl_formato_etiquetas = _dl_formato_orden + [f for f in _dl_formato_agg.index if f not in _dl_formato_orden]
+
+    _dl_tienda_agg = (
+        pedidos_detalle_hoy.groupby("Tienda", as_index=False)
+        .agg(Pedidos=("Tienda", "size"), Monto=("Monto", "sum"))
+        .sort_values("Pedidos", ascending=False)
+    )
+
+    def _dl_cards_html(etiquetas, agg, colores):
+        out = ""
+        for i, label in enumerate(etiquetas):
+            cant = int(agg["Pedidos"].get(label, 0))
+            monto = float(agg["Monto"].get(label, 0))
+            color = colores[i % len(colores)]
+            out += f"""
+            <div class="card" style="border-top:4px solid {color};">
+              <div class="label" style="color:{color};">{html.escape(label.upper())}</div>
+              <div class="value">{intfmt(cant)}</div>
+              <div class="small">{html.escape(money(monto))}</div>
+            </div>
+            """
+        return out
+
+    def _dl_tabla_html(df_agg, titulo):
+        header = f'<div class="rank-table-header">🏆 {html.escape(titulo)}</div>'
+        if not len(df_agg):
+            return (
+                f'<div class="rank-table-card">{header}'
+                '<div style="padding:20px;color:#9ca3af;font-size:13px;">Sin datos.</div></div>'
+            )
+        rows_html = ""
+        for i, r in enumerate(df_agg.itertuples(), start=1):
+            codigo = str(r.Tienda)
+            nombre = TIENDA_MAP.get(codigo, "")
+            tienda_label = f"{codigo} - {nombre}" if nombre else codigo
+            formato = TIENDA_FORMATO.get(codigo, "Sin formato")
+            rows_html += (
+                '<tr>'
+                f'<td><span class="rank-badge">{i}</span></td>'
+                f'<td>{html.escape(tienda_label)}</td>'
+                f'<td>{html.escape(formato)}</td>'
+                f'<td style="text-align:center;">{intfmt(r.Pedidos)}</td>'
+                f'<td style="text-align:right;font-weight:800;color:#208653;">{html.escape(money(r.Monto))}</td>'
+                '</tr>'
+            )
+        return (
+            f'<div class="rank-table-card">{header}'
+            '<table class="rank-table"><thead><tr>'
+            '<th></th><th>Tienda</th><th>Formato</th>'
+            '<th style="text-align:center;">Pedidos</th>'
+            '<th style="text-align:right;">Total $</th>'
+            f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        )
+
+    if LOGO_FILE.exists():
+        _dl_logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
+        _dl_logo_html = (
+            f'<img src="data:image/png;base64,{_dl_logo_b64}" '
+            'style="height:50px;max-width:300px;object-fit:contain;">'
+        )
+    else:
+        _dl_logo_html = '<div style="font-size:28px;font-weight:800;">Más<span style="font-weight:400;">Online</span></div>'
+
+    _dl_metodo_colores = ["#f5a623", "#e8432c", "#59636e", "#2f9e66", "#3b82c4"]
+    _dl_formato_colores = ["#2f9e66", "#3b82c4", "#e8432c", "#9ca3af"]
+
+    _html_doc = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MásOnline | Pedidos de hoy</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{
+    margin: 0;
+    padding: 34px 42px 42px;
+    background: #ffffff;
+    color: #20252b;
+    font-family: Arial, Helvetica, sans-serif;
+}}
+.container {{ max-width: 1300px; margin: 0 auto; }}
+.hero {{
+    background: #ffffff;
+    padding: 18px 0 26px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 4px solid #2f9e66;
+    margin-bottom: 20px;
+}}
+.hero-sub {{ font-size: 11px; letter-spacing: 3px; margin-top: 3px; opacity: .85; }}
+.hero-date {{ text-align: right; font-size: 19px; font-weight: 800; }}
+.kpis {{ display: grid; gap: 16px; margin-bottom: 10px; }}
+.kpis-2 {{ grid-template-columns: repeat(2, 1fr); }}
+.card {{
+    background: white; border: 1px solid #e8ebef; border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06); padding: 20px 22px; min-height: 110px;
+}}
+.label {{ color: #6b7280; font-size: 13px; font-weight: 700; }}
+.value {{ color: #20252b; font-size: 28px; font-weight: 800; margin-top: 7px; }}
+.small {{ color: #20252b; font-size: 13px; font-weight: 700; margin-top: 7px; }}
+.section {{ font-size: 19px; font-weight: 800; margin: 26px 0 10px; }}
+.rank-table-card {{
+    background: white; border: 1px solid #e8ebef; border-radius: 14px;
+    overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.06); margin-bottom: 10px;
+}}
+.rank-table-header {{ background: #2f9e66; color: #fff; font-weight: 800; font-size: 15px; padding: 13px 20px; }}
+table.rank-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+table.rank-table thead th {{
+    background: #e9f7ef; color: #208653; font-weight: 700; padding: 10px 14px;
+    text-align: left; white-space: nowrap; text-transform: uppercase;
+    border-bottom: 1px solid #e8ebef;
+}}
+table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
+.rank-badge {{
+    display: inline-block; min-width: 20px; text-align: center; background: #2f9e66;
+    color: #fff; border-radius: 6px; font-size: 12px; font-weight: 700; padding: 2px 6px;
+}}
+.footer {{ display: flex; justify-content: space-between; color: #6b7280; font-size: 12px; margin-top: 18px; }}
+@media (max-width: 700px) {{
+    .hero {{ flex-direction: column; align-items: flex-start; gap: 10px; }}
+    .hero-date {{ text-align: left; }}
+    .kpis {{ grid-template-columns: 1fr !important; }}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="hero">
+  <div>
+    {_dl_logo_html}
+    <div class="hero-sub">E-COMMERCE</div>
+  </div>
+  <div class="hero-date">{arg_today.strftime('%d/%m/%Y')}</div>
+</div>
+
+<div class="section">Pedidos de hoy</div>
+<div class="kpis kpis-2">
+  <div class="card" style="border-top:4px solid #2f9e66;">
+    <div class="label" style="color:#208653;">PEDIDOS ENTREGADOS HOY</div>
+    <div class="value" style="color:#208653;">{intfmt(len(pedidos_detalle_hoy))}</div>
+    <div class="small">Por fecha de entrega</div>
+  </div>
+  <div class="card" style="border-top:4px solid #59636e;">
+    <div class="label">PEDIDOS CREADOS HOY</div>
+    <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
+    <div class="small">Por fecha de creación</div>
+  </div>
+</div>
+
+<div class="section">Método de entrega</div>
+<div class="kpis" style="grid-template-columns: repeat({len(_dl_metodo_etiquetas)}, 1fr);">
+{_dl_cards_html(_dl_metodo_etiquetas, _dl_metodo_agg, _dl_metodo_colores)}
+</div>
+
+<div class="section">Formato de tienda</div>
+<div class="kpis" style="grid-template-columns: repeat({len(_dl_formato_etiquetas)}, 1fr);">
+{_dl_cards_html(_dl_formato_etiquetas, _dl_formato_agg, _dl_formato_colores)}
+</div>
+
+<div class="section">Top 5 tiendas con más pedidos</div>
+{_dl_tabla_html(_dl_tienda_agg.head(5), f"TOP 5 · PEDIDOS {arg_today.strftime('%d/%m')}")}
+
+<div class="section">Todas las tiendas</div>
+{_dl_tabla_html(_dl_tienda_agg, f"TODAS LAS TIENDAS · PEDIDOS {arg_today.strftime('%d/%m')}")}
+
+<div class="footer">
+  <span>Fuente: archivo de Pedidos ("Vs de ventas" / order-operation).</span>
+  <span>MásOnline | E-commerce</span>
+</div>
+
+</div>
+</body>
+</html>
+"""
+
+    st.download_button(
+        "⬇️ Descargar resumen de Pedidos (HTML)",
+        data=_html_doc,
+        file_name=f"pedidos_hoy_{arg_today.strftime('%Y-%m-%d')}.html",
+        mime="text/html",
     )
