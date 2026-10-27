@@ -481,7 +481,8 @@ f_pickers = upload_box_reporte(
 )
 f_vsventas = upload_box_reporte(
     r8, "COMPARATIVO",
-    "Archivo 'Vs de ventas' (hojas 2025/2026) para la pestaña Comparativo.",
+    "Archivo 'Vs de ventas' / order-operation para Comparativo, Venta fin de "
+    "semana, Venta diaria y Venta hoy (método de entrega / tiendas con más pedidos).",
     "f_vsventas"
 )
 
