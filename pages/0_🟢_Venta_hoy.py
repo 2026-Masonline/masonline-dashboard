@@ -116,35 +116,10 @@ except Exception:
 st.markdown(
     '<div style="color:#6b7280;font-size:12px;margin:-6px 0 14px;">'
     'Esta pestaña, a diferencia de "Venta diaria", muestra el día de HOY tal cual '
-    'viene en el archivo, aunque todavía esté incompleto. Podés subir acá mismo el '
-    'Excel del mes en curso, o hacerlo desde la pestaña <b>app</b> — es el mismo archivo '
-    'y queda guardado para las dos.'
+    'viene en el archivo, aunque todavía esté incompleto. Subí el Excel "Venta Con y '
+    'sin Impuesto" del mes en curso desde la pestaña <b>app</b> para que se actualice acá.'
     '</div>',
     unsafe_allow_html=True
-)
-
-# ---------------------------------------------------------------------
-# Caja de carga "MES EN CURSO", acá mismo (para no tener que ir a "app" a
-# subir el archivo de hoy). Mismo procesamiento exacto que usa "app":
-# parsea el Excel "Venta Con y sin Impuesto", reemplaza el mes en curso en
-# data.csv / data_tiendas.csv y guarda en GitHub.
-# ---------------------------------------------------------------------
-st.markdown("""
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-padding:12px 16px;margin-bottom:10px;">
-  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
-    SUBIR EXCEL DE HOY (MES EN CURSO)
-  </div>
-  <div style="font-size:12px;color:#6b7280;">
-    Subí acá el Excel "Venta Con y sin Impuesto" del mes en curso (con la fila de hoy
-    adentro) para actualizar esta pestaña al instante.
-  </div>
-</div>
-""", unsafe_allow_html=True)
-upload_hoy = st.file_uploader(
-    "Archivo mes en curso", type=["xlsx", "xls"], key="upload_hoy_venta",
-    label_visibility="collapsed",
-    help="Reporte Venta Con y sin Impuesto del mes en curso."
 )
 
 TIENDA_MAP = {
@@ -186,162 +161,8 @@ def _vh_norm_tienda_code(v):
 def _vh_tienda_nombre(codigo):
     return TIENDA_MAP.get(codigo, codigo)
 
-def _vh_normalize_uploaded_excel(file):
-    raw = pd.read_excel(file, sheet_name=0, header=None)
-    header_row = None
-    for i in range(min(10, len(raw))):
-        vals = raw.iloc[i].astype(str).str.strip().tolist()
-        if "Fecha" in vals and "Facturacion" in vals and "Venta - Ecommerce" in vals:
-            header_row = i
-            break
-    if header_row is None:
-        raise ValueError(
-            "No encontré las columnas Fecha, Facturacion y Venta - Ecommerce en el archivo."
-        )
-    d = pd.read_excel(file, sheet_name=0, header=header_row)
-    required = [
-        "Fecha", "Facturacion", "Venta - Ecommerce",
-        "Cantidad Venta Operativa - Ecommerce",
-        "Pedidos Facturados con Venta Operativa - Ecommerce"
-    ]
-    missing = [c for c in required if c not in d.columns]
-    if missing:
-        raise ValueError("Faltan columnas: " + ", ".join(missing))
-    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
-    for c in required[1:]:
-        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
-    d = d.dropna(subset=["Fecha"])
-    out = d.groupby("Fecha", as_index=False).agg(
-        company_tax=("Facturacion", "sum"),
-        ecommerce_tax=("Venta - Ecommerce", "sum"),
-        orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
-        units=("Cantidad Venta Operativa - Ecommerce", "sum")
-    )
-    out = out.rename(columns={"Fecha": "date"})
-    out_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
-    out_tiendas["date"] = pd.to_datetime(out_tiendas["date"])
-    if "Tienda" in d.columns:
-        dt = d.copy()
-        dt["Tienda"] = dt["Tienda"].apply(_vh_norm_tienda_code)
-        out_tiendas = dt.groupby(["Fecha", "Tienda"], as_index=False).agg(
-            company_tax=("Facturacion", "sum"),
-            ecommerce_tax=("Venta - Ecommerce", "sum"),
-            orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
-            units=("Cantidad Venta Operativa - Ecommerce", "sum")
-        )
-        out_tiendas = out_tiendas.rename(columns={"Fecha": "date"})
-        out_tiendas["Nombre"] = out_tiendas["Tienda"].apply(_vh_tienda_nombre)
-        out_tiendas = out_tiendas[TIENDAS_COLUMNS]
-    return out, out_tiendas
-
 df = base_df.copy()
 df_tiendas = base_df_tiendas.copy()
-
-def _vh_replace_period(uploaded_file, year, month, label):
-    global df, df_tiendas
-    if uploaded_file is None:
-        return
-    try:
-        incoming, incoming_tiendas = _vh_normalize_uploaded_excel(uploaded_file)
-        incoming = incoming[
-            (incoming["date"].dt.year == year) & (incoming["date"].dt.month == month)
-        ].copy()
-        if incoming.empty:
-            st.error(f"{label}: no encontré datos de {month:02d}/{year} en el archivo.")
-            return
-
-        df = df[~((df["date"].dt.year == year) & (df["date"].dt.month == month))].copy()
-        df = pd.concat([df, incoming], ignore_index=True)
-        df = df.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
-
-        if len(incoming_tiendas):
-            incoming_tiendas = incoming_tiendas[
-                (incoming_tiendas["date"].dt.year == year) & (incoming_tiendas["date"].dt.month == month)
-            ].copy()
-            df_tiendas = df_tiendas[
-                ~((df_tiendas["date"].dt.year == year) & (df_tiendas["date"].dt.month == month))
-            ].copy()
-            df_tiendas = pd.concat([df_tiendas, incoming_tiendas], ignore_index=True)
-            df_tiendas = (
-                df_tiendas.sort_values(["date", "Tienda"])
-                .drop_duplicates(subset=["date", "Tienda"], keep="last")
-                .reset_index(drop=True)
-            )
-
-        try:
-            import urllib.request
-            import urllib.error
-            import json as _json
-
-            token = st.secrets.get("GITHUB_TOKEN")
-            if token:
-                repo = "2026-Masonline/masonline-dashboard"
-                branch = "main"
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                    "User-Agent": "Masonline-Dashboard"
-                }
-
-                path = "data.csv"
-                url = f"https://api.github.com/repos/{repo}/contents/{path}"
-                request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
-                with urllib.request.urlopen(request_get, timeout=30) as response:
-                    github_file = _json.loads(response.read().decode("utf-8"))
-                sha = github_file["sha"]
-
-                csv_text = df.sort_values("date").to_csv(index=False, date_format="%Y-%m-%d")
-                content_b64 = base64.b64encode(csv_text.encode("utf-8")).decode("utf-8")
-                payload = {
-                    "message": f"Actualizar datos ecommerce - {label}",
-                    "content": content_b64, "sha": sha, "branch": branch
-                }
-                request_put = urllib.request.Request(
-                    url, data=_json.dumps(payload).encode("utf-8"),
-                    headers={**headers, "Content-Type": "application/json"}, method="PUT"
-                )
-                with urllib.request.urlopen(request_put, timeout=30) as response:
-                    response.read()
-
-                if len(df_tiendas):
-                    try:
-                        path_t = "data_tiendas.csv"
-                        url_t = f"https://api.github.com/repos/{repo}/contents/{path_t}"
-                        sha_t = None
-                        request_get_t = urllib.request.Request(f"{url_t}?ref={branch}", headers=headers, method="GET")
-                        try:
-                            with urllib.request.urlopen(request_get_t, timeout=30) as response:
-                                sha_t = _json.loads(response.read().decode("utf-8"))["sha"]
-                        except urllib.error.HTTPError as e_get:
-                            if e_get.code != 404:
-                                raise
-                        csv_text_t = df_tiendas.sort_values(["date", "Tienda"]).to_csv(index=False, date_format="%Y-%m-%d")
-                        content_b64_t = base64.b64encode(csv_text_t.encode("utf-8")).decode("utf-8")
-                        payload_t = {"message": f"Actualizar datos por tienda - {label}", "content": content_b64_t, "branch": branch}
-                        if sha_t:
-                            payload_t["sha"] = sha_t
-                        request_put_t = urllib.request.Request(
-                            url_t, data=_json.dumps(payload_t).encode("utf-8"),
-                            headers={**headers, "Content-Type": "application/json"}, method="PUT"
-                        )
-                        with urllib.request.urlopen(request_put_t, timeout=30) as response:
-                            response.read()
-                    except Exception:
-                        st.caption(
-                            "⚠️ El desglose por tienda no se pudo guardar esta vez — "
-                            "el resto de los datos sí se guardó bien."
-                        )
-                st.success(f"{label}: datos cargados y guardados correctamente.")
-            else:
-                st.warning("Los datos se cargaron para esta sesión, pero GITHUB_TOKEN no está configurado.")
-        except Exception as github_error:
-            st.error(f"Los datos se cargaron, pero no se pudieron guardar en GitHub: {github_error}")
-    except Exception as e:
-        st.error(f"{label}: no pude procesar el Excel: {e}")
-
-_hoy_tmp = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-_vh_replace_period(upload_hoy, _hoy_tmp.year, _hoy_tmp.month, "Mes en curso (desde Venta hoy)")
 
 def money(v):
     try:
@@ -528,18 +349,21 @@ def _vh_pedidos_codigo_tienda(v, tienda_codes):
 
 @st.cache_data(ttl=180, show_spinner=False)
 def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
-    """Pedidos ENTREGADOS hoy (fecha de entrega, no de creación), con su
-    método de entrega y tienda — para los desgloses de abajo. Mismo
-    criterio que "pedidos entregados" en la plataforma / Venta diaria.
-    Cacheado 3 minutos por archivo+día."""
+    """Pedidos de HOY, calculados una sola vez por las dos fechas: ENTREGA
+    (deliveryFinishDate) para el detalle por método/tienda que se muestra
+    abajo, y CREACIÓN (commerceDateCreated) solo para el conteo de
+    "pedidos creados hoy". Devuelve (entregados_df, creados_count) —
+    entregados_df es None si todavía no hay archivo subido. Cacheado 3
+    minutos por archivo+día."""
     if vsventas_bytes is None:
-        return None
+        return None, 0
     try:
         xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
     except Exception:
-        return None
+        return None, 0
     tienda_codes = set(tienda_codes_tuple)
-    partes = []
+    partes_entrega = []
+    ids_creados_hoy = set()
     for name in xl.sheet_names:
         try:
             d = xl.parse(name)
@@ -552,28 +376,36 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
         es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
         d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
         d = d.drop_duplicates(subset=["commerceSequentialId"])
-        fecha_entrega = pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize()
-        d = d[fecha_entrega.astype(str).str[:10] == hoy_str]
         if not len(d):
             continue
-        tienda_col = (
-            d["shippingWarehouseReferenceId"].apply(lambda v: _vh_pedidos_codigo_tienda(v, tienda_codes))
-            if "shippingWarehouseReferenceId" in d.columns else ""
-        )
-        metodo_col = d["shippingsType"] if "shippingsType" in d.columns else ""
-        partes.append(pd.DataFrame({
-            "Id": d["commerceSequentialId"].values,
-            "Tienda": tienda_col,
-            "Metodo": metodo_col,
-        }))
-    if not partes:
-        return pd.DataFrame(columns=["Tienda", "Metodo"])
-    out = pd.concat(partes, ignore_index=True, sort=False)
+
+        fecha_creacion = pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize()
+        creados_hoy_ids = d.loc[fecha_creacion.astype(str).str[:10] == hoy_str, "commerceSequentialId"]
+        ids_creados_hoy.update(creados_hoy_ids.tolist())
+
+        fecha_entrega = pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize()
+        d_entrega = d[fecha_entrega.astype(str).str[:10] == hoy_str]
+        if len(d_entrega):
+            tienda_col = (
+                d_entrega["shippingWarehouseReferenceId"].apply(lambda v: _vh_pedidos_codigo_tienda(v, tienda_codes))
+                if "shippingWarehouseReferenceId" in d_entrega.columns else ""
+            )
+            metodo_col = d_entrega["shippingsType"] if "shippingsType" in d_entrega.columns else ""
+            partes_entrega.append(pd.DataFrame({
+                "Id": d_entrega["commerceSequentialId"].values,
+                "Tienda": tienda_col,
+                "Metodo": metodo_col,
+            }))
+
+    creados_count = len(ids_creados_hoy)
+    if not partes_entrega:
+        return pd.DataFrame(columns=["Tienda", "Metodo"]), creados_count
+    out = pd.concat(partes_entrega, ignore_index=True, sort=False)
     # Dedup por ID de pedido (no por Tienda+Metodo juntos — varios pedidos
     # distintos de la misma tienda con el mismo método son normales y no
     # son duplicados).
     out = out.drop_duplicates(subset=["Id"])
-    return out[["Tienda", "Metodo"]]
+    return out[["Tienda", "Metodo"]], creados_count
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 hoy_df = df[df["date"].dt.date == arg_today]
@@ -602,7 +434,9 @@ _vsventas_bytes_nuevo = _vh_pedidos_save_shared_bytes(
 
 _vsventas_bytes_hoy = _vsventas_bytes_nuevo or _vh_pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
 _tienda_codes_hoy = tuple(sorted(TIENDA_MAP.keys()))
-pedidos_detalle_hoy = _vh_cargar_pedidos_hoy(_vsventas_bytes_hoy, _tienda_codes_hoy, arg_today.strftime("%Y-%m-%d"))
+pedidos_detalle_hoy, pedidos_creados_hoy_count = _vh_cargar_pedidos_hoy(
+    _vsventas_bytes_hoy, _tienda_codes_hoy, arg_today.strftime("%Y-%m-%d")
+)
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -734,55 +568,59 @@ else:
 # no por venta) — fuente: archivo de Pedidos ("Vs de ventas"), filtrado a
 # los pedidos ENTREGADOS hoy (fecha de entrega, no de creación).
 # ---------------------------------------------------------------------
-st.markdown('<div class="section">Método de entrega</div>', unsafe_allow_html=True)
+st.markdown('<div class="section">Pedidos de hoy</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="section-desc">Cantidad de pedidos de hoy por método de entrega '
-    '(sale del archivo de Pedidos / "Vs de ventas", el mismo que se usa en Comparativo).</div>',
+    '<div class="section-desc">Entregados hoy (fecha de entrega) y creados hoy (fecha de '
+    'creación), con el desglose por método de entrega — sale del archivo de Pedidos.</div>',
     unsafe_allow_html=True
 )
 
 if pedidos_detalle_hoy is None:
     st.markdown(
         '<div class="empty-box">Todavía no se subió el archivo de Pedidos. '
-        'Subilo en la caja de arriba ("Subir archivo de Pedidos") para ver estas tablas.</div>',
-        unsafe_allow_html=True
-    )
-elif not len(pedidos_detalle_hoy):
-    st.markdown(
-        '<div class="empty-box">Todavía no hay pedidos registrados hoy en el archivo de Pedidos.</div>',
+        'Subilo en la caja de arriba ("Subir archivo de Pedidos") para ver estas tarjetas.</div>',
         unsafe_allow_html=True
     )
 else:
+    entregados_count = len(pedidos_detalle_hoy)
     metodo_agg = (
         pedidos_detalle_hoy.assign(MetodoLabel=pedidos_detalle_hoy["Metodo"].apply(_vh_metodo_entrega_label))
         .groupby("MetodoLabel", as_index=False)
         .size()
         .rename(columns={"size": "Pedidos"})
-        .sort_values("Pedidos", ascending=False)
+        .set_index("MetodoLabel")["Pedidos"]
+        if entregados_count else pd.Series(dtype=int)
     )
-    total_metodo = int(metodo_agg["Pedidos"].sum())
-    rows_html = ""
-    for i, r in enumerate(metodo_agg.itertuples(), start=1):
-        pct = (r.Pedidos / total_metodo * 100) if total_metodo else 0
-        rows_html += (
-            '<tr>'
-            f'<td>{i}</td>'
-            f'<td>{r.MetodoLabel}</td>'
-            f'<td style="text-align:center;font-weight:800;color:#208653;">{intfmt(r.Pedidos)}</td>'
-            f'<td style="text-align:right;">{pct:.1f}%</td>'
-            '</tr>'
+    _metodo_orden = ["Envío a domicilio", "Retiro en tienda", "Pickup (drive-through)"]
+    metodo_cards_html = ""
+    for metodo_label in _metodo_orden:
+        cant = int(metodo_agg.get(metodo_label, 0))
+        metodo_cards_html += (
+            '<div><div style="font-size:11px;color:#9ca3af;">' + metodo_label.upper() + '</div>'
+            f'<div style="font-size:19px;font-weight:800;color:#20252b;">{intfmt(cant)}</div></div>'
         )
-    st.markdown(
-        '<div class="rank-table-card">'
-        '<div class="table-scroll">'
-        '<table class="rank-table"><thead><tr>'
-        '<th></th><th>Método de entrega</th>'
-        '<th style="text-align:center;">Pedidos</th>'
-        '<th style="text-align:right;">% del total</th>'
-        f'</tr></thead><tbody>{rows_html}</tbody></table>'
-        '</div></div>',
-        unsafe_allow_html=True
-    )
+    # Por si aparece algún método nuevo que no está en la lista de arriba.
+    for metodo_label, cant in metodo_agg.items():
+        if metodo_label not in _metodo_orden:
+            metodo_cards_html += (
+                '<div><div style="font-size:11px;color:#9ca3af;">' + str(metodo_label).upper() + '</div>'
+                f'<div style="font-size:19px;font-weight:800;color:#20252b;">{intfmt(int(cant))}</div></div>'
+            )
+    st.markdown(f"""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.05);">
+      <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:14px;">
+        <div><div style="font-size:11px;color:#9ca3af;">PEDIDOS ENTREGADOS HOY</div>
+          <div style="font-size:19px;font-weight:800;color:#208653;">{intfmt(entregados_count)}</div></div>
+        <div><div style="font-size:11px;color:#9ca3af;">PEDIDOS CREADOS HOY</div>
+          <div style="font-size:19px;font-weight:800;color:#20252b;">{intfmt(pedidos_creados_hoy_count)}</div></div>
+      </div>
+      <div style="font-size:11px;color:#9ca3af;font-weight:800;margin-bottom:6px;">MÉTODO DE ENTREGA (entregados hoy)</div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;">
+        {metodo_cards_html if entregados_count else '<div style="font-size:12px;color:#9ca3af;">Todavía no hay pedidos entregados hoy.</div>'}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown('<div class="section">Tiendas con más pedidos (hoy)</div>', unsafe_allow_html=True)
 st.markdown(
