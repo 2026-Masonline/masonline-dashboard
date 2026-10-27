@@ -428,22 +428,30 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
                 monto_col = pd.to_numeric(_monto_txt, errors="coerce").fillna(0)
             else:
                 monto_col = 0
+            if "itemsQuantity" in d_entrega.columns:
+                unidades_col = pd.to_numeric(d_entrega["itemsQuantity"], errors="coerce").fillna(0)
+            else:
+                # Si no viene itemsQuantity, usamos itemsPickedQuantity (ya
+                # es una columna obligatoria) como mejor aproximación.
+                unidades_col = pd.to_numeric(d_entrega["itemsPickedQuantity"], errors="coerce").fillna(0)
             partes_entrega.append(pd.DataFrame({
                 "Id": d_entrega["commerceSequentialId"].values,
+                "Pedido": d_entrega["commerceId"].values,
                 "Tienda": tienda_col,
                 "Metodo": metodo_col,
                 "Monto": monto_col,
+                "Unidades": unidades_col,
             }))
 
     creados_count = len(ids_creados_hoy)
     if not partes_entrega:
-        return pd.DataFrame(columns=["Tienda", "Metodo", "Monto"]), creados_count
+        return pd.DataFrame(columns=["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]), creados_count
     out = pd.concat(partes_entrega, ignore_index=True, sort=False)
     # Dedup por ID de pedido (no por Tienda+Metodo juntos — varios pedidos
     # distintos de la misma tienda con el mismo método son normales y no
     # son duplicados).
     out = out.drop_duplicates(subset=["Id"])
-    return out[["Tienda", "Metodo", "Monto"]], creados_count
+    return out[["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]], creados_count
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 hoy_df = df[df["date"].dt.date == arg_today]
@@ -736,6 +744,41 @@ if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
             f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
         )
 
+    def _dl_detalle_pedidos_html(detalle_df, titulo):
+        """Listado pedido por pedido: número de pedido, tienda, método de
+        entrega, unidades y monto — el "detalle" que pidió Emi, no solo el
+        agregado por tienda/método."""
+        header = f'<div class="rank-table-header">🧾 {html.escape(titulo)}</div>'
+        if not len(detalle_df):
+            return (
+                f'<div class="rank-table-card">{header}'
+                '<div style="padding:20px;color:#9ca3af;font-size:13px;">Sin datos.</div></div>'
+            )
+        detalle_df = detalle_df.sort_values(["Tienda", "Pedido"])
+        rows_html = ""
+        for r in detalle_df.itertuples():
+            codigo = str(r.Tienda)
+            nombre = TIENDA_MAP.get(codigo, "")
+            tienda_label = f"{codigo} - {nombre}" if nombre else codigo
+            metodo_label = _vh_metodo_entrega_label(r.Metodo)
+            rows_html += (
+                '<tr>'
+                f'<td>{html.escape(str(r.Pedido))}</td>'
+                f'<td>{html.escape(tienda_label)}</td>'
+                f'<td>{html.escape(metodo_label)}</td>'
+                f'<td style="text-align:center;">{intfmt(r.Unidades)}</td>'
+                f'<td style="text-align:right;font-weight:800;color:#208653;">{html.escape(money(r.Monto))}</td>'
+                '</tr>'
+            )
+        return (
+            f'<div class="rank-table-card">{header}'
+            '<table class="rank-table"><thead><tr>'
+            '<th>N° de pedido</th><th>Tienda</th><th>Método de entrega</th>'
+            '<th style="text-align:center;">Unidades</th>'
+            '<th style="text-align:right;">Monto</th>'
+            f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        )
+
     if LOGO_FILE.exists():
         _dl_logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
         _dl_logo_html = (
@@ -849,6 +892,9 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 
 <div class="section">Todas las tiendas</div>
 {_dl_tabla_html(_dl_tienda_agg, f"TODAS LAS TIENDAS · PEDIDOS {arg_today.strftime('%d/%m')}")}
+
+<div class="section">Detalle de pedidos</div>
+{_dl_detalle_pedidos_html(pedidos_detalle_hoy, f"DETALLE · PEDIDOS ENTREGADOS {arg_today.strftime('%d/%m')} ({intfmt(len(pedidos_detalle_hoy))})")}
 
 <div class="footer">
   <span>Fuente: archivo de Pedidos ("Vs de ventas" / order-operation).</span>
