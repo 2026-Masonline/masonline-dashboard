@@ -467,6 +467,16 @@ df = df.merge(_pedidos_dia_vs_entrega, on="date", how="left")
 df["orders_entrega"] = df["orders_vsventas_entrega"].where(
     df["orders_vsventas_entrega"].notna(), df["orders_facturados"]
 )
+# "orders_entrega_real": SOLO lo que trae 'Vs de ventas' por fecha de
+# entrega, sin respaldo de "Pedidos Facturados" — a pedido de Emi, para que
+# MES EN CURSO coincida con Janis en vez de mezclarse con una métrica
+# distinta (Pedidos Facturados cuenta otra cosa, no pedidos únicos de
+# ecommerce). Mientras el archivo de Pedidos no cubra el mes completo, los
+# días sin datos reales simplemente no suman acá (van a ir sumando a
+# medida que se suba 'Vs de ventas' con más días del mes). El DIARIO y el
+# Top 5 del día siguen usando "orders_entrega" (con respaldo) más abajo,
+# sin cambios.
+df["orders_entrega_real"] = df["orders_vsventas_entrega"].fillna(0)
 df = df.drop(columns=["orders_vsventas_entrega"])
 
 if len(df_tiendas):
@@ -591,7 +601,7 @@ days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
 acc_orders = current["orders"].sum()
-acc_orders_entrega = current["orders_entrega"].sum()
+acc_orders_entrega = current["orders_entrega_real"].sum()
 acc_units = current["units"].sum()
 
 share = acc_ecom / acc_company if acc_company else 0
