@@ -430,10 +430,13 @@ if len(df_tiendas):
     df_tiendas = df_tiendas.drop(columns=["orders_vsventas"])
 
 # Pedidos por fecha de ENTREGA (deliveryFinishDate), además de los de arriba
-# (fecha de creación): la tarjeta "DIARIO" (en "Dashboard completo", "Resumen
-# para GDN" y en la imagen de resumen descargable) muestra pedidos por fecha
-# de entrega, a pedido de Emi — el resto de la página (MES EN CURSO, MENSUAL,
-# Top 5 tiendas, etc.) sigue usando fecha de creación, sin cambios.
+# (fecha de creación): la tarjeta "DIARIO" y la de "MES EN CURSO" (en la app,
+# "Dashboard completo", "Resumen para GDN" y la imagen/HTML descargables)
+# muestran pedidos por fecha de entrega, a pedido de Emi — coincide con lo
+# que Janis/Comparativo cuenta como pedido entregado. El Top 5 tiendas del
+# DÍA también usa entrega (ver más abajo); el Top 5 MENSUAL sigue en
+# creación, consistente con el "acc_orders" (creación) que queda sin usar
+# para mostrar pero se mantiene calculado por si hace falta más adelante.
 _pedidos_dia_vs_entrega = _pedidos_dia_vs_entrega.rename(
     columns={"orders_vsventas": "orders_vsventas_entrega"}
 )
@@ -1057,7 +1060,7 @@ try:
         mes_label=f"{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}",
         daily_company=latest["company_tax"], daily_ecom=latest["ecommerce_tax"],
         daily_orders=latest["orders_entrega"], daily_units=latest["units"], share_daily_v=share_daily,
-        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders, mes_units=acc_units,
+        mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders_entrega, mes_units=acc_units,
         share_mes_v=share,
     )
     st.download_button(
@@ -1444,7 +1447,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 <div class="card" style="border-top:4px solid #59636e;">
   <div class="label">MES EN CURSO</div>
   <div class="value">{html.escape(money(acc_ecom))}</div>
-  <div class="small">{int(acc_orders):,} pedidos · {int(acc_units):,} unidades</div>
+  <div class="small">{int(acc_orders_entrega):,} pedidos · {int(acc_units):,} unidades</div>
 </div>
 
 <div class="card" style="border-top:4px solid #2f9e66;">
@@ -1567,7 +1570,7 @@ with tab1:
         <div class="card" style="border-top:4px solid #59636e;">
           <div class="label">MES EN CURSO</div>
           <div class="value">{money(acc_ecom)}</div>
-          <div class="small">{intfmt(acc_orders)} pedidos · {intfmt(acc_units)} unidades</div>
+          <div class="small">{intfmt(acc_orders_entrega)} pedidos · {intfmt(acc_units)} unidades</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1664,7 +1667,7 @@ with tab1:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -1918,7 +1921,7 @@ with tab2:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
@@ -2004,7 +2007,7 @@ with tab3:
           <div style="display:flex;gap:12px;">
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">PEDIDOS</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(acc_orders_entrega)}</div>
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
