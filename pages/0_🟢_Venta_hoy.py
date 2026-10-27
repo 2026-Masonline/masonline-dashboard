@@ -463,61 +463,61 @@ st.markdown(f"""
 
 if not len(hoy_df):
     st.markdown(
-        '<div class="empty-box">Todavía no hay datos de hoy — subí el Excel '
+        '<div class="empty-box">Todavía no hay datos de venta de hoy — subí el Excel '
         '"Venta Con y sin Impuesto" del mes en curso (con la fila de hoy adentro) '
-        'en la pestaña <b>app</b> para verlos acá.</div>',
+        'en la pestaña <b>app</b> para verlos acá. (Las tarjetas de Pedidos más abajo '
+        'no dependen de este archivo — son del archivo de Pedidos que subiste arriba.)</div>',
         unsafe_allow_html=True
     )
-    st.stop()
+else:
+    hoy_company = hoy_df["company_tax"].sum()
+    hoy_ecom = hoy_df["ecommerce_tax"].sum()
+    hoy_orders = hoy_df["orders"].sum()
+    hoy_units = hoy_df["units"].sum()
+    hoy_share = (hoy_ecom / hoy_company) if hoy_company else 0
 
-hoy_company = hoy_df["company_tax"].sum()
-hoy_ecom = hoy_df["ecommerce_tax"].sum()
-hoy_orders = hoy_df["orders"].sum()
-hoy_units = hoy_df["units"].sum()
-hoy_share = (hoy_ecom / hoy_company) if hoy_company else 0
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #f5a623;">
+          <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
+          <div class="value">{pct(hoy_share)}</div>
+          <div class="small">Sobre la venta compañía de hoy</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #e8432c;">
+          <div class="label" style="color:#e8432c;">VENTA ECOMMERCE</div>
+          <div class="value" style="color:#e8432c;">{money(hoy_ecom)}</div>
+          <div class="small">Compañía: {money(hoy_company)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #59636e;">
+          <div class="label">PEDIDOS</div>
+          <div class="value">{intfmt(hoy_orders)}</div>
+          <div class="small">Pedidos Facturados (parcial)</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #2f9e66;">
+          <div class="label" style="color:#208653;">UNIDADES</div>
+          <div class="value" style="color:#208653;">{intfmt(hoy_units)}</div>
+          <div class="small">Vendidas hoy (parcial)</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.markdown(f"""
-    <div class="card" style="border-top:4px solid #f5a623;">
-      <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
-      <div class="value">{pct(hoy_share)}</div>
-      <div class="small">Sobre la venta compañía de hoy</div>
-    </div>
-    """, unsafe_allow_html=True)
-with c2:
-    st.markdown(f"""
-    <div class="card" style="border-top:4px solid #e8432c;">
-      <div class="label" style="color:#e8432c;">VENTA ECOMMERCE</div>
-      <div class="value" style="color:#e8432c;">{money(hoy_ecom)}</div>
-      <div class="small">Compañía: {money(hoy_company)}</div>
-    </div>
-    """, unsafe_allow_html=True)
-with c3:
-    st.markdown(f"""
-    <div class="card" style="border-top:4px solid #59636e;">
-      <div class="label">PEDIDOS</div>
-      <div class="value">{intfmt(hoy_orders)}</div>
-      <div class="small">Pedidos Facturados (parcial)</div>
-    </div>
-    """, unsafe_allow_html=True)
-with c4:
-    st.markdown(f"""
-    <div class="card" style="border-top:4px solid #2f9e66;">
-      <div class="label" style="color:#208653;">UNIDADES</div>
-      <div class="value" style="color:#208653;">{intfmt(hoy_units)}</div>
-      <div class="small">Vendidas hoy (parcial)</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.markdown(
-    '<div style="color:#9ca3af;font-size:12px;margin-top:14px;">'
-    'Parcial — el día todavía no cerró, estos números van a seguir subiendo a medida '
-    'que se actualice el archivo. "Pedidos" sale del Excel tal cual (Pedidos Facturados), '
-    'no del ajuste por fecha de entrega que usan Venta diaria / Venta fin de semana.'
-    '</div>',
-    unsafe_allow_html=True
-)
+    st.markdown(
+        '<div style="color:#9ca3af;font-size:12px;margin-top:14px;">'
+        'Parcial — el día todavía no cerró, estos números van a seguir subiendo a medida '
+        'que se actualice el archivo. "Pedidos" sale del Excel tal cual (Pedidos Facturados), '
+        'no del ajuste por fecha de entrega que usan Venta diaria / Venta fin de semana.'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
 st.markdown('<div class="section">Tiendas hoy</div>', unsafe_allow_html=True)
 st.markdown(
