@@ -365,10 +365,12 @@ def intfmt(v):
 
 # ---------------------------------------------------------------------
 # Método de entrega + pedidos por tienda de HOY: esto NO sale de "Venta Con
-# y sin Impuesto" (no trae esa info) — sale del archivo de Pedidos ("Vs de
-# ventas"), el mismo que ya se sube para Comparativo / Venta fin de semana.
-# Si todavía no se subió ese archivo, esta parte queda vacía hasta que se
-# suba (no hace falta volver a subirlo acá, es compartido entre pestañas).
+# y sin Impuesto" (no trae esa info) — sale del archivo de Pedidos
+# ("order-operation" / "Vs de ventas"), el MISMO archivo compartido que ya
+# usan Comparativo / Venta fin de semana / Venta diaria. Se puede subir
+# acá mismo (abajo) o desde la pestaña "app" — es un solo archivo
+# compartido, no uno aparte: subirlo desde cualquiera de los dos lados
+# actualiza el mismo dato para todas las pestañas.
 # ---------------------------------------------------------------------
 SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
@@ -418,6 +420,80 @@ def _vh_pedidos_get_shared_bytes(shared_path):
             pass
         return content
     return None
+
+def _vh_pedidos_save_to_github(shared_path, content_bytes, label):
+    """Guarda este archivo en GitHub (carpeta shared_uploads/), igual que
+    hace "app" — para que quede disponible para siempre y las demás
+    pestañas (Comparativo, Venta fin de semana, Venta diaria) lo vean
+    también, sin importar si se subió desde acá o desde "app"."""
+    headers = _vh_pedidos_github_headers()
+    if not headers:
+        return False, "no hay credenciales de GitHub configuradas (GITHUB_TOKEN)"
+    import urllib.request
+    import urllib.error
+    import json as _json
+    import base64 as _base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+    try:
+        sha = None
+        request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request_get, timeout=120) as response:
+                sha = _json.loads(response.read().decode("utf-8"))["sha"]
+        except urllib.error.HTTPError as e_get:
+            if e_get.code != 404:
+                raise
+        payload = {
+            "message": f"Actualizar reporte - {label}",
+            "content": _base64.b64encode(content_bytes).decode("utf-8"),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        request_put = urllib.request.Request(
+            url,
+            data=_json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        with urllib.request.urlopen(request_put, timeout=120) as response:
+            response.read()
+        return True, None
+    except urllib.error.HTTPError as e:
+        try:
+            detalle = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            detalle = ""
+        return False, f"HTTP {e.code} {e.reason} {detalle}".strip()
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
+
+def _vh_pedidos_save_shared_bytes(uploaded_file, shared_path, label):
+    """Si se subió un archivo nuevo, lo guarda local + GitHub y devuelve
+    los bytes nuevos (para usarlos ya mismo en esta misma corrida, sin
+    esperar un refresh). Si falla el respaldo en GitHub, lo avisa en
+    pantalla (no falla en silencio)."""
+    if uploaded_file is None:
+        return None
+    content = uploaded_file.getvalue()
+    try:
+        shared_path.parent.mkdir(parents=True, exist_ok=True)
+        shared_path.write_bytes(content)
+    except Exception:
+        pass
+    ok, err = _vh_pedidos_save_to_github(shared_path, content, label)
+    if ok:
+        st.success(f"{label}: archivo cargado y guardado correctamente.")
+    else:
+        st.error(
+            f"⚠️ {label}: se guardó para esta sesión, pero el respaldo permanente "
+            f"en GitHub falló, así que si la app se reinicia vas a perder este "
+            f"archivo. Detalle técnico: {err}"
+        )
+    return content
 
 _VH_PEDIDOS_RAW_COLS = {
     "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
@@ -502,7 +578,29 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 hoy_df = df[df["date"].dt.date == arg_today]
 
-_vsventas_bytes_hoy = _vh_pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:12px 16px;margin:18px 0 10px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    SUBIR ARCHIVO DE PEDIDOS ("Vs de ventas" / order-operation)
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Subí acá el Excel de Pedidos para actualizar "Método de entrega" y "Tiendas con
+    más pedidos" al instante — es el MISMO archivo compartido que usan Comparativo,
+    Venta fin de semana y Venta diaria (no hace falta subirlo de nuevo en "app").
+  </div>
+</div>
+""", unsafe_allow_html=True)
+upload_pedidos_hoy = st.file_uploader(
+    "Archivo de Pedidos", type=["xlsx", "xls"], key="upload_pedidos_venta_hoy",
+    label_visibility="collapsed",
+    help='Archivo "Vs de ventas" / order-operation (commerceDateCreated, deliveryFinishDate, shippingsType, etc.)'
+)
+_vsventas_bytes_nuevo = _vh_pedidos_save_shared_bytes(
+    upload_pedidos_hoy, SHARED_VSVENTAS_PATH_PEDIDOS, "Pedidos (desde Venta hoy)"
+)
+
+_vsventas_bytes_hoy = _vsventas_bytes_nuevo or _vh_pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
 _tienda_codes_hoy = tuple(sorted(TIENDA_MAP.keys()))
 pedidos_detalle_hoy = _vh_cargar_pedidos_hoy(_vsventas_bytes_hoy, _tienda_codes_hoy, arg_today.strftime("%Y-%m-%d"))
 
@@ -645,9 +743,8 @@ st.markdown(
 
 if pedidos_detalle_hoy is None:
     st.markdown(
-        '<div class="empty-box">Todavía no se subió el archivo de Pedidos ("Vs de ventas"). '
-        'Se completa solo cuando ese archivo esté disponible (se sube en Comparativo / '
-        'Venta fin de semana / Venta diaria — es compartido entre pestañas).</div>',
+        '<div class="empty-box">Todavía no se subió el archivo de Pedidos. '
+        'Subilo en la caja de arriba ("Subir archivo de Pedidos") para ver estas tablas.</div>',
         unsafe_allow_html=True
     )
 elif not len(pedidos_detalle_hoy):
