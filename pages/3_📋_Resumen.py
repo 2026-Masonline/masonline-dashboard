@@ -655,42 +655,6 @@ def get_shared_bytes(uploaded_file, shared_path):
         return content, False
     return None, False
 
-# ---------------------------------------------------------------------
-# Pedidos STS: storage aparte (mes a mes), armado por la tarjeta
-# "PEDIDOS STS" de la pestaña app — no tiene nada que ver con el Reporte
-# diario/Pedidos/Reclamos/Faltantes de arriba. Se lee tal cual lo deja
-# esa tarjeta (un archivo <AAAA-MM>.csv por mes + un índice).
-# ---------------------------------------------------------------------
-
-def _month_shared_path_sts(month_key):
-    return SHARED_DIR / f"pedidos_sts_{month_key}.csv"
-
-def load_index_pedidos_sts():
-    data, _ = get_shared_bytes(None, SHARED_DIR / "pedidos_sts_index.json")
-    if not data:
-        return []
-    try:
-        return sorted(set(json.loads(data.decode("utf-8"))), reverse=True)
-    except Exception:
-        return []
-
-def load_month_df_sts(month_key):
-    content, _ = get_shared_bytes(None, _month_shared_path_sts(month_key))
-    if not content:
-        return None
-    try:
-        df = pd.read_csv(
-            io.BytesIO(content),
-            dtype={"Numero de pedido": str, "Numero de tienda": str, "Mes": str},
-        )
-        df["_mes_ord"] = pd.PeriodIndex(df["_mes_ord"].astype(str), freq="M")
-        return df
-    except Exception:
-        return None
-
-def tienda_nombre_sts(codigo):
-    return TIENDA_CODE_MAP.get(norm_txt(codigo), norm_txt(codigo))
-
 def load_section_from_xl(xl, required_cols, required=True):
     if xl is None:
         return None
@@ -1640,51 +1604,4 @@ else:
         'Resumen · datos del Reporte diario · esta página no guarda historial: volvé a subir los archivos '
         'actualizados para regenerar el ranking.</div>',
         unsafe_allow_html=True
-    )
-
-# ---------------------------------------------------------------------
-# Listado de tiendas con pedidos (Pedidos STS) — viene de un storage
-# aparte (lo que se va subiendo en la pestaña app, tarjeta "PEDIDOS STS",
-# mes a mes), no del Reporte diario/Pedidos/Reclamos/Faltantes de arriba.
-# Se muestra siempre que haya al menos un mes cargado, con el total
-# acumulado de TODOS los meses cargados hasta ahora.
-# ---------------------------------------------------------------------
-
-index_meses_sts = load_index_pedidos_sts()
-frames_sts = [load_month_df_sts(m) for m in index_meses_sts]
-frames_sts = [f for f in frames_sts if f is not None and not f.empty]
-
-if frames_sts:
-    tabla_sts = pd.concat(frames_sts, ignore_index=True)
-    tabla_sts["Tienda"] = tabla_sts["Numero de tienda"].apply(tienda_nombre_sts)
-    agg_sts = tabla_sts.groupby(["Numero de tienda", "Tienda"], as_index=False).agg(
-        Pedidos=("Numero de pedido", "count")
-    ).sort_values("Pedidos", ascending=False)
-    agg_sts = agg_sts.rename(columns={"Numero de tienda": "Código"})
-    agg_sts["Pedidos"] = agg_sts["Pedidos"].apply(lambda v: f"{int(v):,}".replace(",", "."))
-    agg_sts_view = agg_sts[["Tienda", "Código", "Pedidos"]]
-
-    st.markdown(
-        '<div class="section">🧾 Listado de tiendas con pedidos (Pedidos STS)</div>'
-        '<div class="section-desc">Total de pedidos por tienda, sumando todos los meses cargados hasta ahora '
-        'en la pestaña app, tarjeta "PEDIDOS STS".</div>',
-        unsafe_allow_html=True
-    )
-    kpi_sts_html = (
-        '<div class="kpi-row">'
-        + kpi_card("MESES CARGADOS", len(index_meses_sts), ", ".join(sorted(index_meses_sts)))
-        + kpi_card("TIENDAS CON PEDIDOS", agg_sts["Tienda"].nunique(), "")
-        + kpi_card("PEDIDOS TOTALES", f"{int(tabla_sts['Numero de pedido'].count()):,}".replace(",", "."), "")
-        + '</div>'
-    )
-    st.markdown(kpi_sts_html, unsafe_allow_html=True)
-    st.write(table_html(agg_sts_view), unsafe_allow_html=True)
-
-    csv_sts = agg_sts_view.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "⬇ Descargar listado de tiendas (CSV)",
-        data=csv_sts,
-        file_name="pedidos_sts_por_tienda.csv",
-        mime="text/csv",
-        key="dl_pedidos_sts_tiendas",
     )
