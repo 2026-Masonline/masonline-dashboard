@@ -372,22 +372,23 @@ def _vh_pedidos_codigo_tienda(v, tienda_codes):
     return candidatos[-1] if candidatos else s
 
 @st.cache_data(ttl=180, show_spinner=False)
-def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
-    """Pedidos de HOY, calculados una sola vez por las dos fechas: ENTREGA
-    (deliveryFinishDate) para el detalle por método/tienda que se muestra
-    abajo, y CREACIÓN (commerceDateCreated) solo para el conteo de
-    "pedidos creados hoy". Devuelve (entregados_df, creados_count) —
-    entregados_df es None si todavía no hay archivo subido. Cacheado 3
-    minutos por archivo+día."""
+def _vh_cargar_pedidos_completo(vsventas_bytes, tienda_codes_tuple):
+    """Parsea y combina TODAS las hojas del archivo de Pedidos una sola vez
+    (cacheado 3 minutos por archivo) — sin filtrar todavía por ninguna
+    fecha puntual. Devuelve un DataFrame con una fila por pedido entregado
+    (columnas Id/Pedido/Tienda/Metodo/Monto/Unidades + FechaEntrega y
+    FechaCreacion ya normalizadas), para poder recortar después por
+    CUALQUIER fecha que el archivo subido traiga (no solo "hoy"), sin
+    tener que volver a abrir el Excel cada vez. None si todavía no hay
+    archivo subido."""
     if vsventas_bytes is None:
-        return None, 0
+        return None
     try:
         xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
     except Exception:
-        return None, 0
+        return None
     tienda_codes = set(tienda_codes_tuple)
-    partes_entrega = []
-    ids_creados_hoy = set()
+    partes = []
     for name in xl.sheet_names:
         try:
             d = xl.parse(name)
@@ -404,57 +405,68 @@ def _vh_cargar_pedidos_hoy(vsventas_bytes, tienda_codes_tuple, hoy_str):
             continue
 
         fecha_creacion = pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize()
-        creados_hoy_ids = d.loc[fecha_creacion.astype(str).str[:10] == hoy_str, "commerceSequentialId"]
-        ids_creados_hoy.update(creados_hoy_ids.tolist())
-
         fecha_entrega = pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize()
-        d_entrega = d[fecha_entrega.astype(str).str[:10] == hoy_str]
-        if len(d_entrega):
-            tienda_col = (
-                d_entrega["shippingWarehouseReferenceId"].apply(lambda v: _vh_pedidos_codigo_tienda(v, tienda_codes))
-                if "shippingWarehouseReferenceId" in d_entrega.columns else ""
+        tienda_col = (
+            d["shippingWarehouseReferenceId"].apply(lambda v: _vh_pedidos_codigo_tienda(v, tienda_codes))
+            if "shippingWarehouseReferenceId" in d.columns else ""
+        )
+        metodo_col = d["shippingsType"] if "shippingsType" in d.columns else ""
+        if "totalAmount" in d.columns:
+            # totalAmount a veces viene como texto con signo "$" (ej.
+            # "$85783.3") en vez de número — hay que limpiarlo antes de
+            # sumarlo, si no pd.to_numeric lo deja todo en NaN -> 0.
+            _monto_txt = (
+                d["totalAmount"].astype(str)
+                .str.replace("$", "", regex=False)
+                .str.replace(",", "", regex=False)
+                .str.strip()
             )
-            metodo_col = d_entrega["shippingsType"] if "shippingsType" in d_entrega.columns else ""
-            if "totalAmount" in d_entrega.columns:
-                # totalAmount a veces viene como texto con signo "$" (ej.
-                # "$85783.3") en vez de número — hay que limpiarlo antes de
-                # sumarlo, si no pd.to_numeric lo deja todo en NaN -> 0.
-                _monto_txt = (
-                    d_entrega["totalAmount"].astype(str)
-                    .str.replace("$", "", regex=False)
-                    .str.replace(",", "", regex=False)
-                    .str.strip()
-                )
-                monto_col = pd.to_numeric(_monto_txt, errors="coerce").fillna(0)
-            else:
-                monto_col = 0
-            if "itemsQuantity" in d_entrega.columns:
-                unidades_col = pd.to_numeric(d_entrega["itemsQuantity"], errors="coerce").fillna(0)
-            else:
-                # Si no viene itemsQuantity, usamos itemsPickedQuantity (ya
-                # es una columna obligatoria) como mejor aproximación.
-                unidades_col = pd.to_numeric(d_entrega["itemsPickedQuantity"], errors="coerce").fillna(0)
-            partes_entrega.append(pd.DataFrame({
-                "Id": d_entrega["commerceSequentialId"].values,
-                "Pedido": d_entrega["commerceId"].values,
-                "Tienda": tienda_col,
-                "Metodo": metodo_col,
-                "Monto": monto_col,
-                "Unidades": unidades_col,
-            }))
+            monto_col = pd.to_numeric(_monto_txt, errors="coerce").fillna(0)
+        else:
+            monto_col = 0
+        if "itemsQuantity" in d.columns:
+            unidades_col = pd.to_numeric(d["itemsQuantity"], errors="coerce").fillna(0)
+        else:
+            # Si no viene itemsQuantity, usamos itemsPickedQuantity (ya es
+            # una columna obligatoria) como mejor aproximación.
+            unidades_col = pd.to_numeric(d["itemsPickedQuantity"], errors="coerce").fillna(0)
+        partes.append(pd.DataFrame({
+            "Id": d["commerceSequentialId"].values,
+            "Pedido": d["commerceId"].values,
+            "Tienda": tienda_col,
+            "Metodo": metodo_col,
+            "Monto": monto_col,
+            "Unidades": unidades_col,
+            "FechaEntrega": fecha_entrega.values,
+            "FechaCreacion": fecha_creacion.values,
+        }))
 
-    creados_count = len(ids_creados_hoy)
-    if not partes_entrega:
-        return pd.DataFrame(columns=["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]), creados_count
-    out = pd.concat(partes_entrega, ignore_index=True, sort=False)
+    cols = ["Id", "Pedido", "Tienda", "Metodo", "Monto", "Unidades", "FechaEntrega", "FechaCreacion"]
+    if not partes:
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(partes, ignore_index=True, sort=False)
     # Dedup por ID de pedido (no por Tienda+Metodo juntos — varios pedidos
     # distintos de la misma tienda con el mismo método son normales y no
     # son duplicados).
     out = out.drop_duplicates(subset=["Id"])
-    return out[["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]], creados_count
+    return out[cols]
+
+def _vh_pedidos_del_dia(completo, fecha):
+    """A partir del DataFrame completo (ya parseado y cacheado), recorta
+    los pedidos ENTREGADOS ese día puntual (fecha de entrega) y cuenta los
+    CREADOS ese mismo día (fecha de creación) — misma lógica de siempre,
+    pero para cualquier `fecha` (date de Python), no solo la de hoy.
+    Devuelve (entregados_df, creados_count); entregados_df es None si
+    `completo` es None (todavía no hay archivo subido)."""
+    if completo is None:
+        return None, 0
+    if not len(completo):
+        return completo[["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]], 0
+    entregados = completo[completo["FechaEntrega"].dt.date == fecha]
+    creados_count = int((completo["FechaCreacion"].dt.date == fecha).sum())
+    return entregados[["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]], creados_count
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-hoy_df = df[df["date"].dt.date == arg_today]
 
 st.markdown("""
 <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
@@ -480,9 +492,33 @@ _vsventas_bytes_nuevo = _vh_pedidos_save_shared_bytes(
 
 _vsventas_bytes_hoy = _vsventas_bytes_nuevo or _vh_pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
 _tienda_codes_hoy = tuple(sorted(TIENDA_MAP.keys()))
-pedidos_detalle_hoy, pedidos_creados_hoy_count = _vh_cargar_pedidos_hoy(
-    _vsventas_bytes_hoy, _tienda_codes_hoy, arg_today.strftime("%Y-%m-%d")
+_pedidos_completo_hoy = _vh_cargar_pedidos_completo(_vsventas_bytes_hoy, _tienda_codes_hoy)
+
+# Fecha a mostrar: el archivo de Pedidos puede traer varios días (no solo
+# "hoy" en el sentido estricto) — se arma un selector con las fechas de
+# ENTREGA que realmente trae el archivo subido, para poder elegir cualquiera
+# de ellas (por defecto, la más reciente) en vez de depender de que coincida
+# con la fecha real de hoy.
+_fechas_disponibles_hoy = (
+    sorted(_pedidos_completo_hoy["FechaEntrega"].dropna().dt.date.unique(), reverse=True)
+    if _pedidos_completo_hoy is not None and len(_pedidos_completo_hoy)
+    else []
 )
+if _fechas_disponibles_hoy:
+    st.markdown(
+        '<div style="font-size:12px;font-weight:700;color:#6b7280;margin:8px 0 2px;">'
+        'FECHA A MOSTRAR (de entrega)</div>',
+        unsafe_allow_html=True
+    )
+    fecha_mostrada = st.selectbox(
+        "Fecha a mostrar", _fechas_disponibles_hoy,
+        format_func=lambda d: d.strftime("%d/%m/%Y") + (" (hoy)" if d == arg_today else ""),
+        key="vh_fecha_pedidos", label_visibility="collapsed"
+    )
+else:
+    fecha_mostrada = arg_today
+
+pedidos_detalle_hoy, pedidos_creados_hoy_count = _vh_pedidos_del_dia(_pedidos_completo_hoy, fecha_mostrada)
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -500,7 +536,7 @@ st.markdown(f"""
     <div class="hero-sub">E-COMMERCE</div>
   </div>
   <div class="hero-date">
-    {arg_today.strftime('%d/%m/%Y')}
+    {fecha_mostrada.strftime('%d/%m/%Y')}
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -510,10 +546,11 @@ st.markdown(f"""
 # no por venta) — fuente: archivo de Pedidos ("Vs de ventas"), filtrado a
 # los pedidos ENTREGADOS hoy (fecha de entrega, no de creación).
 # ---------------------------------------------------------------------
-st.markdown('<div class="section">Pedidos de hoy</div>', unsafe_allow_html=True)
+st.markdown('<div class="section">Pedidos del día</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="section-desc">Entregados hoy (fecha de entrega) y creados hoy (fecha de '
-    'creación), con el desglose por método de entrega — sale del archivo de Pedidos.</div>',
+    f'<div class="section-desc">Entregados (fecha de entrega) y creados (fecha de creación) '
+    f'el <b>{fecha_mostrada.strftime("%d/%m/%Y")}</b>, con el desglose por método de entrega '
+    f'— sale del archivo de Pedidos.</div>',
     unsafe_allow_html=True
 )
 
@@ -540,22 +577,23 @@ else:
         metodo_agg = pd.DataFrame(columns=["Pedidos", "Monto"])
         etiquetas = _metodo_orden
 
-    # Tarjeta "Pedidos entregados hoy" + "Pedidos creados hoy".
+    # Tarjeta "Total de pedidos entregados" (del día elegido) + "Pedidos creados" (mismo día).
+    _fecha_card = fecha_mostrada.strftime("%d/%m")
     cc1, cc2 = st.columns(2)
     with cc1:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #2f9e66;">
-          <div class="label" style="color:#208653;">PEDIDOS ENTREGADOS HOY</div>
+          <div class="label" style="color:#208653;">TOTAL PEDIDOS ENTREGADOS</div>
           <div class="value" style="color:#208653;">{intfmt(entregados_count)}</div>
-          <div class="small">Por fecha de entrega</div>
+          <div class="small">Por fecha de entrega — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
     with cc2:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #59636e;">
-          <div class="label">PEDIDOS CREADOS HOY</div>
+          <div class="label">PEDIDOS CREADOS</div>
           <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
-          <div class="small">Por fecha de creación</div>
+          <div class="small">Por fecha de creación — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -860,20 +898,20 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
     {_dl_logo_html}
     <div class="hero-sub">E-COMMERCE</div>
   </div>
-  <div class="hero-date">{arg_today.strftime('%d/%m/%Y')}</div>
+  <div class="hero-date">{fecha_mostrada.strftime('%d/%m/%Y')}</div>
 </div>
 
-<div class="section">Pedidos de hoy</div>
+<div class="section">Pedidos del día</div>
 <div class="kpis kpis-2">
   <div class="card" style="border-top:4px solid #2f9e66;">
-    <div class="label" style="color:#208653;">PEDIDOS ENTREGADOS HOY</div>
+    <div class="label" style="color:#208653;">TOTAL PEDIDOS ENTREGADOS</div>
     <div class="value" style="color:#208653;">{intfmt(len(pedidos_detalle_hoy))}</div>
-    <div class="small">Por fecha de entrega</div>
+    <div class="small">Por fecha de entrega — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
   <div class="card" style="border-top:4px solid #59636e;">
-    <div class="label">PEDIDOS CREADOS HOY</div>
+    <div class="label">PEDIDOS CREADOS</div>
     <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
-    <div class="small">Por fecha de creación</div>
+    <div class="small">Por fecha de creación — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
 </div>
 
@@ -888,13 +926,13 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 </div>
 
 <div class="section">Top 5 tiendas con más pedidos</div>
-{_dl_tabla_html(_dl_tienda_agg.head(5), f"TOP 5 · PEDIDOS {arg_today.strftime('%d/%m')}")}
+{_dl_tabla_html(_dl_tienda_agg.head(5), f"TOP 5 · PEDIDOS {fecha_mostrada.strftime('%d/%m')}")}
 
 <div class="section">Todas las tiendas</div>
-{_dl_tabla_html(_dl_tienda_agg, f"TODAS LAS TIENDAS · PEDIDOS {arg_today.strftime('%d/%m')}")}
+{_dl_tabla_html(_dl_tienda_agg, f"TODAS LAS TIENDAS · PEDIDOS {fecha_mostrada.strftime('%d/%m')}")}
 
 <div class="section">Detalle de pedidos</div>
-{_dl_detalle_pedidos_html(pedidos_detalle_hoy, f"DETALLE · PEDIDOS ENTREGADOS {arg_today.strftime('%d/%m')} ({intfmt(len(pedidos_detalle_hoy))})")}
+{_dl_detalle_pedidos_html(pedidos_detalle_hoy, f"DETALLE · PEDIDOS ENTREGADOS {fecha_mostrada.strftime('%d/%m')} ({intfmt(len(pedidos_detalle_hoy))})")}
 
 <div class="footer">
   <span>Fuente: archivo de Pedidos ("Vs de ventas" / order-operation).</span>
@@ -909,6 +947,6 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
     st.download_button(
         "⬇️ Descargar resumen de Pedidos (HTML)",
         data=_html_doc,
-        file_name=f"pedidos_hoy_{arg_today.strftime('%Y-%m-%d')}.html",
+        file_name=f"pedidos_{fecha_mostrada.strftime('%Y-%m-%d')}.html",
         mime="text/html",
     )
