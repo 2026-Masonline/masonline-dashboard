@@ -671,60 +671,6 @@ def load_section_from_xl(xl, required_cols, required=True):
 def load_section(uploaded_file, required_cols):
     return load_section_from_xl(safe_open_excel(uploaded_file), required_cols)
 
-def _fr_read_positional(xl, sheet_name):
-    try:
-        raw = xl.parse(sheet_name, header=None)
-    except Exception:
-        return None
-    if raw.shape[1] < 6 or not len(raw):
-        return None
-    raw = raw.iloc[:, :6].copy()
-    first_cell = re.sub(r"[▾▼▲]+\s*$", "", norm_txt(raw.iloc[0, 0])).strip()
-    if fold_tienda_key(first_cell) == "tienda":
-        raw = raw.iloc[1:].reset_index(drop=True)
-    if not len(raw):
-        return None
-    raw.columns = [f"col{i}" for i in range(raw.shape[1])]
-    return raw
-
-def _fr_headerless_candidate(xl, sheet_name):
-    raw = _fr_read_positional(xl, sheet_name)
-    if raw is None:
-        return None
-    first_col = raw.iloc[:, 0].apply(norm_txt).apply(
-        lambda s: re.sub(r"[▾▼▲]+\s*$", "", s).strip()
-    )
-    if not first_col.str.upper().isin(["TOTAL", "TOTA"]).any():
-        return None
-    last_col = raw.iloc[:, 5].apply(norm_txt)
-    pct_like = last_col.str.contains("%", na=False)
-    if pct_like.mean() < 0.5:
-        return None
-    return raw
-
-def load_fr_from_xl(xl):
-    if xl is None:
-        return None
-    name, df = find_sheet(xl, ["Tienda", "FR", "Limpio"])
-    if df is not None:
-        return df
-    named = [s for s in xl.sheet_names if "fr" in s.lower()]
-    for sheet_name in named:
-        raw = _fr_read_positional(xl, sheet_name)
-        if raw is not None:
-            return raw
-    for sheet_name in xl.sheet_names:
-        if sheet_name in named:
-            continue
-        raw = _fr_headerless_candidate(xl, sheet_name)
-        if raw is not None:
-            return raw
-    st.error(
-        "No encontré una hoja con las columnas esperadas (Tienda, FR, Limpio) "
-        "en el archivo subido."
-    )
-    return None
-
 def load_cancelados_from_xl(xl, required=True):
     """required=False porque los cancelados ahora salen del archivo de
     Pedidos — esta hoja del Reporte diario puede faltar sin que sea error."""
@@ -974,8 +920,6 @@ if df_reclamos_raw is None:
     # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
     # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
     df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
-df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"])
-df_fr_raw = load_fr_from_xl(xl_reporte)
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
 xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes)) if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
@@ -1075,74 +1019,6 @@ if reclamos is not None:
     reclamos["Estado"] = reclamos["Estado"].apply(norm_txt)
     reclamos["Tipo"] = reclamos["Tipo"].apply(norm_txt)
 
-# ---- On Time Preparación ----
-ontime_prepa = None
-if df_ontime_raw is not None:
-    d = df_ontime_raw.copy()
-    for c in ["Pedifod", "Fuera"]:
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
-        else:
-            d[c] = 0
-    d["Tienda"] = d["Tienda"].apply(norm_txt)
-    d = d[~d["Tienda"].str.upper().isin(["TOTAL", "TOTA"])]
-    d = d.rename(columns={"Pedifod": "Pedidos"})
-    if "ONTIME" in d.columns:
-        ontime_parsed = d["ONTIME"].apply(ar_pct)
-    else:
-        ontime_parsed = pd.Series([None] * len(d), index=d.index)
-    ontime_raw = ontime_parsed.astype(float).fillna(0.0)
-    valid_max = ontime_parsed.dropna().max() if ontime_parsed.notna().any() else 0
-    d["OntimePct"] = ontime_raw * 100 if (pd.notna(valid_max) and valid_max <= 1.5) else ontime_raw
-    ontime_prepa = d[["Tienda", "Pedidos", "Fuera", "OntimePct"]].copy()
-
-# ---- Fill Rate ----
-fill_rate = None
-if df_fr_raw is not None:
-    d = df_fr_raw.copy()
-    fr_cols = list(d.columns)
-    unidades_plus_col = "Unidades +" if "Unidades +" in d.columns else None
-    no_entregado_plus_col = "No entregado +" if "No entregado +" in d.columns else None
-    reemplazo_plus_col = "Reemplazo +" if "Reemplazo +" in d.columns else None
-
-    tail_cols = fr_cols[6:]
-    fr_compacted = len(fr_cols) >= 6 and (not tail_cols or d[tail_cols].isna().all().all())
-
-    def _clean_tienda_plus(v):
-        s = norm_txt(v)
-        return re.sub(r"[▾▼▲]+\s*$", "", s).strip()
-
-    rows = []
-    for _, r in d.iterrows():
-        if fr_compacted:
-            vals = r.iloc[:6]
-            tienda = _clean_tienda_plus(vals.iloc[0])
-            if tienda.strip().upper() in ("TOTAL", "TOTA"):
-                continue
-            unidades = ar_number(vals.iloc[1])
-            sin_sustituto = ar_number(vals.iloc[2])
-            con_sustituto = ar_number(vals.iloc[3])
-            fr_pct = ar_pct(vals.iloc[5])
-            fr_pct = fr_pct if fr_pct is not None else 0.0
-        else:
-            tienda = norm_txt(r.get("Tienda"))
-            if tienda.strip().upper() in ("TOTAL", "TOTA"):
-                continue
-            unidades = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
-            sin_sustituto = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
-            con_sustituto = ar_number(r.get(reemplazo_plus_col)) if reemplazo_plus_col else ar_number(r.get("Reemplazo"))
-            limpio = r.get("Limpio")
-            if pd.notna(limpio):
-                fr_pct = float(limpio) * 100
-            else:
-                fr_pct = ar_pct(r.get("FR"))
-                fr_pct = fr_pct if fr_pct is not None else 0.0
-        rows.append({
-            "Tienda": tienda, "Unidades": unidades, "SinSustituto": sin_sustituto,
-            "ConSustituto": con_sustituto, "FRPct": fr_pct
-        })
-    fill_rate = pd.DataFrame(rows)
-
 # ---- Cancelados ----
 if cancelados is not None:
     cancelados["Tienda"] = cancelados["Tienda"].apply(norm_txt)
@@ -1195,17 +1071,15 @@ if df_faltantes_raw is not None:
 # ---------------------------------------------------------------------
 
 _canon_map = build_tienda_canon_map(
-    [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]
+    [pedidos_72h, reclamos, cancelados, faltantes]
 )
 pedidos_72h = apply_tienda_canon(pedidos_72h, _canon_map)
 reclamos = apply_tienda_canon(reclamos, _canon_map)
-ontime_prepa = apply_tienda_canon(ontime_prepa, _canon_map)
-fill_rate = apply_tienda_canon(fill_rate, _canon_map)
 cancelados = apply_tienda_canon(cancelados, _canon_map)
 faltantes = apply_tienda_canon(faltantes, _canon_map)
 
 any_data_loaded = any(
-    d is not None and len(d) for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]
+    d is not None and len(d) for d in [pedidos_72h, reclamos, cancelados, faltantes]
 )
 
 if not any_data_loaded:
@@ -1222,7 +1096,7 @@ else:
     """, unsafe_allow_html=True)
 
     all_stores = set()
-    for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]:
+    for d in [pedidos_72h, reclamos, cancelados, faltantes]:
         if d is not None and "Tienda" in d.columns:
             all_stores.update([s for s in d["Tienda"].unique() if s])
 
@@ -1242,9 +1116,7 @@ else:
     filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
 
     # Filtro por mes: sale de las fechas reales de Pedidos +72h, Reclamos,
-    # Cancelados y Faltantes. On Time Preparación y Fill Rate son una foto
-    # del día del archivo subido (sin fecha por fila), así que no tienen
-    # mes para filtrar y no se ven afectados por este filtro.
+    # Cancelados y Faltantes.
     _MESES_ES = {
         1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
         7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
@@ -1299,12 +1171,9 @@ else:
 
     pedidos_72h = ftr(pedidos_72h, "Fecha")
     reclamos = ftr(reclamos, "Fecha")
-    ontime_prepa = ftr(ontime_prepa)
-    fill_rate = ftr(fill_rate)
     cancelados = ftr(cancelados, "Fecha")
     faltantes = ftr(faltantes, "FechaArchivo")
 
-    FR_OBJETIVO = 98
     sections = []  # (title, desc, body_html) para el HTML combinado
 
     # ---- 1) Pedidos +72h sin mover: Top 5 tiendas ----
@@ -1374,59 +1243,7 @@ else:
         body
     ))
 
-    # ---- 3) On Time Preparación: Top 5 peores tiendas (<95%) ----
-    st.markdown(
-        '<div class="section">⏱️ On Time Preparación — Top 5 peores tiendas</div>'
-        '<div class="section-desc">Tiendas que no llegan al objetivo del 95%.</div>',
-        unsafe_allow_html=True
-    )
-    body = None
-    if ontime_prepa is not None and len(ontime_prepa):
-        peores = ontime_prepa[ontime_prepa["OntimePct"] < 95].sort_values("OntimePct").head(5).copy()
-        if len(peores):
-            peores["Ontime %"] = peores["OntimePct"].apply(pct1)
-            peores["Pedidos"] = peores["Pedidos"].astype(int)
-            peores["Fuera de horario"] = peores["Fuera"].astype(int)
-            cols = ["Tienda", "Pedidos", "Fuera de horario", "Ontime %"]
-            body = table_html(peores[cols])
-            st.write(body, unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="empty-box">Ninguna tienda por debajo del 95% 🎉</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="empty-box">Sin datos de On Time 🎉</div>', unsafe_allow_html=True)
-    sections.append((
-        "⏱️ On Time Preparación — Top 5 peores tiendas",
-        "Tiendas que no llegan al objetivo del 95%.",
-        body
-    ))
-
-    # ---- 4) Fill Rate: Top 5 peores tiendas (<98%, con venta) ----
-    st.markdown(
-        f'<div class="section">🧩 Fill Rate — Top 5 peores tiendas</div>'
-        f'<div class="section-desc">Tiendas con venta que no llegan al objetivo ({FR_OBJETIVO}%).</div>',
-        unsafe_allow_html=True
-    )
-    body = None
-    if fill_rate is not None and len(fill_rate):
-        peores = fill_rate[(fill_rate["Unidades"] > 0) & (fill_rate["FRPct"] < FR_OBJETIVO)].sort_values("FRPct").head(5).copy()
-        if len(peores):
-            peores["Unidades"] = peores["Unidades"].astype(int)
-            peores["Sin sustituto"] = peores["SinSustituto"].astype(int)
-            peores["FR %"] = peores["FRPct"].apply(pct1)
-            cols = ["Tienda", "Unidades", "Sin sustituto", "FR %"]
-            body = table_html(peores[cols])
-            st.write(body, unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="empty-box">Todas las tiendas con venta llegan al objetivo ({FR_OBJETIVO}%) 🎉</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="empty-box">Sin datos de Fill Rate 🎉</div>', unsafe_allow_html=True)
-    sections.append((
-        "🧩 Fill Rate — Top 5 peores tiendas",
-        f"Tiendas con venta que no llegan al objetivo ({FR_OBJETIVO}%).",
-        body
-    ))
-
-    # ---- 5) Pedidos cancelados: Top 5 tiendas ----
+    # ---- 3) Pedidos cancelados: Top 5 tiendas ----
     st.markdown(
         '<div class="section">🚫 Pedidos cancelados — Top 5 tiendas</div>'
         '<div class="section-desc">Tiendas con más cancelaciones en el período del reporte.</div>',
@@ -1447,7 +1264,7 @@ else:
         body
     ))
 
-    # ---- 6) Faltantes ----
+    # ---- 4) Faltantes ----
     if filtro_tienda is not None:
         # Con una tienda puntual elegida: resumen de esa tienda en vez del
         # ranking entre tiendas (que no tendría sentido con una sola).
