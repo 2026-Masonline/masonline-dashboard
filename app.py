@@ -376,39 +376,27 @@ f_reclamos = upload_box_reporte(
     "Archivo nuevo de Reclamos Operativos, aparte del Reporte diario.",
     "f_reclamos"
 )
-f_ontime = upload_box_reporte(
-    r3, "ON-TIME",
-    "Archivo nuevo de On Time, aparte del Reporte diario.",
-    "f_ontime"
-)
 f_delivery = upload_box_reporte(
-    r4, "DELIVERY",
+    r3, "DELIVERY",
     "Archivo nuevo de Delivery, aparte del Reporte diario.",
     "f_delivery"
 )
+f_faltantes = upload_box_reporte(r4, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
 
-r5, r6, r7, r8 = st.columns(4)
-f_fillrate = upload_box_reporte(
-    r5, "FILL RATE",
-    "Archivo nuevo de Fill Rate, aparte del Reporte diario.",
-    "f_fillrate"
-)
-f_faltantes = upload_box_reporte(r6, "FALTANTES", "SKUs marcados como faltante ECOM por tienda.", "f_faltantes")
+r5, r6, r7, _r8 = st.columns(4)
 f_pickers = upload_box_reporte(
-    r7, "PICKERS",
+    r5, "PICKERS",
     "Archivo nuevo de Productividad Pickers, aparte del Reporte diario.",
     "f_pickers"
 )
 f_vsventas = upload_box_reporte(
-    r8, "COMPARATIVO",
+    r6, "COMPARATIVO",
     "Archivo 'Vs de ventas' / order-operation para Comparativo, Venta fin de "
     "semana, Venta diaria y Venta hoy (método de entrega / tiendas con más pedidos).",
     "f_vsventas"
 )
-
-r9, _r10, _r11, _r12 = st.columns(4)
 f_pedidos_sts = upload_box_reporte(
-    r9, "PEDIDOS STS",
+    r7, "PEDIDOS STS",
     "Archivo de Pedidos para la pestaña Pedidos STS (Mes, Número de pedido, Número de tienda).",
     "f_pedidos_sts"
 )
@@ -416,12 +404,8 @@ f_pedidos_sts = upload_box_reporte(
 st.markdown(
     '<div style="font-size:11px;color:#9aa1ab;margin:-4px 0 14px;">'
     'Delivery todavía guarda el archivo pero no arma ninguna sección — eso lo '
-    'conectamos cuando tengamos un archivo de ejemplo. FILL RATE ya arma la '
-    'sección de Operativo con el archivo de Faltantes por depósito '
-    '(missing-item-by-wh). La tarjeta ON-TIME funciona igual que PICKERS: si '
-    'subís ahí el archivo de Productividad Pickers, también arma "Tiempo '
-    'promedio de preparación por tienda" y el % on time acumulado del mes en '
-    'Operativo. COMPARATIVO alimenta la pestaña Comparativo (resumen del mes '
+    'conectamos cuando tengamos un archivo de ejemplo. '
+    'COMPARATIVO alimenta la pestaña Comparativo (resumen del mes '
     'vs. mismo período del año anterior) — subí ahí el archivo "Vs de ventas" '
     'con una hoja por año.</div>',
     unsafe_allow_html=True
@@ -433,9 +417,7 @@ SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
 SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
-SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
 SHARED_DELIVERY_PATH = SHARED_DIR / "delivery.xlsx"
-SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
 
 def _github_headers():
@@ -771,9 +753,7 @@ if pedidos_resumen_merge:
 
 pickers_guardado = save_shared_bytes(f_pickers, SHARED_PICKERS_PATH, "Pickers")
 reclamos_guardado = save_shared_bytes(f_reclamos, SHARED_RECLAMOS_PATH, "Reclamos Operativos")
-ontime_guardado = save_shared_bytes(f_ontime, SHARED_ONTIME_PATH, "On-Time", stamp_date=True)
 delivery_guardado = save_shared_bytes(f_delivery, SHARED_DELIVERY_PATH, "Delivery")
-fillrate_guardado = save_shared_bytes(f_fillrate, SHARED_FILLRATE_PATH, "Fill Rate", stamp_date=True)
 vsventas_guardado = save_shared_bytes(f_vsventas, SHARED_VSVENTAS_PATH, "Comparativo (vs ventas)")
 
 if f_pedidos_sts is not None:
