@@ -95,6 +95,7 @@ APP_CSS = """
         padding: 3px 10px; border-radius: 999px; white-space: nowrap;
     }
     .badge.good { background: #e6f5e6; color: #0ca30c; }
+    .badge.notice { background: #e8f1fb; color: #2f7fd1; }
     .badge.warning { background: #fdf1d9; color: #c98500; }
     .badge.serious { background: #fdeae1; color: #ec835a; }
     .badge.critical { background: #fbe6e6; color: #d03b3b; }
@@ -1271,7 +1272,7 @@ def pct1(v):
     return f"{v:.1f}%".replace(".", ",")
 
 def badge(level, label):
-    icons = {"good": "●", "warning": "▲", "serious": "▲", "critical": "✕", "neutral": "●"}
+    icons = {"good": "●", "notice": "●", "warning": "▲", "serious": "▲", "critical": "✕", "neutral": "●"}
     return f'<span class="badge {level}">{icons.get(level,"●")} {label}</span>'
 
 _TABLE_HTML_MAX_FILAS = 500
@@ -1382,7 +1383,9 @@ def sev_pedido_72h(dias):
         return "critical", "Crítico"
     if dias >= 6:
         return "serious", "Grave"
-    return "warning", "Atención"
+    if dias >= 3:
+        return "warning", "Atención"
+    return "notice", "48-72hs"
 
 def sev_reclamo(horas, estado):
     if estado in ("Cerrado", "No aplica-Anulado"):
@@ -1414,7 +1417,7 @@ def _body_pedidos(pedidos_f):
         top10, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
     )
     return (
-        '<div class="resumen-title">Top 10 tiendas con más pedidos +72hs</div>' + top10_html +
+        '<div class="resumen-title">Top 10 tiendas con más pedidos +48hs</div>' + top10_html +
         '<div class="resumen-title" style="margin-top:18px;">Detalle de pedidos</div>'
         + table_html(show[detail_cols])
     )
@@ -1424,8 +1427,9 @@ def html_doc_pedidos(pedidos_f):
     if body is None:
         return None
     return export_section_html(
-        "📦 Pedidos sin movimiento +72hs",
-        "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.",
+        "📦 Pedidos sin movimiento (48hs+)",
+        "Pedidos que llevan 48hs o más en el mismo estado sin avanzar — "
+        "separados en 48–72hs (aviso temprano) y +72hs (crítico).",
         body
     )
 
@@ -1630,10 +1634,12 @@ def build_kpis(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=False, picker
     arriba del HTML combinado."""
     kpis = []
     if pedidos_f is not None:
+        p_72 = int((pedidos_f["Dias"] >= 3).sum())
+        p_48 = int((pedidos_f["Dias"] < 3).sum())
         card = kpi_card(
-            "Pedidos +72h sin mover", f"{len(pedidos_f)}",
-            f"{money(pedidos_f['MontoNum'].sum())}",
-            "crit" if len(pedidos_f) > 0 else "good"
+            "Pedidos +48h sin mover", f"{len(pedidos_f)}",
+            f"{p_72} con +72h · {p_48} entre 48–72h",
+            "crit" if p_72 > 0 else ("warn" if p_48 > 0 else "good")
         )
         kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
     if reclamos_f is not None:
@@ -1852,10 +1858,14 @@ else:
 fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 fecha_hoy_str = fecha_hoy.strftime("%d/%m/%Y")
 
-# ---- Pedidos +72h ----
+# ---- Pedidos +48h/+72h ----
+# El listado ahora arranca en 48hs (2 días) en vez de 72hs (3 días), para dar
+# aviso temprano antes de que un pedido llegue al umbral crítico de 72hs.
+# sev_pedido_72h() separa los de 48-72hs ("notice", aviso temprano) de los de
+# +72hs (warning/serious/critical, como antes).
 if pedidos_72h is not None:
     pedidos_72h["Dias"] = (now_ref - pedidos_72h["Fecha"].dt.normalize()).dt.days.astype(float)
-    pedidos_72h = pedidos_72h[pedidos_72h["Dias"] >= 3].copy()
+    pedidos_72h = pedidos_72h[pedidos_72h["Dias"] >= 2].copy()
     pedidos_72h["MontoNum"] = pedidos_72h["Monto"].apply(ar_number)
     pedidos_72h["Tienda"] = pedidos_72h["Tienda"].apply(norm_txt)
     if len(pedidos_72h):
@@ -2180,14 +2190,24 @@ if any_data_loaded:
             use_container_width=True,
         )
 
-    # ---- Pedidos +72h ----
+    # ---- Pedidos +48h/+72h ----
     st.markdown(
-        '<div class="section">📦 Pedidos sin movimiento +72hs</div>'
-        '<div class="section-desc">Pedidos que llevan más de 3 días en el mismo estado sin avanzar.</div>',
+        '<div class="section">📦 Pedidos sin movimiento (48hs+)</div>'
+        '<div class="section-desc">Pedidos que llevan 48hs o más en el mismo estado sin avanzar — '
+        'separados en 48–72hs (aviso temprano) y +72hs (crítico).</div>',
         unsafe_allow_html=True
     )
     if pedidos_f is not None:
         if len(pedidos_f):
+            p_72 = int((pedidos_f["Dias"] >= 3).sum())
+            p_48 = int((pedidos_f["Dias"] < 3).sum())
+            st.markdown(
+                f'<div style="font-size:12.5px;color:#565d5f;margin:-4px 0 10px;">'
+                f'{badge("critical" if p_72 else "good", f"{p_72} con +72h")} '
+                f'{badge("notice" if p_48 else "good", f"{p_48} entre 48–72h")}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
             show = pedidos_f.copy().sort_values("Dias", ascending=False)
             show["Días"] = show["Dias"].round(1)
             show["Monto"] = show["MontoNum"].apply(money)
@@ -2202,7 +2222,7 @@ if any_data_loaded:
                 top10, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
             )
 
-            st.markdown('<div class="resumen-title">Top 10 tiendas con más pedidos +72hs</div>', unsafe_allow_html=True)
+            st.markdown('<div class="resumen-title">Top 10 tiendas con más pedidos +48hs</div>', unsafe_allow_html=True)
             st.write(top10_html, unsafe_allow_html=True)
 
             with st.expander(f"Ver detalle de pedidos ({len(show)})"):
@@ -2210,13 +2230,14 @@ if any_data_loaded:
                     st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
 
             export_body = (
-                '<div class="resumen-title">Top 10 tiendas con más pedidos +72hs</div>' + top10_html +
+                '<div class="resumen-title">Top 10 tiendas con más pedidos +48hs</div>' + top10_html +
                 '<div class="resumen-title" style="margin-top:18px;">Detalle de pedidos</div>'
                 + table_html(show[detail_cols])
             )
             html_doc = export_section_html(
-                "📦 Pedidos sin movimiento +72hs",
-                "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.",
+                "📦 Pedidos sin movimiento (48hs+)",
+                "Pedidos que llevan 48hs o más en el mismo estado sin avanzar — "
+                "separados en 48–72hs (aviso temprano) y +72hs (crítico).",
                 export_body
             )
             section_download_button(html_doc, "operativo_pedidos_72h.html", "dl_72h")
