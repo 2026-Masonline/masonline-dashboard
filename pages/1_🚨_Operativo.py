@@ -664,8 +664,6 @@ SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
 SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
 SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
 SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
-SHARED_ONTIME_PATH = SHARED_DIR / "ontime.xlsx"
-SHARED_FILLRATE_PATH = SHARED_DIR / "fillrate.xlsx"
 
 def _github_headers():
     token = st.secrets.get("GITHUB_TOKEN")
@@ -1185,164 +1183,6 @@ def _cargar_pedidos_completo(pedidos_bytes):
         df = df.drop_duplicates(subset=["commerceId"], keep="last")
     return df
 
-def _fr_read_positional(xl, sheet_name):
-    """Lee una hoja de Fill Rate por POSICIÓN (6 columnas: Tienda, Unidades,
-    No entregado, Reemplazo, Monto, FR%) en vez de por nombre de columna,
-    porque el nombre de esas columnas cambia de un día a otro en el export
-    (a veces 'Tienda/FR/Limpio', a veces 'Tienda/unidades pedidas/.../fill
-    rate', a veces directamente sin fila de encabezado). Si la primera fila
-    es un encabezado (columna 1 dice 'Tienda'), la descartamos; si no, ya es
-    un dato y la dejamos."""
-    try:
-        raw = xl.parse(sheet_name, header=None)
-    except Exception:
-        return None
-    if raw.shape[1] < 6 or not len(raw):
-        return None
-    raw = raw.iloc[:, :6].copy()
-    first_cell = re.sub(r"[▾▼▲]+\s*$", "", norm_txt(raw.iloc[0, 0])).strip()
-    if fold_tienda_key(first_cell) == "tienda":
-        raw = raw.iloc[1:].reset_index(drop=True)
-    if not len(raw):
-        return None
-    raw.columns = [f"col{i}" for i in range(raw.shape[1])]
-    return raw
-
-def _fr_headerless_candidate(xl, sheet_name):
-    """Último recurso cuando ninguna hoja se llama '...Fr...': hoja de 6+
-    columnas donde alguna fila arranca con 'TOTAL' y la última columna tiene
-    pinta de porcentaje (para no confundirla con otra hoja que también
-    tenga una fila de totales, ej. On Time)."""
-    raw = _fr_read_positional(xl, sheet_name)
-    if raw is None:
-        return None
-    first_col = raw.iloc[:, 0].apply(norm_txt).apply(
-        lambda s: re.sub(r"[▾▼▲]+\s*$", "", s).strip()
-    )
-    if not first_col.str.upper().isin(["TOTAL", "TOTA"]).any():
-        return None
-    last_col = raw.iloc[:, 5].apply(norm_txt)
-    pct_like = last_col.str.contains("%", na=False)
-    if pct_like.mean() < 0.5:
-        return None
-    return raw
-
-def load_fr_from_xl(xl):
-    """Carga Fill Rate. Primero probamos la hoja con encabezado 'de toda la
-    vida' (Tienda/FR/Limpio). Si no está, buscamos la hoja cuyo nombre
-    contiene 'fr' (ej. 'Data Fr') y la leemos por posición, sin importar
-    cómo se llamen sus columnas ese día. Como último recurso, entre todas
-    las hojas buscamos una con pinta de Fill Rate (fila 'TOTAL' + última
-    columna con '%')."""
-    if xl is None:
-        return None
-    name, df = find_sheet(xl, ["Tienda", "FR", "Limpio"])
-    if df is not None:
-        return df
-    named = [s for s in xl.sheet_names if "fr" in s.lower()]
-    for sheet_name in named:
-        raw = _fr_read_positional(xl, sheet_name)
-        if raw is not None:
-            return raw
-    for sheet_name in xl.sheet_names:
-        if sheet_name in named:
-            continue
-        raw = _fr_headerless_candidate(xl, sheet_name)
-        if raw is not None:
-            return raw
-    st.error(
-        "No encontré una hoja con las columnas esperadas (Tienda, FR, Limpio) "
-        "en el archivo subido."
-    )
-    return None
-
-def fillrate_wh_df(df_fillrate_wh_raw):
-    """Arma el mismo esquema que usa el resto del dashboard para Fill Rate
-    (Tienda/Unidades/SinSustituto/ConSustituto/MontoFaltante/FRPct) a partir
-    del archivo 'Faltantes por depósito' (missing-item-by-wh): trae, por
-    depósito, totalPickedQuantity (unidades entregadas tal cual se pidieron),
-    totalMissingQuantity (unidades que faltaron al picking) y
-    totalSubstitutedQuantity (de esas, cuántas se cubrieron con reemplazo).
-    Entonces: Unidades (total pedido) = picked + missing; ConSustituto =
-    substituted; SinSustituto (no entregado) = missing - substituted; y FR%
-    queda igual que en el resto del dashboard: (Unidades - SinSustituto) /
-    Unidades. No trae un monto $ de lo faltante (esa columna queda vacía y
-    se oculta sola en el detalle)."""
-    d = df_fillrate_wh_raw.copy()
-    d["Tienda"] = d["warehouseName"].apply(warehouse_to_tienda)
-    d = d[d["Tienda"] != ""]
-    if not len(d):
-        return None
-    picked = pd.to_numeric(d.get("totalPickedQuantity"), errors="coerce").fillna(0)
-    missing = pd.to_numeric(d.get("totalMissingQuantity"), errors="coerce").fillna(0)
-    sustituido = pd.to_numeric(d.get("totalSubstitutedQuantity"), errors="coerce").fillna(0)
-    d["Unidades"] = picked + missing
-    d["ConSustituto"] = sustituido
-    d["SinSustituto"] = (missing - sustituido).clip(lower=0)
-    d["MontoFaltante"] = np.nan
-
-    # Puede haber más de una fila por tienda (depósitos con un prefijo que
-    # warehouse_to_tienda no reconoce, ej. "WM-PICKUP-3608", caen todos con
-    # el mismo nombre de respaldo) — se suman para no duplicar tiendas.
-    fr_df = d.groupby("Tienda", as_index=False).agg(
-        Unidades=("Unidades", "sum"), SinSustituto=("SinSustituto", "sum"),
-        ConSustituto=("ConSustituto", "sum")
-    )
-    fr_df["MontoFaltante"] = np.nan
-    fr_df["FRPct"] = np.where(
-        fr_df["Unidades"] > 0, 100 * (fr_df["Unidades"] - fr_df["SinSustituto"]) / fr_df["Unidades"], 0.0
-    )
-    fr_df[["Sev", "SevLabel"]] = fr_df.apply(
-        lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
-    )
-    return fr_df
-
-def fillrate_tiendas_df(df_fr_tiendas_raw):
-    """Arma el mismo esquema que usa el resto del dashboard para Fill Rate
-    (Tienda/Unidades/SinSustituto/ConSustituto/MontoFaltante/FRPct) a partir
-    del archivo nuevo de la tarjeta FILL RATE (hoja con columnas Tiendas /
-    Unidades perdidas / No entregados / Remplazos / Monto entregado / Fill
-    rate). Cada celda viene como texto con el valor + flecha + variación vs
-    el mes anterior (ej. '36.950 ▲ 10.2%vs MA') y el nombre de tienda trae un
-    '▾' de desplegable al lado — usamos ar_number/ar_pct (que ya saben leer
-    ese formato) y solo nos quedamos con el valor, no con la variación.
-    'Unidades perdidas' es en realidad el total de unidades pedidas (la base
-    sobre la que se calculan los % de 'No entregados' y 'Remplazos', no
-    unidades perdidas en sí). 'Monto entregado' es la facturación de la
-    tienda, no un monto de lo faltante — este archivo no trae esa columna,
-    así que MontoFaltante queda vacía y se oculta sola en el detalle, igual
-    que con 'Faltantes por depósito'. El % de Fill Rate se toma directo de
-    la columna 'Fill rate' del archivo (no se recalcula), para que coincida
-    siempre con lo que Emi ve ahí."""
-    d = df_fr_tiendas_raw.copy()
-
-    def _clean_tienda(v):
-        s = norm_txt(v)
-        return re.sub(r"[▾▼▲]+\s*$", "", s).strip()
-
-    d["Tienda"] = get_col_ci(d, "Tiendas").apply(_clean_tienda)
-    d = d[~d["Tienda"].str.upper().isin(["TOTAL", "TOTA", ""])]
-    if not len(d):
-        return None
-
-    d["Unidades"] = get_col_ci(d, "Unidades perdidas").apply(ar_number)
-    d["SinSustituto"] = get_col_ci(d, "No entregados").apply(ar_number)
-    d["ConSustituto"] = get_col_ci(d, "Remplazos").apply(ar_number)
-    d["FRPct"] = get_col_ci(d, "Fill rate").apply(ar_pct)
-    d["FRPct"] = d["FRPct"].fillna(0.0)
-
-    # Puede venir más de una fila por tienda (ej. si el export repite algún
-    # nombre) — se suman unidades y se promedia el % declarado.
-    fr_df = d.groupby("Tienda", as_index=False).agg(
-        Unidades=("Unidades", "sum"), SinSustituto=("SinSustituto", "sum"),
-        ConSustituto=("ConSustituto", "sum"), FRPct=("FRPct", "mean")
-    )
-    fr_df["MontoFaltante"] = np.nan
-    fr_df[["Sev", "SevLabel"]] = fr_df.apply(
-        lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
-    )
-    return fr_df
-
 def load_cancelados_from_xl(xl, required=True):
     """Carga Pedidos cancelados. Cuando la hoja no trae la columna 'Total $'
     (pasa algunos días), tiene exactamente las mismas columnas base que
@@ -1553,27 +1393,6 @@ def sev_reclamo(horas, estado):
         return "warning", "24–72h"
     return "good", "<24h"
 
-def sev_ontime(pct):
-    if pct >= 95:
-        return "good", "OK"
-    if pct >= 90:
-        return "warning", "Atención"
-    if pct >= 80:
-        return "serious", "Grave"
-    return "critical", "Crítico"
-
-def sev_fr(pct, unidades):
-    if not unidades:
-        return "neutral", "Sin actividad"
-    if pct >= 97:
-        return "good", "OK"
-    if pct >= 93:
-        return "warning", "Atención"
-    if pct >= 85:
-        return "serious", "Grave"
-    return "critical", "Crítico"
-
-
 # ---------------------------------------------------------------------
 # HTML de cada sección, generado antes que las tarjetas KPI para poder
 # linkearlas directo (clickear la tarjeta baja el HTML de esa sección).
@@ -1661,95 +1480,6 @@ def html_doc_reclamos(reclamos_f):
         body
     )
 
-def prepa_bundle(prepa_f):
-    """Arma todo lo que necesita On Time Preparación: detalle, totales y el
-    Top 5 de tiendas con peor % on time (por debajo del 95%)."""
-    if prepa_f is None or not len(prepa_f):
-        return None
-    show = prepa_f.copy().sort_values("OntimePct")
-    show["Ontime %"] = show["OntimePct"].apply(pct1)
-    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-    show["Pedidos"] = show["Pedidos"].astype(int)
-    show["Fuera de horario"] = show["Fuera"].astype(int)
-    detail_cols = ["Tienda", "Formato", "Pedidos", "Fuera de horario", "Ontime %", "Estado"]
-
-    ped_tot = int(prepa_f["Pedidos"].sum())
-    fuera_tot = int(prepa_f["Fuera"].sum())
-    ot_pct_tot = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
-
-    peores = show[show["OntimePct"] < 95].head(5)
-    if len(peores):
-        top5_html = table_html(peores[detail_cols])
-    else:
-        top5_html = '<div class="empty-box">Ninguna tienda por debajo del 95% 🎉</div>'
-
-    body = (
-        f'<div class="resumen-title">Total — {ped_tot} pedidos · {fuera_tot} fuera de horario · '
-        f'{pct1(ot_pct_tot)} on time</div>'
-        '<div class="resumen-title" style="margin-top:18px;">Top 5 tiendas con % on time &lt; 95%</div>'
-        + top5_html +
-        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
-        + table_html(show[detail_cols])
-    )
-    html_doc = export_section_html(
-        "⏱️ On Time Preparación",
-        "Porcentaje de pedidos preparados en horario, por tienda.",
-        body
-    )
-    return {
-        "show": show, "detail_cols": detail_cols, "ped_tot": ped_tot, "fuera_tot": fuera_tot,
-        "ot_pct_tot": ot_pct_tot, "top5_html": top5_html, "html_doc": html_doc, "body": body,
-    }
-
-def html_doc_prepa(prepa_f):
-    b = prepa_bundle(prepa_f)
-    return b["html_doc"] if b else None
-
-FR_OBJETIVO = 98
-
-def _fr_prep_show(show):
-    """Arma las columnas de detalle de Fill Rate en 'show' (in place) y
-    devuelve el orden de columnas a mostrar. 'Monto faltante' solo viene del
-    Reporte diario (planilla vieja) — el archivo de 'Faltantes por depósito'
-    no trae un monto $, así que esa columna se oculta sola cuando no hay
-    ningún valor cargado."""
-    show["Unidades"] = show["Unidades"].astype(int)
-    show["Sin sustituto"] = show["SinSustituto"].astype(int)
-    show["Con sustituto"] = show["ConSustituto"].astype(int)
-    show["FR %"] = show["FRPct"].apply(pct1)
-    show["Estado"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
-    if show["MontoFaltante"].notna().any():
-        show["Monto faltante"] = show["MontoFaltante"].apply(money)
-        return ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "Monto faltante", "FR %", "Estado"]
-    return ["Tienda", "Unidades", "Sin sustituto", "Con sustituto", "FR %", "Estado"]
-
-def _body_fr(fr_f):
-    """Detalle de Fill Rate de TODAS las tiendas con venta (no solo las que
-    quedan por debajo del objetivo), ordenadas de peor a mejor % — a Emi le
-    sirve ver el panorama completo, no solo las alertadas."""
-    if fr_f is None or not len(fr_f):
-        return None
-    show = fr_f[fr_f["Unidades"] > 0].copy().sort_values("FRPct")
-    if not len(show):
-        return None
-    n_below = int((show["FRPct"] < FR_OBJETIVO).sum())
-    resumen = (
-        f'<div class="resumen-title">{n_below} de {len(show)} tiendas por debajo '
-        f'del objetivo ({FR_OBJETIVO}%)</div>'
-    )
-    detail_cols = _fr_prep_show(show)
-    return resumen + table_html(show[detail_cols])
-
-def html_doc_fr(fr_f):
-    body = _body_fr(fr_f)
-    if body is None:
-        return None
-    return export_section_html(
-        "🧩 Fill Rate — con y sin sustituto",
-        f"Todas las tiendas con venta — en rojo/amarillo, las que no llegan al objetivo ({FR_OBJETIVO}%).",
-        body
-    )
-
 def cancelados_bundle(can_f):
     """Arma el Top 10 de tiendas con más cancelados, el resumen completo por
     tienda y el detalle pedido a pedido, para la sección y para el HTML."""
@@ -1829,17 +1559,14 @@ def html_doc_faltantes(falt_f):
         body
     )
 
-def export_full_report_html(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
+def export_full_report_html(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
     """Arma un único HTML con las tarjetas KPI de arriba + todas las secciones
     que tengan datos cargados, para bajar de un solo golpe y mandarlo
     (ej. por WhatsApp/mail al jefe)."""
-    prepa_b = prepa_bundle(prepa_f)
     can_b = cancelados_bundle(can_f)
     sections = [
         ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
         ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
-        ("⏱️ On Time Preparación", "Porcentaje de pedidos preparados en horario, por tienda.", prepa_b["body"] if prepa_b else None),
-        ("🧩 Fill Rate — con y sin sustituto", f"Todas las tiendas con venta — en rojo/amarillo, las que no llegan al objetivo ({FR_OBJETIVO}%).", _body_fr(fr_f)),
         ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
         ("📉 Faltantes ECOM", "Unidades faltantes por tienda y producto, según el Reporte de Faltantes mensual.", _body_faltantes(falt_f)),
     ]
@@ -1847,7 +1574,7 @@ def export_full_report_html(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
     if not sections:
         return None
 
-    kpis = build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=filtro_activo, pickers_f=pickers_f)
+    kpis = build_kpis(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=filtro_activo, pickers_f=pickers_f)
     kpi_row_html = f'<div class="kpi-row">{"".join(kpis)}</div>' if kpis else ""
 
     corte_html = ""
@@ -1897,7 +1624,7 @@ def kpi_link_wrap(inner_html, html_doc, filename):
         'title="Descargar esta sección como HTML">' + inner_html + '</a>'
     )
 
-def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
+def build_kpis(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
     """Arma las tarjetas KPI de arriba de todo (clickeables para bajar el HTML
     de esa sección). Se usa tanto para la fila en pantalla como para incluirlas
     arriba del HTML combinado."""
@@ -1922,48 +1649,6 @@ def build_kpis(pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f, filtro_activ
             "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
         )
         kpis.append(kpi_link_wrap(card, html_doc_reclamos(reclamos_f), "operativo_reclamos.html"))
-    if prepa_f is not None and len(prepa_f):
-        ped_tot = prepa_f["Pedidos"].sum()
-        fuera_tot = prepa_f["Fuera"].sum()
-        ot_pct = 100 * (1 - fuera_tot / ped_tot) if ped_tot else 0
-        card = kpi_card(
-            "On time preparación", pct1(ot_pct),
-            f"Total: {int(ped_tot)} pedidos · {int(fuera_tot)} fuera de horario",
-            "good" if ot_pct >= 95 else ("warn" if ot_pct >= 90 else "crit")
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_prepa(prepa_f), "operativo_ontime_preparacion.html"))
-    if fr_f is not None and len(fr_f):
-        if fr_total_declared is not None and not filtro_activo:
-            # Usamos el % de FR que ya viene calculado en la fila "TOTAL" de la
-            # planilla (coincide siempre con lo que ve Emi ahí), en vez de
-            # recalcularlo nosotros sumando tienda por tienda. Solo vale para
-            # el total SIN filtrar — con un filtro de Tienda/Auditor activo,
-            # ese "TOTAL" de la planilla ya no representa lo que se está
-            # mostrando.
-            sin_tot = fr_total_declared["sin"]
-            fr_pct_tot = fr_total_declared["fr_pct"]
-        elif len(fr_f) == 1:
-            # Una sola tienda: usamos el % que ya trae esa fila de la planilla
-            # (mismo criterio que para el TOTAL general), en vez de
-            # recalcularlo — así también coincide siempre con lo que ve Emi.
-            sin_tot = fr_f["SinSustituto"].iloc[0]
-            fr_pct_tot = fr_f["FRPct"].iloc[0]
-        else:
-            # Varias tiendas juntas (ej. las de un auditor, o el archivo de
-            # Faltantes por depósito que no trae una fila de "TOTAL"): no hay
-            # un total ya declarado, así que estimamos ponderando por
-            # unidades — mismo criterio que el FR% de cada tienda (lo
-            # sustituido SÍ cuenta como entregado). Puede no coincidir 100%
-            # con un cálculo manual de ese grupo en la planilla.
-            unid_tot = fr_f["Unidades"].sum()
-            sin_tot = fr_f["SinSustituto"].sum()
-            fr_pct_tot = 100 * (unid_tot - sin_tot) / unid_tot if unid_tot else 0
-        card = kpi_card(
-            "Fill rate (con+sin sust.)", pct1(fr_pct_tot),
-            f"{int(sin_tot)} unid. sin sustituto",
-            "good" if fr_pct_tot >= 97 else ("warn" if fr_pct_tot >= 93 else "crit")
-        )
-        kpis.append(kpi_link_wrap(card, html_doc_fr(fr_f), "operativo_fill_rate.html"))
     if can_f is not None:
         card = kpi_card(
             "Pedidos cancelados", f"{len(can_f)}",
@@ -2010,22 +1695,10 @@ faltantes_bytes = get_shared_bytes(SHARED_FALTANTES_PATH)
 pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
 reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
 pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
-ontime_bytes = get_shared_bytes(SHARED_ONTIME_PATH)
-fillrate_bytes = get_shared_bytes(SHARED_FILLRATE_PATH)
-
-# On-Time y Fill Rate se suben todos los días en un archivo aparte: si el
-# último que se subió no es de hoy (Argentina), no lo mostramos — mejor
-# "sin datos" que arrastrar el número de un día anterior sin que se note.
-_hoy_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date().isoformat()
-if get_shared_date(SHARED_ONTIME_PATH) != _hoy_ar:
-    ontime_bytes = None
-if get_shared_date(SHARED_FILLRATE_PATH) != _hoy_ar:
-    fillrate_bytes = None
 
 if (
     reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None
-    or reclamos_bytes is not None or pickers_bytes is not None or ontime_bytes is not None
-    or fillrate_bytes is not None
+    or reclamos_bytes is not None or pickers_bytes is not None
 ):
     st.markdown(
         '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
@@ -2066,36 +1739,6 @@ if df_reclamos_raw is None:
     # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
     # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
     df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
-xl_ontime = safe_open_excel(io.BytesIO(ontime_bytes), "On-Time") if ontime_bytes is not None else None
-# Archivo nuevo de la tarjeta "ON-TIME" (ej. "Ot_Preparacion.xlsx"): trae
-# Tienda, Formato, ordenes, retiro, delivery, entrga, fuera, on time. Si
-# todavía no se subió nada ahí, probamos con la hoja vieja del Reporte
-# diario (Pedifod/ONTIME), por si queda algo cargado de antes.
-df_ontime_raw = load_section_from_xl(xl_ontime, ["Tienda", "ordenes", "fuera", "on time"], required=False)
-if df_ontime_raw is None:
-    df_ontime_raw = load_section_from_xl(xl_reporte, ["Tienda", "Pedifod", "Fuera", "ONTIME"], required=False)
-xl_fillrate = safe_open_excel(io.BytesIO(fillrate_bytes), "Fill Rate") if fillrate_bytes is not None else None
-# Archivo actual de la tarjeta "FILL RATE": una fila por tienda con Tiendas /
-# Unidades perdidas / No entregados / Remplazos / Monto entregado / Fill
-# rate (texto con flechas y variación vs el mes anterior en cada celda).
-df_fr_tiendas_raw = load_section_from_xl(
-    xl_fillrate,
-    ["Tiendas", "Unidades perdidas", "No entregados", "Remplazos", "Fill rate"],
-    required=False
-)
-# Formato viejo "Faltantes por depósito" (missing-item-by-wh): trae unidades
-# pickeadas/faltantes/sustituidas por depósito. Solo se usa si en la tarjeta
-# FILL RATE no se subió el archivo nuevo de arriba.
-df_fillrate_wh_raw = load_section_from_xl(
-    xl_fillrate,
-    ["warehouseName", "totalPickedQuantity", "totalMissingQuantity", "totalSubstitutedQuantity"],
-    required=False
-) if df_fr_tiendas_raw is None else None
-df_fr_raw = (
-    load_fr_from_xl(xl_reporte)
-    if df_fr_tiendas_raw is None and df_fillrate_wh_raw is None
-    else None
-)
 df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
 xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes), "Faltantes") if faltantes_bytes is not None else None
 df_faltantes_raw = load_section_from_xl(
@@ -2105,13 +1748,6 @@ df_faltantes_raw = load_section_from_xl(
 xl_pickers = safe_open_excel(io.BytesIO(pickers_bytes), "Pickers") if pickers_bytes is not None else None
 _PICKERS_COLS = ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
 df_picker_raw = load_section_from_xl(xl_pickers, _PICKERS_COLS, required=False)
-if df_picker_raw is None:
-    # Todavía no se subió nada en la tarjeta "PICKERS" — probamos con lo que
-    # haya en la tarjeta "ON-TIME": si Emi subió ahí el mismo archivo de
-    # Productividad Pickers (confusión entendible, las dos tarjetas están
-    # una al lado de la otra), lo tomamos igual desde acá, porque es el que
-    # alimenta "Tiempo promedio de preparación por tienda".
-    df_picker_raw = load_section_from_xl(xl_ontime, _PICKERS_COLS, required=False)
 if df_picker_raw is None:
     # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
     # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
@@ -2249,133 +1885,6 @@ if reclamos is not None:
         reclamos["Sev"] = pd.Series(dtype=object)
         reclamos["SevLabel"] = pd.Series(dtype=object)
 
-# ---- On Time (Preparación directo) ----
-ontime_prepa = None
-if df_ontime_raw is not None:
-    d = df_ontime_raw.copy()
-    d["Tienda"] = get_col_ci(d, "Tienda").apply(norm_txt)
-    d = d[~d["Tienda"].str.upper().isin(["TOTAL", "TOTA"])]
-    d["Formato"] = get_col_ci(d, "Formato").apply(norm_txt)
-
-    # "Pedidos" (total de órdenes de la tienda): el archivo nuevo de la
-    # tarjeta ON-TIME lo llama "ordenes"; el viejo Reporte diario lo
-    # llamaba "Pedifod".
-    d["Pedidos"] = pd.to_numeric(
-        get_col_ci_first(d, ["ordenes", "Pedifod"]), errors="coerce"
-    ).fillna(0)
-
-    # "Fuera" (pedidos fuera de horario): mismo nombre en los dos formatos.
-    d["Fuera"] = pd.to_numeric(get_col_ci(d, "Fuera"), errors="coerce").fillna(0)
-
-    # ONTIME puede venir como número (fracción 0-1 o ya en %) o como texto con
-    # '%' en notación estándar (ej. "50.0%") — algunos días el export cambia
-    # el formato, así que probamos ambas lecturas con ar_pct. El archivo
-    # nuevo de la tarjeta ON-TIME la llama "on time"; el viejo Reporte
-    # diario la llamaba "ONTIME".
-    ontime_parsed = get_col_ci_first(d, ["on time", "ONTIME"]).apply(ar_pct)
-    ontime_raw = ontime_parsed.astype(float).fillna(0.0)
-    valid_max = ontime_parsed.dropna().max() if ontime_parsed.notna().any() else 0
-    d["OntimePct"] = ontime_raw * 100 if (pd.notna(valid_max) and valid_max <= 1.5) else ontime_raw
-
-    # Preparación: % on time directo, por tienda
-    prepa = d[["Tienda", "Formato", "Pedidos", "Fuera", "OntimePct"]].copy()
-    if len(prepa):
-        prepa[["Sev", "SevLabel"]] = prepa["OntimePct"].apply(lambda p: pd.Series(sev_ontime(p)))
-    else:
-        prepa["Sev"] = pd.Series(dtype=object)
-        prepa["SevLabel"] = pd.Series(dtype=object)
-    ontime_prepa = prepa
-
-# ---- Fill Rate ----
-fill_rate = None
-fr_total_declared = None
-if df_fr_tiendas_raw is not None:
-    fill_rate = fillrate_tiendas_df(df_fr_tiendas_raw)
-elif df_fillrate_wh_raw is not None:
-    fill_rate = fillrate_wh_df(df_fillrate_wh_raw)
-elif df_fr_raw is not None:
-    d = df_fr_raw.copy()
-    fr_cols = list(d.columns)
-    unidades_plus_col = "Unidades +" if "Unidades +" in d.columns else None
-    no_entregado_plus_col = "No entregado +" if "No entregado +" in d.columns else None
-    reemplazo_plus_col = "Reemplazo +" if "Reemplazo +" in d.columns else None
-
-    # Algunos exports del día vienen "compactados": las columnas limpias
-    # (Reemplazo/Monto/FR/Limpio) llegan vacías y los datos reales quedan
-    # corridos hacia las primeras 6 columnas del archivo (Tienda+, Unidades+,
-    # No entregado+, Reemplazo+, Monto N/E+, FR+), aunque el encabezado siga
-    # teniendo las 13 columnas de siempre. Si detectamos eso, leemos por
-    # posición en vez de por nombre de columna para no mezclar los valores.
-    tail_cols = fr_cols[6:]
-    fr_compacted = len(fr_cols) >= 6 and (not tail_cols or d[tail_cols].isna().all().all())
-
-    def _clean_tienda_plus(v):
-        s = norm_txt(v)
-        return re.sub(r"[▾▼▲]+\s*$", "", s).strip()
-
-    rows = []
-    for _, r in d.iterrows():
-        if fr_compacted:
-            vals = r.iloc[:6]
-            tienda = _clean_tienda_plus(vals.iloc[0])
-            if tienda.strip().upper() in ("TOTAL", "TOTA"):
-                _fr_tot = ar_pct(vals.iloc[5])
-                if _fr_tot is not None:
-                    fr_total_declared = {
-                        "unidades": ar_number(vals.iloc[1]),
-                        "sin": ar_number(vals.iloc[2]),
-                        "con": ar_number(vals.iloc[3]),
-                        "fr_pct": _fr_tot,
-                    }
-                continue
-            unidades = ar_number(vals.iloc[1])
-            sin_sustituto = ar_number(vals.iloc[2])
-            con_sustituto = ar_number(vals.iloc[3])
-            monto_faltante = ar_number(vals.iloc[4])
-            fr_pct = ar_pct(vals.iloc[5])
-            fr_pct = fr_pct if fr_pct is not None else 0.0
-        else:
-            tienda = norm_txt(r.get("Tienda"))
-            if tienda.strip().upper() in ("TOTAL", "TOTA"):
-                _limpio_tot = r.get("Limpio")
-                if pd.notna(_limpio_tot):
-                    _fr_tot = float(_limpio_tot) * 100
-                else:
-                    _fr_tot = ar_pct(r.get("FR"))
-                if _fr_tot is not None:
-                    _unid_tot_row = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
-                    _sin_tot_row = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
-                    _con_tot_row = ar_number(r.get(reemplazo_plus_col)) if reemplazo_plus_col else ar_number(r.get("Reemplazo"))
-                    fr_total_declared = {
-                        "unidades": _unid_tot_row, "sin": _sin_tot_row,
-                        "con": _con_tot_row, "fr_pct": _fr_tot,
-                    }
-                continue
-            unidades = ar_number(r.get(unidades_plus_col)) if unidades_plus_col else ar_number(r.get("Unidades"))
-            sin_sustituto = ar_number(r.get(no_entregado_plus_col)) if no_entregado_plus_col else ar_number(r.get("no entregado"))
-            con_sustituto = ar_number(r.get(reemplazo_plus_col)) if reemplazo_plus_col else ar_number(r.get("Reemplazo"))
-            monto_faltante = r.get("Monto")
-            monto_faltante = float(monto_faltante) if pd.notna(monto_faltante) and isinstance(monto_faltante, (int, float, np.integer, np.floating)) else ar_number(r.get("Monto N/E +"))
-            limpio = r.get("Limpio")
-            if pd.notna(limpio):
-                fr_pct = float(limpio) * 100
-            else:
-                fr_pct = ar_pct(r.get("FR"))
-                fr_pct = fr_pct if fr_pct is not None else 0.0
-        rows.append({
-            "Tienda": tienda, "Unidades": unidades, "SinSustituto": sin_sustituto,
-            "ConSustituto": con_sustituto, "MontoFaltante": monto_faltante, "FRPct": fr_pct
-        })
-    fr_df = pd.DataFrame(rows)
-    if len(fr_df):
-        fr_df[["Sev", "SevLabel"]] = fr_df.apply(
-            lambda r: pd.Series(sev_fr(r["FRPct"], r["Unidades"])), axis=1
-        )
-    else:
-        fr_df["Sev"] = pd.Series(dtype=object)
-        fr_df["SevLabel"] = pd.Series(dtype=object)
-    fill_rate = fr_df
-
 # ---- Cancelados ----
 if cancelados is not None:
     cancelados["Tienda"] = cancelados["Tienda"].apply(norm_txt)
@@ -2471,12 +1980,10 @@ if df_picker_raw is not None:
 # ---------------------------------------------------------------------
 
 _canon_map = build_tienda_canon_map(
-    [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes, pickers]
+    [pedidos_72h, reclamos, cancelados, faltantes, pickers]
 )
 pedidos_72h = apply_tienda_canon(pedidos_72h, _canon_map)
 reclamos = apply_tienda_canon(reclamos, _canon_map)
-ontime_prepa = apply_tienda_canon(ontime_prepa, _canon_map)
-fill_rate = apply_tienda_canon(fill_rate, _canon_map)
 cancelados = apply_tienda_canon(cancelados, _canon_map)
 faltantes = apply_tienda_canon(faltantes, _canon_map)
 pickers = apply_tienda_canon(pickers, _canon_map)
@@ -2508,13 +2015,10 @@ if faltantes_historial_completo is not None and len(faltantes_historial_completo
 # ---- Acumular Productividad de Pickers de hoy en el historial (Google Sheets) ----
 # Mismo criterio que Faltantes: se agrega una sola vez por archivo realmente
 # subido (hash del archivo de origen en session_state), no en cada re-render.
-# Pickers ahora se sube aparte (pickers_bytes); si en vez de eso se subió en
-# la tarjeta "ON-TIME" (ontime_bytes) lo tomamos de ahí; reporte_bytes queda
-# de respaldo solo mientras alguien todavía suba el Reporte diario viejo.
+# Pickers ahora se sube aparte (pickers_bytes); reporte_bytes queda de
+# respaldo solo mientras alguien todavía suba el Reporte diario viejo.
 if pickers is not None and len(pickers):
-    _pickers_source_bytes = pickers_bytes if pickers_bytes is not None else (
-        ontime_bytes if ontime_bytes is not None else reporte_bytes
-    )
+    _pickers_source_bytes = pickers_bytes if pickers_bytes is not None else reporte_bytes
     _pickers_hash = hashlib.md5(_pickers_source_bytes).hexdigest()
     if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
         if replace_pickers_meses_en_sheet(pickers):
@@ -2535,7 +2039,7 @@ if pedidos_72h is not None and len(pedidos_72h):
             load_pedidos_log.clear()
 
 all_stores = set()
-for d in [pedidos_72h, reclamos, ontime_prepa, fill_rate, cancelados, faltantes]:
+for d in [pedidos_72h, reclamos, cancelados, faltantes]:
     if d is not None and "Tienda" in d.columns:
         all_stores.update([s for s in d["Tienda"].unique() if s])
 
@@ -2575,9 +2079,9 @@ if any_data_loaded:
 
     # Filtro por mes: sale de las fechas reales de Pedidos +72h, Reclamos,
     # Cancelados y Faltantes — así se puede ver, por ejemplo, cuánto quedó
-    # acumulado de Pedidos +72h en un mes puntual. On Time Preparación, Fill
-    # Rate y Productividad Pickers son una foto del día del archivo subido
-    # (sin fecha histórica por fila), así que no tienen mes para filtrar.
+    # acumulado de Pedidos +72h en un mes puntual. Productividad Pickers es
+    # una foto del día del archivo subido (sin fecha histórica por fila),
+    # así que no tiene mes para filtrar.
     _MESES_ES = {
         1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
         7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
@@ -2643,8 +2147,6 @@ if any_data_loaded:
     if filtro_estado is not None and pedidos_f is not None and "Estado" in pedidos_f.columns:
         pedidos_f = pedidos_f[pedidos_f["Estado"] == filtro_estado]
     reclamos_f = ftr(reclamos, "Fecha")
-    prepa_f = ftr(ontime_prepa)
-    fr_f = ftr(fill_rate)
     can_f = ftr(cancelados, "Fecha")
     falt_f = ftr(faltantes, "FechaArchivo")
     pickers_f = ftr(pickers)
@@ -2656,7 +2158,7 @@ if any_data_loaded:
 
     # ---- KPI row ----
     kpis = build_kpis(
-        pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
+        pedidos_f, reclamos_f, can_f, falt_f,
         filtro_activo=filtro_activo, pickers_f=pickers_f
     )
 
@@ -2665,7 +2167,7 @@ if any_data_loaded:
 
     # ---- Descargar todo junto (para mandar al jefe) ----
     _full_report_html = export_full_report_html(
-        pedidos_f, reclamos_f, prepa_f, fr_f, can_f, falt_f,
+        pedidos_f, reclamos_f, can_f, falt_f,
         filtro_activo=filtro_activo, pickers_f=pickers_f
     )
     if _full_report_html:
@@ -2857,71 +2359,6 @@ if any_data_loaded:
             st.markdown('<div class="empty-box">Sin reclamos para esta selección 🎉</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="empty-box">Subí el archivo de Reclamos para ver esta sección.</div>', unsafe_allow_html=True)
-
-    # ---- On Time Preparación ----
-    st.markdown(
-        f'<div class="section">⏱️ On Time Preparación '
-        f'<span class="count-pill">{len(prepa_f) if prepa_f is not None else 0}</span></div>'
-        '<div class="section-desc">Porcentaje de pedidos preparados en horario, por tienda.</div>',
-        unsafe_allow_html=True
-    )
-    if prepa_f is not None and len(prepa_f):
-        b = prepa_bundle(prepa_f)
-        show, detail_cols, html_doc = b["show"], b["detail_cols"], b["html_doc"]
-
-        mini_card = kpi_card(
-            "On time preparación", pct1(b["ot_pct_tot"]),
-            f"Total: {b['ped_tot']} pedidos · {b['fuera_tot']} fuera de horario — clickeá para bajar el HTML",
-            "good" if b["ot_pct_tot"] >= 95 else ("warn" if b["ot_pct_tot"] >= 90 else "crit")
-        )
-        st.markdown(
-            f'<div class="kpi-row" style="margin:4px 0 14px; grid-template-columns: minmax(230px, 340px);">'
-            f'{kpi_link_wrap(mini_card, html_doc, "operativo_ontime_preparacion.html")}</div>',
-            unsafe_allow_html=True
-        )
-
-        st.markdown(
-            '<div class="resumen-title">Top 5 tiendas con % on time &lt; 95%</div>',
-            unsafe_allow_html=True
-        )
-        st.write(b["top5_html"], unsafe_allow_html=True)
-
-        st.markdown('<div class="resumen-title" style="margin-top:14px;">Detalle completo</div>', unsafe_allow_html=True)
-        with st.container(height=380):
-            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
-
-        section_download_button(html_doc, "operativo_ontime_preparacion.html", "dl_prepa")
-    else:
-        st.markdown('<div class="empty-box">Subí el archivo de On Time para ver esta sección.</div>', unsafe_allow_html=True)
-
-    # ---- Fill Rate ----
-    fr_show_all = fr_f[fr_f["Unidades"] > 0] if fr_f is not None else None
-    st.markdown(
-        f'<div class="section">🧩 Fill Rate — con y sin sustituto '
-        f'<span class="count-pill">{len(fr_show_all) if fr_show_all is not None else 0}</span></div>'
-        f'<div class="section-desc">Todas las tiendas con venta. Unidades faltantes: cubiertas con '
-        f'reemplazo vs. no entregadas — en rojo/amarillo, las que no llegan al objetivo ({FR_OBJETIVO}%).</div>',
-        unsafe_allow_html=True
-    )
-    if fr_show_all is not None and len(fr_show_all):
-        show = fr_show_all.copy().sort_values("FRPct")
-        n_below = int((show["FRPct"] < FR_OBJETIVO).sum())
-        st.markdown(
-            f'<div class="resumen-title">{n_below} de {len(show)} tiendas por debajo del objetivo '
-            f'({FR_OBJETIVO}%)</div>',
-            unsafe_allow_html=True
-        )
-        detail_cols = _fr_prep_show(show)
-        with st.container(height=380):
-            st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
-        html_doc = export_section_html(
-            "🧩 Fill Rate — con y sin sustituto",
-            f"Todas las tiendas con venta — en rojo/amarillo, las que no llegan al objetivo ({FR_OBJETIVO}%).",
-            table_html(show[detail_cols])
-        )
-        section_download_button(html_doc, "operativo_fill_rate.html", "dl_fr")
-    else:
-        st.markdown('<div class="empty-box">Subí el archivo de Fill Rate para ver esta sección.</div>', unsafe_allow_html=True)
 
     # ---- Cancelados ----
     st.markdown(
