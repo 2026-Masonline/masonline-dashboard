@@ -478,20 +478,20 @@ def _vh_cargar_pedidos_completo(vsventas_bytes, tienda_codes_tuple):
 
 def _vh_pedidos_del_dia(completo, fecha):
     """A partir del DataFrame completo (ya parseado y cacheado), recorta
-    los pedidos ENTREGADOS ese día puntual (fecha de entrega) y agrega los
-    CREADOS ese mismo día (fecha de creación, cantidad + monto) — misma
-    lógica de siempre, pero para cualquier `fecha` (date de Python), no
-    solo la de hoy. Devuelve (entregados_df, creados_count, creados_monto);
-    entregados_df es None si `completo` es None (todavía no hay archivo
-    subido)."""
+    los pedidos ENTREGADOS ese día puntual (fecha de entrega) y los
+    CREADOS ese mismo día (fecha de creación) — misma lógica de siempre,
+    pero para cualquier `fecha` (date de Python), no solo la de hoy.
+    Devuelve (entregados_df, creados_df), ambos SIN filtrar todavía por
+    tienda (eso se aplica después, en el selector de Tienda) — None/None
+    si `completo` es None (todavía no hay archivo subido)."""
     detalle_cols = ["Pedido", "Tienda", "Metodo", "Estado", "Monto", "Unidades"]
     if completo is None:
-        return None, 0, 0.0
+        return None, None
     if not len(completo):
-        return completo[detalle_cols], 0, 0.0
+        return completo[detalle_cols], completo[detalle_cols]
     entregados = completo[completo["FechaEntrega"].dt.date == fecha]
     creados = completo[completo["FechaCreacion"].dt.date == fecha]
-    return entregados[detalle_cols], len(creados), float(creados["Monto"].sum())
+    return entregados[detalle_cols], creados[detalle_cols]
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 
@@ -545,8 +545,48 @@ if _fechas_disponibles_hoy:
 else:
     fecha_mostrada = arg_today
 
-pedidos_detalle_hoy, pedidos_creados_hoy_count, pedidos_creados_hoy_monto = _vh_pedidos_del_dia(
+_pedidos_entregados_sinfiltro, _pedidos_creados_sinfiltro = _vh_pedidos_del_dia(
     _pedidos_completo_hoy, fecha_mostrada
+)
+
+# Filtro de Tienda — se arma con las tiendas que realmente aparecen ese día
+# (entregados o creados), para no ofrecer tiendas sin nada que mostrar.
+_tiendas_con_datos = set()
+for _d in (_pedidos_entregados_sinfiltro, _pedidos_creados_sinfiltro):
+    if _d is not None and len(_d):
+        _tiendas_con_datos.update(str(t) for t in _d["Tienda"].unique() if str(t))
+if _tiendas_con_datos:
+    _tiendas_ordenadas = sorted(
+        _tiendas_con_datos, key=lambda c: TIENDA_MAP.get(c, c)
+    )
+    _tienda_opciones = ["Todas las tiendas"] + [
+        f"{c} - {TIENDA_MAP.get(c, '')}" if TIENDA_MAP.get(c) else c
+        for c in _tiendas_ordenadas
+    ]
+    _tienda_codigo_por_opcion = {"Todas las tiendas": None}
+    _tienda_codigo_por_opcion.update(dict(zip(_tienda_opciones[1:], _tiendas_ordenadas)))
+    st.markdown(
+        '<div style="font-size:12px;font-weight:700;color:#6b7280;margin:8px 0 2px;">'
+        'TIENDA</div>',
+        unsafe_allow_html=True
+    )
+    _tienda_sel_label = st.selectbox(
+        "Tienda", _tienda_opciones, key="vh_tienda_pedidos", label_visibility="collapsed"
+    )
+    filtro_tienda_hoy = _tienda_codigo_por_opcion[_tienda_sel_label]
+else:
+    filtro_tienda_hoy = None
+
+def _vh_filtrar_tienda(d):
+    if d is None or filtro_tienda_hoy is None:
+        return d
+    return d[d["Tienda"].astype(str) == filtro_tienda_hoy]
+
+pedidos_detalle_hoy = _vh_filtrar_tienda(_pedidos_entregados_sinfiltro)
+_creados_detalle_hoy = _vh_filtrar_tienda(_pedidos_creados_sinfiltro)
+pedidos_creados_hoy_count = len(_creados_detalle_hoy) if _creados_detalle_hoy is not None else 0
+pedidos_creados_hoy_monto = (
+    float(_creados_detalle_hoy["Monto"].sum()) if _creados_detalle_hoy is not None and len(_creados_detalle_hoy) else 0.0
 )
 
 if LOGO_FILE.exists():
@@ -576,10 +616,14 @@ st.markdown(f"""
 # los pedidos ENTREGADOS hoy (fecha de entrega, no de creación).
 # ---------------------------------------------------------------------
 st.markdown('<div class="section">Pedidos del día</div>', unsafe_allow_html=True)
+_tienda_desc = (
+    f" — tienda: <b>{html.escape(_tienda_sel_label)}</b>"
+    if filtro_tienda_hoy is not None else ""
+)
 st.markdown(
     f'<div class="section-desc">Entregados (fecha de entrega) y creados (fecha de creación) '
     f'el <b>{fecha_mostrada.strftime("%d/%m/%Y")}</b>, con el desglose por método de entrega '
-    f'— sale del archivo de Pedidos.</div>',
+    f'— sale del archivo de Pedidos{_tienda_desc}.</div>',
     unsafe_allow_html=True
 )
 
@@ -1048,7 +1092,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
   <div class="hero-date">{fecha_mostrada.strftime('%d/%m/%Y')}</div>
 </div>
 
-<div class="section">Pedidos del día</div>
+<div class="section">Pedidos del día{' · ' + html.escape(_tienda_sel_label) if filtro_tienda_hoy is not None else ''}</div>
 <div class="kpis" style="grid-template-columns: repeat(4, 1fr);">
   <div class="card" style="border-top:4px solid #3b82c4;">
     <div class="label" style="color:#2566a0;">TOTAL PEDIDOS</div>
