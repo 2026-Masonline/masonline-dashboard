@@ -594,9 +594,17 @@ else:
     # etc., que todavía no se entregaron de verdad), y lo siguen usando tal
     # cual Método de entrega / Formato de tienda / Top 5 tiendas más abajo
     # (volumen operativo completo del día), a pedido de Emi.
-    entregados_reales_count = int(
-        pedidos_detalle_hoy["Estado"].astype(str).str.lower().eq("delivered").sum()
+    _pedidos_estado_lower = pedidos_detalle_hoy["Estado"].astype(str).str.lower()
+    entregados_reales_count = int(_pedidos_estado_lower.eq("delivered").sum())
+    # "Por entregar" = programados para la fecha que todavía no se
+    # entregaron de verdad NI se cancelaron (listos para entregar, en
+    # camino, listos para facturar, etc.) — los cancelados se restan aparte
+    # porque ya no van a salir, así que no corresponde contarlos como
+    # pendientes de entrega.
+    cancelados_dia_count = int(
+        _pedidos_estado_lower.isin(["canceled", "cancelled", "cancelationrequested"]).sum()
     )
+    por_entregar_count = len(pedidos_detalle_hoy) - entregados_reales_count - cancelados_dia_count
     _metodo_orden = ["Envío a domicilio", "Retiro en tienda", "Pickup (drive-through)"]
     if entregados_count:
         metodo_tmp = pedidos_detalle_hoy.assign(
@@ -612,26 +620,42 @@ else:
         metodo_agg = pd.DataFrame(columns=["Pedidos", "Monto"])
         etiquetas = _metodo_orden
 
-    # Tarjeta "Total de pedidos entregados" (del día elegido) + "Pedidos creados" (mismo día).
+    # Tres tarjetas para seguir cómo viene el día a medida que se vuelve a
+    # subir el archivo: ENTREGADOS sube, POR ENTREGAR baja (a medida que se
+    # van entregando), y CREADOS sube con los pedidos nuevos.
     _fecha_card = fecha_mostrada.strftime("%d/%m")
-    cc1, cc2 = st.columns(2)
+    cc1, cc2, cc3 = st.columns(3)
     with cc1:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #2f9e66;">
-          <div class="label" style="color:#208653;">TOTAL PEDIDOS ENTREGADOS</div>
+          <div class="label" style="color:#208653;">ENTREGADOS</div>
           <div class="value" style="color:#208653;">{intfmt(entregados_reales_count)}</div>
           <div class="small">Estado real "Entregado" — {_fecha_card}</div>
-          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">de {intfmt(entregados_count)} programados para el día (ver "Estados de los pedidos")</div>
         </div>
         """, unsafe_allow_html=True)
     with cc2:
         st.markdown(f"""
+        <div class="card" style="border-top:4px solid #f5a623;">
+          <div class="label" style="color:#b9790c;">POR ENTREGAR</div>
+          <div class="value" style="color:#b9790c;">{intfmt(por_entregar_count)}</div>
+          <div class="small">Programados, todavía no entregados — {_fecha_card}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with cc3:
+        st.markdown(f"""
         <div class="card" style="border-top:4px solid #59636e;">
-          <div class="label">PEDIDOS CREADOS</div>
+          <div class="label">CREADOS</div>
           <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
           <div class="small">Por fecha de creación — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
+    if cancelados_dia_count:
+        st.markdown(
+            f'<div style="font-size:11.5px;color:#9ca3af;margin:4px 2px 0;">'
+            f'No incluye {intfmt(cancelados_dia_count)} cancelados de la fecha — el detalle completo '
+            f'está en "Estados de los pedidos" más abajo.</div>',
+            unsafe_allow_html=True
+        )
 
     # Estados de los pedidos (en español) — sobre el mismo conjunto de
     # pedidos con fecha de entrega en el día elegido. Útil porque no todos
@@ -1006,14 +1030,19 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 </div>
 
 <div class="section">Pedidos del día</div>
-<div class="kpis kpis-2">
+<div class="kpis" style="grid-template-columns: repeat(3, 1fr);">
   <div class="card" style="border-top:4px solid #2f9e66;">
-    <div class="label" style="color:#208653;">TOTAL PEDIDOS ENTREGADOS</div>
+    <div class="label" style="color:#208653;">ENTREGADOS</div>
     <div class="value" style="color:#208653;">{intfmt(entregados_reales_count)}</div>
     <div class="small">Estado real "Entregado" — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
+  <div class="card" style="border-top:4px solid #f5a623;">
+    <div class="label" style="color:#b9790c;">POR ENTREGAR</div>
+    <div class="value" style="color:#b9790c;">{intfmt(por_entregar_count)}</div>
+    <div class="small">Programados, todavía no entregados — {fecha_mostrada.strftime('%d/%m')}</div>
+  </div>
   <div class="card" style="border-top:4px solid #59636e;">
-    <div class="label">PEDIDOS CREADOS</div>
+    <div class="label">CREADOS</div>
     <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
     <div class="small">Por fecha de creación — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
