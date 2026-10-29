@@ -478,19 +478,20 @@ def _vh_cargar_pedidos_completo(vsventas_bytes, tienda_codes_tuple):
 
 def _vh_pedidos_del_dia(completo, fecha):
     """A partir del DataFrame completo (ya parseado y cacheado), recorta
-    los pedidos ENTREGADOS ese día puntual (fecha de entrega) y cuenta los
-    CREADOS ese mismo día (fecha de creación) — misma lógica de siempre,
-    pero para cualquier `fecha` (date de Python), no solo la de hoy.
-    Devuelve (entregados_df, creados_count); entregados_df es None si
-    `completo` es None (todavía no hay archivo subido)."""
+    los pedidos ENTREGADOS ese día puntual (fecha de entrega) y agrega los
+    CREADOS ese mismo día (fecha de creación, cantidad + monto) — misma
+    lógica de siempre, pero para cualquier `fecha` (date de Python), no
+    solo la de hoy. Devuelve (entregados_df, creados_count, creados_monto);
+    entregados_df es None si `completo` es None (todavía no hay archivo
+    subido)."""
     detalle_cols = ["Pedido", "Tienda", "Metodo", "Estado", "Monto", "Unidades"]
     if completo is None:
-        return None, 0
+        return None, 0, 0.0
     if not len(completo):
-        return completo[detalle_cols], 0
+        return completo[detalle_cols], 0, 0.0
     entregados = completo[completo["FechaEntrega"].dt.date == fecha]
-    creados_count = int((completo["FechaCreacion"].dt.date == fecha).sum())
-    return entregados[detalle_cols], creados_count
+    creados = completo[completo["FechaCreacion"].dt.date == fecha]
+    return entregados[detalle_cols], len(creados), float(creados["Monto"].sum())
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 
@@ -544,7 +545,9 @@ if _fechas_disponibles_hoy:
 else:
     fecha_mostrada = arg_today
 
-pedidos_detalle_hoy, pedidos_creados_hoy_count = _vh_pedidos_del_dia(_pedidos_completo_hoy, fecha_mostrada)
+pedidos_detalle_hoy, pedidos_creados_hoy_count, pedidos_creados_hoy_monto = _vh_pedidos_del_dia(
+    _pedidos_completo_hoy, fecha_mostrada
+)
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -605,6 +608,13 @@ else:
         _pedidos_estado_lower.isin(["canceled", "cancelled", "cancelationrequested"]).sum()
     )
     por_entregar_count = len(pedidos_detalle_hoy) - entregados_reales_count - cancelados_dia_count
+    # Montos $ de cada grupo — mismo criterio que arriba (cantidad), para
+    # que cada tarjeta muestre pedidos Y plata.
+    _es_entregado = _pedidos_estado_lower.eq("delivered")
+    _es_cancelado = _pedidos_estado_lower.isin(["canceled", "cancelled", "cancelationrequested"])
+    total_monto = float(pedidos_detalle_hoy["Monto"].sum())
+    entregados_reales_monto = float(pedidos_detalle_hoy.loc[_es_entregado, "Monto"].sum())
+    por_entregar_monto = float(pedidos_detalle_hoy.loc[~_es_entregado & ~_es_cancelado, "Monto"].sum())
     _metodo_orden = ["Envío a domicilio", "Retiro en tienda", "Pickup (drive-through)"]
     if entregados_count:
         metodo_tmp = pedidos_detalle_hoy.assign(
@@ -620,17 +630,26 @@ else:
         metodo_agg = pd.DataFrame(columns=["Pedidos", "Monto"])
         etiquetas = _metodo_orden
 
-    # Tres tarjetas para seguir cómo viene el día a medida que se vuelve a
-    # subir el archivo: ENTREGADOS sube, POR ENTREGAR baja (a medida que se
-    # van entregando), y CREADOS sube con los pedidos nuevos.
+    # Cuatro tarjetas para seguir cómo viene el día a medida que se vuelve a
+    # subir el archivo: TOTAL y ENTREGADOS suben, POR ENTREGAR baja (a
+    # medida que se van entregando), y CREADOS sube con los pedidos nuevos.
+    # Todas muestran cantidad de pedidos Y el monto $ correspondiente.
     _fecha_card = fecha_mostrada.strftime("%d/%m")
-    cc1, cc2, cc3 = st.columns(3)
+    cc0, cc1, cc2, cc3 = st.columns(4)
+    with cc0:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #3b82c4;">
+          <div class="label" style="color:#2566a0;">TOTAL PEDIDOS</div>
+          <div class="value" style="color:#2566a0;">{intfmt(len(pedidos_detalle_hoy))}</div>
+          <div class="small">{money(total_monto)} — {_fecha_card}</div>
+        </div>
+        """, unsafe_allow_html=True)
     with cc1:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #2f9e66;">
           <div class="label" style="color:#208653;">ENTREGADOS</div>
           <div class="value" style="color:#208653;">{intfmt(entregados_reales_count)}</div>
-          <div class="small">Estado real "Entregado" — {_fecha_card}</div>
+          <div class="small">{money(entregados_reales_monto)} — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
     with cc2:
@@ -638,7 +657,7 @@ else:
         <div class="card" style="border-top:4px solid #f5a623;">
           <div class="label" style="color:#b9790c;">POR ENTREGAR</div>
           <div class="value" style="color:#b9790c;">{intfmt(por_entregar_count)}</div>
-          <div class="small">Programados, todavía no entregados — {_fecha_card}</div>
+          <div class="small">{money(por_entregar_monto)} — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
     with cc3:
@@ -646,7 +665,7 @@ else:
         <div class="card" style="border-top:4px solid #59636e;">
           <div class="label">CREADOS</div>
           <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
-          <div class="small">Por fecha de creación — {_fecha_card}</div>
+          <div class="small">{money(pedidos_creados_hoy_monto)} — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
     if cancelados_dia_count:
@@ -1030,21 +1049,26 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 </div>
 
 <div class="section">Pedidos del día</div>
-<div class="kpis" style="grid-template-columns: repeat(3, 1fr);">
+<div class="kpis" style="grid-template-columns: repeat(4, 1fr);">
+  <div class="card" style="border-top:4px solid #3b82c4;">
+    <div class="label" style="color:#2566a0;">TOTAL PEDIDOS</div>
+    <div class="value" style="color:#2566a0;">{intfmt(len(pedidos_detalle_hoy))}</div>
+    <div class="small">{html.escape(money(total_monto))} — {fecha_mostrada.strftime('%d/%m')}</div>
+  </div>
   <div class="card" style="border-top:4px solid #2f9e66;">
     <div class="label" style="color:#208653;">ENTREGADOS</div>
     <div class="value" style="color:#208653;">{intfmt(entregados_reales_count)}</div>
-    <div class="small">Estado real "Entregado" — {fecha_mostrada.strftime('%d/%m')}</div>
+    <div class="small">{html.escape(money(entregados_reales_monto))} — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
   <div class="card" style="border-top:4px solid #f5a623;">
     <div class="label" style="color:#b9790c;">POR ENTREGAR</div>
     <div class="value" style="color:#b9790c;">{intfmt(por_entregar_count)}</div>
-    <div class="small">Programados, todavía no entregados — {fecha_mostrada.strftime('%d/%m')}</div>
+    <div class="small">{html.escape(money(por_entregar_monto))} — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
   <div class="card" style="border-top:4px solid #59636e;">
     <div class="label">CREADOS</div>
     <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
-    <div class="small">Por fecha de creación — {fecha_mostrada.strftime('%d/%m')}</div>
+    <div class="small">{html.escape(money(pedidos_creados_hoy_monto))} — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
 </div>
 
