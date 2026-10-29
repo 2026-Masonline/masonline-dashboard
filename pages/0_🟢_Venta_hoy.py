@@ -355,6 +355,29 @@ def _vh_metodo_entrega_label(v):
     s = str(v).strip() if v is not None and not pd.isna(v) else ""
     return _VH_METODO_ENTREGA_LABELS.get(s, s if s else "Sin especificar")
 
+# Traducción del "status" crudo del export (order-operation) — lista
+# relevada sobre el archivo real de Pedidos ("Estados +72.xlsx", Enero a
+# Octubre 2026). Cualquier status nuevo que no esté en el diccionario se
+# muestra tal cual viene, en vez de ocultarse.
+_VH_ESTADO_PEDIDO_LABELS = {
+    "delivered": "Entregado",
+    "canceled": "Cancelado",
+    "cancelled": "Cancelado",
+    "readyForDelivery": "Listo para entregar",
+    "notDelivered": "No entregado",
+    "readyForPicking": "Listo para picking",
+    "readyForInvoice": "Listo para facturar",
+    "inDelivery": "En camino",
+    "cancelationRequested": "Cancelación solicitada",
+    "pendingCandidatesConfirmation": "Pendiente de confirmación",
+    "needsRescheduling": "Necesita reprogramación",
+    "processingRepacking": "En repacking",
+}
+
+def _vh_estado_pedido_label(v):
+    s = str(v).strip() if v is not None and not pd.isna(v) else ""
+    return _VH_ESTADO_PEDIDO_LABELS.get(s, s if s else "Sin especificar")
+
 def _vh_pedidos_codigo_tienda(v, tienda_codes):
     if pd.isna(v):
         s = ""
@@ -411,6 +434,7 @@ def _vh_cargar_pedidos_completo(vsventas_bytes, tienda_codes_tuple):
             if "shippingWarehouseReferenceId" in d.columns else ""
         )
         metodo_col = d["shippingsType"] if "shippingsType" in d.columns else ""
+        estado_col = d["status"] if "status" in d.columns else ""
         if "totalAmount" in d.columns:
             # totalAmount a veces viene como texto con signo "$" (ej.
             # "$85783.3") en vez de número — hay que limpiarlo antes de
@@ -435,13 +459,14 @@ def _vh_cargar_pedidos_completo(vsventas_bytes, tienda_codes_tuple):
             "Pedido": d["commerceId"].values,
             "Tienda": tienda_col,
             "Metodo": metodo_col,
+            "Estado": estado_col,
             "Monto": monto_col,
             "Unidades": unidades_col,
             "FechaEntrega": fecha_entrega.values,
             "FechaCreacion": fecha_creacion.values,
         }))
 
-    cols = ["Id", "Pedido", "Tienda", "Metodo", "Monto", "Unidades", "FechaEntrega", "FechaCreacion"]
+    cols = ["Id", "Pedido", "Tienda", "Metodo", "Estado", "Monto", "Unidades", "FechaEntrega", "FechaCreacion"]
     if not partes:
         return pd.DataFrame(columns=cols)
     out = pd.concat(partes, ignore_index=True, sort=False)
@@ -458,13 +483,14 @@ def _vh_pedidos_del_dia(completo, fecha):
     pero para cualquier `fecha` (date de Python), no solo la de hoy.
     Devuelve (entregados_df, creados_count); entregados_df es None si
     `completo` es None (todavía no hay archivo subido)."""
+    detalle_cols = ["Pedido", "Tienda", "Metodo", "Estado", "Monto", "Unidades"]
     if completo is None:
         return None, 0
     if not len(completo):
-        return completo[["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]], 0
+        return completo[detalle_cols], 0
     entregados = completo[completo["FechaEntrega"].dt.date == fecha]
     creados_count = int((completo["FechaCreacion"].dt.date == fecha).sum())
-    return entregados[["Pedido", "Tienda", "Metodo", "Monto", "Unidades"]], creados_count
+    return entregados[detalle_cols], creados_count
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 
@@ -596,6 +622,43 @@ else:
           <div class="small">Por fecha de creación — {_fecha_card}</div>
         </div>
         """, unsafe_allow_html=True)
+
+    # Estados de los pedidos (en español) — sobre el mismo conjunto de
+    # pedidos con fecha de entrega en el día elegido. Útil porque no todos
+    # los que caen en esa fecha terminan realmente "Entregado": puede haber
+    # cancelados, listos para entregar todavía, etc.
+    st.markdown(
+        f'<div style="font-size:13px;font-weight:800;color:#20252b;margin:16px 0 8px;">'
+        f'ESTADOS DE LOS PEDIDOS — {_fecha_card}</div>',
+        unsafe_allow_html=True
+    )
+    if entregados_count:
+        estado_tmp = pedidos_detalle_hoy.assign(
+            EstadoLabel=pedidos_detalle_hoy["Estado"].apply(_vh_estado_pedido_label)
+        )
+        estado_agg = (
+            estado_tmp.groupby("EstadoLabel", as_index=False)
+            .agg(Cantidad=("EstadoLabel", "size"))
+            .sort_values("Cantidad", ascending=False)
+        )
+        _estado_rows = "".join(
+            '<tr>'
+            f'<td>{html.escape(str(r.EstadoLabel))}</td>'
+            f'<td style="text-align:center;font-weight:800;color:#20252b;">{intfmt(r.Cantidad)}</td>'
+            f'<td style="text-align:right;color:#6b7280;">{pct(r.Cantidad / entregados_count)}</td>'
+            '</tr>'
+            for r in estado_agg.itertuples()
+        )
+        st.markdown(
+            '<div class="rank-table-card"><div class="table-scroll">'
+            '<table class="rank-table"><thead><tr>'
+            '<th>Estado</th><th style="text-align:center;">Pedidos</th><th style="text-align:right;">%</th>'
+            f'</tr></thead><tbody>{_estado_rows}</tbody></table>'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown('<div class="empty-box">Sin pedidos para esta fecha 🎉</div>', unsafe_allow_html=True)
 
     st.markdown(
         '<div style="font-size:13px;font-weight:800;color:#20252b;margin:16px 0 8px;">'
@@ -735,6 +798,37 @@ if pedidos_detalle_hoy is not None and len(pedidos_detalle_hoy):
         .agg(Pedidos=("Tienda", "size"), Monto=("Monto", "sum"))
         .sort_values("Pedidos", ascending=False)
     )
+
+    _dl_estado_tmp = pedidos_detalle_hoy.assign(
+        EstadoLabel=pedidos_detalle_hoy["Estado"].apply(_vh_estado_pedido_label)
+    )
+    _dl_estado_agg = (
+        _dl_estado_tmp.groupby("EstadoLabel", as_index=False)
+        .agg(Cantidad=("EstadoLabel", "size"))
+        .sort_values("Cantidad", ascending=False)
+    )
+
+    def _dl_estado_html(agg, titulo, total):
+        header = f'<div class="rank-table-header">🧾 {html.escape(titulo)}</div>'
+        if not len(agg) or not total:
+            return (
+                f'<div class="rank-table-card">{header}'
+                '<div style="padding:20px;color:#9ca3af;font-size:13px;">Sin datos.</div></div>'
+            )
+        rows_html = "".join(
+            '<tr>'
+            f'<td>{html.escape(str(r.EstadoLabel))}</td>'
+            f'<td style="text-align:center;font-weight:800;color:#20252b;">{intfmt(r.Cantidad)}</td>'
+            f'<td style="text-align:right;color:#6b7280;">{pct(r.Cantidad / total)}</td>'
+            '</tr>'
+            for r in agg.itertuples()
+        )
+        return (
+            f'<div class="rank-table-card">{header}'
+            '<table class="rank-table"><thead><tr>'
+            '<th>Estado</th><th style="text-align:center;">Pedidos</th><th style="text-align:right;">%</th>'
+            f'</tr></thead><tbody>{rows_html}</tbody></table></div>'
+        )
 
     def _dl_cards_html(etiquetas, agg, colores):
         out = ""
@@ -914,6 +1008,9 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
     <div class="small">Por fecha de creación — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
 </div>
+
+<div class="section">Estados de los pedidos</div>
+{_dl_estado_html(_dl_estado_agg, f"ESTADOS · PEDIDOS {fecha_mostrada.strftime('%d/%m')}", len(pedidos_detalle_hoy))}
 
 <div class="section">Método de entrega</div>
 <div class="kpis" style="grid-template-columns: repeat({len(_dl_metodo_etiquetas)}, 1fr);">
