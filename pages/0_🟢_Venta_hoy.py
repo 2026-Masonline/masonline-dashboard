@@ -588,6 +588,15 @@ if pedidos_detalle_hoy is None:
     )
 else:
     entregados_count = len(pedidos_detalle_hoy)
+    # "TOTAL PEDIDOS ENTREGADOS" cuenta solo el estado real "Entregado"
+    # (delivered) — entregados_count de arriba es TODO lo programado para
+    # esa fecha de entrega (incluye "Listo para entregar", "En camino",
+    # etc., que todavía no se entregaron de verdad), y lo siguen usando tal
+    # cual Método de entrega / Formato de tienda / Top 5 tiendas más abajo
+    # (volumen operativo completo del día), a pedido de Emi.
+    entregados_reales_count = int(
+        pedidos_detalle_hoy["Estado"].astype(str).str.lower().eq("delivered").sum()
+    )
     _metodo_orden = ["Envío a domicilio", "Retiro en tienda", "Pickup (drive-through)"]
     if entregados_count:
         metodo_tmp = pedidos_detalle_hoy.assign(
@@ -610,8 +619,9 @@ else:
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #2f9e66;">
           <div class="label" style="color:#208653;">TOTAL PEDIDOS ENTREGADOS</div>
-          <div class="value" style="color:#208653;">{intfmt(entregados_count)}</div>
-          <div class="small">Por fecha de entrega — {_fecha_card}</div>
+          <div class="value" style="color:#208653;">{intfmt(entregados_reales_count)}</div>
+          <div class="small">Estado real "Entregado" — {_fecha_card}</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">de {intfmt(entregados_count)} programados para el día (ver "Estados de los pedidos")</div>
         </div>
         """, unsafe_allow_html=True)
     with cc2:
@@ -999,8 +1009,8 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 <div class="kpis kpis-2">
   <div class="card" style="border-top:4px solid #2f9e66;">
     <div class="label" style="color:#208653;">TOTAL PEDIDOS ENTREGADOS</div>
-    <div class="value" style="color:#208653;">{intfmt(len(pedidos_detalle_hoy))}</div>
-    <div class="small">Por fecha de entrega — {fecha_mostrada.strftime('%d/%m')}</div>
+    <div class="value" style="color:#208653;">{intfmt(entregados_reales_count)}</div>
+    <div class="small">Estado real "Entregado" — {fecha_mostrada.strftime('%d/%m')}</div>
   </div>
   <div class="card" style="border-top:4px solid #59636e;">
     <div class="label">PEDIDOS CREADOS</div>
