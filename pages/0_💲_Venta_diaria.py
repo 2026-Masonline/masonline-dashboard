@@ -278,6 +278,8 @@ _PEDIDOS_RAW_COLS = {
     "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
 }
 _COL_PEDIDOS_VIEJO = "Pedidos Facturados con Venta Operativa - Ecommerce"
+_COL_VENTA_VIEJO = "Venta - Ecommerce"
+_COL_UNIDADES_VIEJO = "Cantidad Venta Operativa - Ecommerce"
 
 
 def _pedidos_norm_codigo(v):
@@ -334,12 +336,28 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
         )
     else:
         tienda_col = ""
+    # Monto ($) y Unidades del pedido — mismo criterio que usa Comparativo
+    # (totalAmount para $, itemsPickedQuantity para unidades, no
+    # itemsQuantity): a pedido de Emi, la Venta $ y las Unidades de esta
+    # página también salen de acá en vez de depender solo de Facturación
+    # (ver más abajo, armado de "ecommerce_tax"/"units" con respaldo).
+    monto_col = pd.to_numeric(
+        d["totalAmount"].astype(str)
+        .str.replace("$", "", regex=False).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce"
+    ).fillna(0)
+    if "itemsPickedQuantity" in d.columns:
+        unidades_col = pd.to_numeric(d["itemsPickedQuantity"], errors="coerce").fillna(0)
+    else:
+        unidades_col = 0
     out = pd.DataFrame({
         "Id": d["commerceSequentialId"].values,
         "date_creacion": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
         "date_entrega": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
         "Tienda": tienda_col,
         "pedidos": 1,
+        "monto": monto_col,
+        "unidades": unidades_col,
     })
     return out
 
@@ -350,15 +368,28 @@ def _pedidos_es_hoja_vieja(d):
 
 def _pedidos_adaptar_hoja_vieja(d):
     # La hoja vieja (formato agregado, años anteriores) solo trae una fecha
-    # por fila — se usa esa misma fecha para los dos criterios.
+    # por fila — se usa esa misma fecha para los dos criterios. A diferencia
+    # del detalle de pedidos, esta hoja sí trae Venta $ y Unidades ya
+    # agregadas por tienda-día (mismas columnas que usa Comparativo), así
+    # que se toman directo en vez de quedar en 0.
     d = d.copy()
     fecha = pd.to_datetime(d["Fecha"], errors="coerce").dt.normalize()
+    monto_viejo = (
+        pd.to_numeric(d[_COL_VENTA_VIEJO], errors="coerce").fillna(0)
+        if _COL_VENTA_VIEJO in d.columns else 0
+    )
+    unidades_viejo = (
+        pd.to_numeric(d[_COL_UNIDADES_VIEJO], errors="coerce").fillna(0)
+        if _COL_UNIDADES_VIEJO in d.columns else 0
+    )
     out = pd.DataFrame({
         "Id": pd.Series([pd.NA] * len(d)),
         "date_creacion": fecha,
         "date_entrega": fecha,
         "Tienda": d["Tienda"].apply(_pedidos_norm_codigo),
         "pedidos": pd.to_numeric(d[_COL_PEDIDOS_VIEJO], errors="coerce").fillna(0),
+        "monto": monto_viejo,
+        "unidades": unidades_viejo,
     })
     return out
 
@@ -368,7 +399,7 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
     """Lee 'Vs de ventas' UNA sola vez y arma los dos criterios de pedidos
     (fecha de creación y fecha de entrega) juntos, para no tener que abrir y
     filtrar el archivo (que puede ser grande) dos veces."""
-    cols_dia = ["date", "orders_vsventas"]
+    cols_dia = ["date", "orders_vsventas", "monto_vsventas", "unidades_vsventas"]
     cols_tienda = ["date", "Tienda", "orders_vsventas"]
     vacio_dia = pd.DataFrame(columns=cols_dia)
     vacio_tienda = pd.DataFrame(columns=cols_tienda)
@@ -410,9 +441,16 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
             base.groupby(["date", "Tienda"], as_index=False)["pedidos"].sum()
             .rename(columns={"pedidos": "orders_vsventas"})
         )
+        # A nivel día (no por tienda) también sumamos monto $ y unidades —
+        # a pedido de Emi, la Venta $ y las Unidades de esta página también
+        # salen de acá (mismo criterio que Comparativo), con Facturación
+        # como respaldo solo para fechas sin datos acá (ver más abajo).
         pedidos_dia = (
-            base.groupby("date", as_index=False)["pedidos"].sum()
-            .rename(columns={"pedidos": "orders_vsventas"})
+            base.groupby("date", as_index=False)
+            .agg(pedidos=("pedidos", "sum"), monto=("monto", "sum"), unidades=("unidades", "sum"))
+            .rename(columns={
+                "pedidos": "orders_vsventas", "monto": "monto_vsventas", "unidades": "unidades_vsventas",
+            })
         )
         return pedidos_dia, pedidos_tienda
 
@@ -430,11 +468,24 @@ _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS
 
 # Reemplazo con respaldo: si para una fecha puntual "Vs de ventas" todavía
 # no tiene datos (por ejemplo, no se subió una versión más nueva), se usa
-# como respaldo el valor de Pedidos Facturados, para que la página no se
-# quede sin número ese día.
-df = df.rename(columns={"orders": "orders_facturados"})
+# como respaldo el valor de Facturación ("Venta Con y sin Impuesto"), para
+# que la página no se quede sin número ese día. A pedido de Emi, Pedidos,
+# Venta $ y Unidades de toda esta página salen de "Vs de ventas" (mismo
+# criterio que Comparativo); Facturación queda solo como respaldo para
+# fechas sin datos en "Vs de ventas".
+df = df.rename(columns={
+    "orders": "orders_facturados",
+    "ecommerce_tax": "ecommerce_tax_facturacion",
+    "units": "units_facturacion",
+})
 df = df.merge(_pedidos_dia_vs, on="date", how="left")
 df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["orders_facturados"])
+df["ecommerce_tax"] = df["monto_vsventas"].where(
+    df["monto_vsventas"].notna(), df["ecommerce_tax_facturacion"]
+)
+df["units"] = df["unidades_vsventas"].where(
+    df["unidades_vsventas"].notna(), df["units_facturacion"]
+)
 # "orders_entrega"/"orders_entrega_real": antes salían de un segundo conteo
 # por fecha de ENTREGA (deliveryFinishDate); ahora, a pedido de Emi, el
 # Pedidos de toda esta página sale por fecha de CREACIÓN del pedido
@@ -445,7 +496,7 @@ df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["or
 # para GDN, imagen descargable).
 df["orders_entrega"] = df["orders"]
 df["orders_entrega_real"] = df["orders_vsventas"].fillna(0)
-df = df.drop(columns=["orders_vsventas"])
+df = df.drop(columns=["orders_vsventas", "monto_vsventas", "unidades_vsventas"])
 
 if len(df_tiendas):
     df_tiendas = df_tiendas.rename(columns={"orders": "orders_facturados"})
