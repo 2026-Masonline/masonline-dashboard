@@ -51,6 +51,11 @@ try:
     base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
     for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
         base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
+    # "company_tax_neto" (Venta Comercial Operativa, sin impuesto) es
+    # columna nueva — un data.csv viejo todavía no la tiene.
+    if "company_tax_neto" not in base_df.columns:
+        base_df["company_tax_neto"] = base_df["company_tax"]
+    base_df["company_tax_neto"] = pd.to_numeric(base_df["company_tax_neto"], errors="coerce")
     base_df = base_df.dropna(subset=["date"])
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
@@ -679,6 +684,13 @@ def normalize_uploaded_excel(file):
         "Pedidos Facturados con Venta Operativa - Ecommerce"
     ]
 
+    # "Venta Comercial Operativa" = venta de la Compañía SIN impuesto (a
+    # diferencia de "Facturacion", que viene CON impuesto) — a pedido de
+    # Emi, Venta diaria la usa para la tarjeta COMPAÑÍA. Es opcional (no va
+    # en "required"): si algún archivo viejo no la trae, se guarda igual a
+    # "Facturacion" para no romper la carga.
+    COL_COMPANY_NETO = "Venta Comercial Operativa"
+
     missing = [c for c in required if c not in d.columns]
     if missing:
         raise ValueError("Faltan columnas: " + ", ".join(missing))
@@ -688,10 +700,16 @@ def normalize_uploaded_excel(file):
     for c in required[1:]:
         d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
 
+    if COL_COMPANY_NETO in d.columns:
+        d[COL_COMPANY_NETO] = pd.to_numeric(d[COL_COMPANY_NETO], errors="coerce").fillna(0)
+    else:
+        d[COL_COMPANY_NETO] = d["Facturacion"]
+
     d = d.dropna(subset=["Fecha"])
 
     out = d.groupby("Fecha", as_index=False).agg(
         company_tax=("Facturacion", "sum"),
+        company_tax_neto=(COL_COMPANY_NETO, "sum"),
         ecommerce_tax=("Venta - Ecommerce", "sum"),
         orders=("Pedidos Facturados con Venta Operativa - Ecommerce", "sum"),
         units=("Cantidad Venta Operativa - Ecommerce", "sum")
