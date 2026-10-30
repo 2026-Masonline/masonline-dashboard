@@ -237,12 +237,12 @@ def _adaptar_hoja_detalle_pedidos(d):
       con impuesto incluido).
     - "Cantidad" (unidades) = itemsPickedQuantity (unidades efectivamente
       pickeadas), no itemsQuantity (unidades pedidas).
-    - El día que cuenta para cada pedido es "deliveryFinishDate" (fecha de
-      entrega), no "commerceDateCreated" (fecha en que se hizo el pedido) —
-      así lo pidió Emi, para que coincida con cómo mide el día operativo
-      (ej. "hoy tengo 1486 pedidos" cuenta entregas de hoy, no ventas de
-      hoy). Un pedido sin deliveryFinishDate cargado se descarta (se cae
-      solo más abajo, al sacar las filas sin fecha válida)."""
+    - El día que cuenta para cada pedido es "commerceDateCreated" (fecha de
+      CREACIÓN del pedido), no "deliveryFinishDate" (fecha de entrega) — a
+      pedido de Emi, todas las métricas (Pedidos, Venta $ y Unidades) se
+      agrupan por este criterio. Un pedido sin commerceDateCreated cargado
+      se descarta (se cae solo más abajo, al sacar las filas sin fecha
+      válida)."""
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
@@ -252,7 +252,7 @@ def _adaptar_hoja_detalle_pedidos(d):
         errors="coerce"
     ).fillna(0)
     out = pd.DataFrame({
-        "Fecha": pd.to_datetime(d["deliveryFinishDate"], errors="coerce"),
+        "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
         COL_VENTA: monto,
         COL_FACTURACION: monto,
         COL_UNIDADES: pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce").fillna(0),
