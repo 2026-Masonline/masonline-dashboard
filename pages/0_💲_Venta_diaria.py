@@ -157,6 +157,22 @@ try:
     base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
     for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
         base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
+    # "company_tax_neto" (Venta Comercial Operativa, SIN impuesto) es
+    # columna nueva que arma la pestaña "app" — un data.csv viejo, o un mes
+    # todavía no vuelto a subir con el Excel actualizado, puede no tenerla
+    # (o tenerla en NaN para esas fechas); en ese caso se usa como respaldo
+    # "company_tax" (con impuesto), más abajo.
+    if "company_tax_neto" not in base_df.columns:
+        base_df["company_tax_neto"] = pd.NA
+    base_df["company_tax_neto"] = pd.to_numeric(base_df["company_tax_neto"], errors="coerce")
+    # A pedido de Emi, en esta página (Venta diaria) "COMPAÑÍA" muestra la
+    # venta SIN impuesto ("Venta Comercial Operativa"), no "Facturacion"
+    # (con impuesto) — el resto del dashboard (Operativo, Resumen, Venta
+    # hoy) sigue usando Facturación para este mismo dato, sin cambios ahí.
+    base_df["company_tax_con_impuesto"] = base_df["company_tax"]
+    base_df["company_tax"] = base_df["company_tax_neto"].where(
+        base_df["company_tax_neto"].notna(), base_df["company_tax"]
+    )
     base_df = base_df.dropna(subset=["date"])
 except Exception as e:
     st.error(f"No se pudo leer data.csv: {e}")
