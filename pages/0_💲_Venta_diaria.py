@@ -594,11 +594,21 @@ weekend_full_company = friday_company + saturday_company + sunday_company
 weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_company else 0
 weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_sunday.strftime('%d-%m')}"
 
-sales_label = "VENTA DÍA ANTERIOR"
-if is_monday:
+## Si el archivo ya trae la fila de HOY (ver más arriba: ya no se descarta),
+# `latest` puede ser el día en curso en vez del último día cerrado — en ese
+# caso la tarjeta pasa a llamarse "VENTA DE HOY" (mostrando ese día), en vez
+# de "VENTA DÍA ANTERIOR" con el valor de hoy puesto a la fuerza bajo un
+# nombre que ya no correspondería.
+latest_es_hoy = latest["date"].date() == arg_today
+if latest_es_hoy:
+    sales_label = "VENTA DE HOY"
+    sales_value = latest["ecommerce_tax"]
+elif is_monday:
     # Los lunes no tomamos el domingo como "día anterior": usamos el sábado.
+    sales_label = "VENTA DÍA ANTERIOR"
     sales_value = saturday_sales
 else:
+    sales_label = "VENTA DÍA ANTERIOR"
     sales_value = latest["ecommerce_tax"]
 days_elapsed = len(current)
 days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
