@@ -196,7 +196,13 @@ st.markdown(
 df = base_df.copy()
 df_tiendas = base_df_tiendas.copy()
 
-# Siempre mostramos el último día cerrado en Argentina.
+# Antes se mostraba siempre el último día CERRADO (se descartaba la fila de
+# "hoy" aunque estuviera en el archivo), porque durante el día esa fila
+# todavía viene incompleta. A pedido de Emi, ahora si el archivo "Venta Con
+# y sin Impuesto" ya trae la fila de hoy, se toma como el día más reciente
+# (DIARIO) igual que cualquier otro — sin esperar a que cierre. Ojo: como la
+# venta Ecommerce se factura con un desfasaje, el día en curso puede figurar
+# en $0 Ecommerce hasta que se termine de facturar.
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"]).copy()
 
@@ -205,7 +211,6 @@ if len(df_tiendas):
     df_tiendas = df_tiendas.dropna(subset=["date"]).copy()
 
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df = df[df["date"].dt.date < arg_today].copy()
 
 # ---------------------------------------------------------------------
 # Pedidos: de acá en más salen siempre de "Vs de ventas" (el mismo archivo
@@ -651,9 +656,9 @@ if len(current_tiendas):
         .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders", "sum"))
     )
 
-# Mismo "último día cerrado" que usa el resto del dashboard (variable `latest`,
-# calculada más arriba a partir de `current`), para que el cuadro "venta
-# diaria" siempre muestre el día más reciente con datos, no el día en curso.
+# Mismo día que usa el resto del dashboard (variable `latest`, calculada más
+# arriba a partir de `current`: el más reciente con datos, hoy incluido si
+# ya está cargado), para que el cuadro "venta diaria" quede consistente.
 latest_tienda_date = latest["date"]
 tiendas_dia = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders"])
 if len(df_tiendas):
