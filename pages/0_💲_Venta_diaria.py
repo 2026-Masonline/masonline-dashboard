@@ -352,11 +352,10 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
         )
     else:
         tienda_col = ""
-    # Monto ($) y Unidades del pedido — mismo criterio que usa Comparativo
-    # (totalAmount para $, itemsPickedQuantity para unidades, no
-    # itemsQuantity): a pedido de Emi, la Venta $ y las Unidades de esta
-    # página también salen de acá en vez de depender solo de Facturación
-    # (ver más abajo, armado de "ecommerce_tax"/"units" con respaldo).
+    # Monto ($) y Unidades del pedido. El monto se calcula igual pero esta
+    # página NO lo termina usando (la Venta $ sigue saliendo de Facturación,
+    # ver más abajo); las Unidades sí salen de acá, mismo criterio que usa
+    # Comparativo (itemsPickedQuantity, no itemsQuantity), a pedido de Emi.
     monto_col = pd.to_numeric(
         d["totalAmount"].astype(str)
         .str.replace("$", "", regex=False).str.replace(",", "", regex=False).str.strip(),
@@ -457,10 +456,10 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
             base.groupby(["date", "Tienda"], as_index=False)["pedidos"].sum()
             .rename(columns={"pedidos": "orders_vsventas"})
         )
-        # A nivel día (no por tienda) también sumamos monto $ y unidades —
-        # a pedido de Emi, la Venta $ y las Unidades de esta página también
-        # salen de acá (mismo criterio que Comparativo), con Facturación
-        # como respaldo solo para fechas sin datos acá (ver más abajo).
+        # A nivel día (no por tienda) también sumamos monto $ y unidades.
+        # "monto" queda calculado pero esta página no lo usa (Venta $ sigue
+        # de Facturación); las Unidades sí salen de acá, a pedido de Emi,
+        # con Facturación como respaldo solo para fechas sin datos acá.
         pedidos_dia = (
             base.groupby("date", as_index=False)
             .agg(pedidos=("pedidos", "sum"), monto=("monto", "sum"), unidades=("unidades", "sum"))
@@ -485,20 +484,18 @@ _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS
 # Reemplazo con respaldo: si para una fecha puntual "Vs de ventas" todavía
 # no tiene datos (por ejemplo, no se subió una versión más nueva), se usa
 # como respaldo el valor de Facturación ("Venta Con y sin Impuesto"), para
-# que la página no se quede sin número ese día. A pedido de Emi, Pedidos,
-# Venta $ y Unidades de toda esta página salen de "Vs de ventas" (mismo
-# criterio que Comparativo); Facturación queda solo como respaldo para
-# fechas sin datos en "Vs de ventas".
+# que la página no se quede sin número ese día. A pedido de Emi, Pedidos y
+# Unidades de toda esta página salen de "Vs de ventas" (mismo criterio que
+# Comparativo), con Facturación como respaldo solo para fechas sin datos
+# ahí. La Venta $ (ecommerce_tax), en cambio, sigue 100% de Facturación —
+# "Vs de ventas" no se usa para la plata en esta página (se probó usarlo
+# también para la plata, pero a pedido de Emi se volvió atrás).
 df = df.rename(columns={
     "orders": "orders_facturados",
-    "ecommerce_tax": "ecommerce_tax_facturacion",
     "units": "units_facturacion",
 })
 df = df.merge(_pedidos_dia_vs, on="date", how="left")
 df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["orders_facturados"])
-df["ecommerce_tax"] = df["monto_vsventas"].where(
-    df["monto_vsventas"].notna(), df["ecommerce_tax_facturacion"]
-)
 df["units"] = df["unidades_vsventas"].where(
     df["unidades_vsventas"].notna(), df["units_facturacion"]
 )
