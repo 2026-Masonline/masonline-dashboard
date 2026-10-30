@@ -435,6 +435,16 @@ _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS
 df = df.rename(columns={"orders": "orders_facturados"})
 df = df.merge(_pedidos_dia_vs, on="date", how="left")
 df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["orders_facturados"])
+# "orders_entrega"/"orders_entrega_real": antes salían de un segundo conteo
+# por fecha de ENTREGA (deliveryFinishDate); ahora, a pedido de Emi, el
+# Pedidos de toda esta página sale por fecha de CREACIÓN del pedido
+# (commerceDateCreated) — el mismo criterio que ya usa Comparativo — así
+# que estos dos quedan como alias de "orders"/el dato sin respaldo. Se
+# mantienen estos nombres para no tener que tocar cada lugar de la página
+# donde ya se usan (tarjeta DIARIO, MES EN CURSO, Top 5 del día, Resumen
+# para GDN, imagen descargable).
+df["orders_entrega"] = df["orders"]
+df["orders_entrega_real"] = df["orders_vsventas"].fillna(0)
 df = df.drop(columns=["orders_vsventas"])
 
 if len(df_tiendas):
@@ -443,45 +453,8 @@ if len(df_tiendas):
     df_tiendas["orders"] = df_tiendas["orders_vsventas"].where(
         df_tiendas["orders_vsventas"].notna(), df_tiendas["orders_facturados"]
     )
+    df_tiendas["orders_entrega"] = df_tiendas["orders"]
     df_tiendas = df_tiendas.drop(columns=["orders_vsventas"])
-
-# Pedidos por fecha de ENTREGA (deliveryFinishDate), además de los de arriba
-# (fecha de creación): la tarjeta "DIARIO" y la de "MES EN CURSO" (en la app,
-# "Dashboard completo", "Resumen para GDN" y la imagen/HTML descargables)
-# muestran pedidos por fecha de entrega, a pedido de Emi — coincide con lo
-# que Janis/Comparativo cuenta como pedido entregado. El Top 5 tiendas del
-# DÍA también usa entrega (ver más abajo); el Top 5 MENSUAL sigue en
-# creación, consistente con el "acc_orders" (creación) que queda sin usar
-# para mostrar pero se mantiene calculado por si hace falta más adelante.
-_pedidos_dia_vs_entrega = _pedidos_dia_vs_entrega.rename(
-    columns={"orders_vsventas": "orders_vsventas_entrega"}
-)
-_pedidos_tienda_vs_entrega = _pedidos_tienda_vs_entrega.rename(
-    columns={"orders_vsventas": "orders_vsventas_entrega"}
-)
-
-df = df.merge(_pedidos_dia_vs_entrega, on="date", how="left")
-df["orders_entrega"] = df["orders_vsventas_entrega"].where(
-    df["orders_vsventas_entrega"].notna(), df["orders_facturados"]
-)
-# "orders_entrega_real": SOLO lo que trae 'Vs de ventas' por fecha de
-# entrega, sin respaldo de "Pedidos Facturados" — a pedido de Emi, para que
-# MES EN CURSO coincida con Janis en vez de mezclarse con una métrica
-# distinta (Pedidos Facturados cuenta otra cosa, no pedidos únicos de
-# ecommerce). Mientras el archivo de Pedidos no cubra el mes completo, los
-# días sin datos reales simplemente no suman acá (van a ir sumando a
-# medida que se suba 'Vs de ventas' con más días del mes). El DIARIO y el
-# Top 5 del día siguen usando "orders_entrega" (con respaldo) más abajo,
-# sin cambios.
-df["orders_entrega_real"] = df["orders_vsventas_entrega"].fillna(0)
-df = df.drop(columns=["orders_vsventas_entrega"])
-
-if len(df_tiendas):
-    df_tiendas = df_tiendas.merge(_pedidos_tienda_vs_entrega, on=["date", "Tienda"], how="left")
-    df_tiendas["orders_entrega"] = df_tiendas["orders_vsventas_entrega"].where(
-        df_tiendas["orders_vsventas_entrega"].notna(), df_tiendas["orders_facturados"]
-    )
-    df_tiendas = df_tiendas.drop(columns=["orders_vsventas_entrega"])
 # ---------------------------------------------------------------------
 
 _MESES_ES = [
@@ -656,14 +629,9 @@ tiendas_dia = pd.DataFrame(columns=["Tienda", "Nombre", "ecommerce_tax", "orders
 if len(df_tiendas):
     filas_dia = df_tiendas[df_tiendas["date"] == latest_tienda_date]
     if len(filas_dia):
-        # "Pedidos" en el Top 5 del DÍA va por fecha de ENTREGA (orders_entrega),
-        # no de creación, a pedido de Emi: así coincide con "pedidos entregados"
-        # que ella mira directo en la plataforma para ese día (antes mostraba
-        # pedidos CREADOS ese día, que es un número distinto — ej. una tienda
-        # con 8 pedidos creados el día pero 78 entregados ese mismo día, por
-        # pedidos de días anteriores que se entregaron recién ese día). El Top
-        # 5 del MES (tiendas_resumen, más abajo) se deja por fecha de creación,
-        # para que siga coincidiendo con la card "MES EN CURSO" de más arriba.
+        # "Pedidos" en el Top 5 del DÍA usa "orders_entrega", que a su vez es
+        # alias de "orders" — ambos por fecha de CREACIÓN del pedido, igual
+        # que el Top 5 del MES (tiendas_resumen, más abajo) y que Comparativo.
         tiendas_dia = (
             filas_dia.groupby(["Tienda", "Nombre"], as_index=False)
             .agg(ecommerce_tax=("ecommerce_tax", "sum"), orders=("orders_entrega", "sum"))
