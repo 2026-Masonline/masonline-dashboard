@@ -196,21 +196,13 @@ st.markdown(
 df = base_df.copy()
 df_tiendas = base_df_tiendas.copy()
 
-# Antes se mostraba siempre el último día CERRADO (se descartaba la fila de
-# "hoy" aunque estuviera en el archivo), porque durante el día esa fila
-# todavía viene incompleta. A pedido de Emi, ahora si el archivo "Venta Con
-# y sin Impuesto" ya trae la fila de hoy, se toma como el día más reciente
-# (DIARIO) igual que cualquier otro — sin esperar a que cierre. Ojo: como la
-# venta Ecommerce se factura con un desfasaje, el día en curso puede figurar
-# en $0 Ecommerce hasta que se termine de facturar.
+arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-df = df.dropna(subset=["date"]).copy()
+df = df[df["date"].dt.date < arg_today].copy()
 
 if len(df_tiendas):
     df_tiendas["date"] = pd.to_datetime(df_tiendas["date"], errors="coerce")
     df_tiendas = df_tiendas.dropna(subset=["date"]).copy()
-
-arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 
 # ---------------------------------------------------------------------
 # Pedidos: de acá en más salen siempre de "Vs de ventas" (el mismo archivo
@@ -342,33 +334,12 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
         )
     else:
         tienda_col = ""
-    # Monto y Unidades del pedido — se usan como respaldo de "Venta -
-    # Ecommerce" para el día en curso, cuando la facturación todavía no lo
-    # cargó (ver más abajo, armado de sales_value/daily_ecom).
-    if "totalAmount" in d.columns:
-        _monto_txt = (
-            d["totalAmount"].astype(str)
-            .str.replace("$", "", regex=False)
-            .str.replace(",", "", regex=False)
-            .str.strip()
-        )
-        monto_col = pd.to_numeric(_monto_txt, errors="coerce").fillna(0)
-    else:
-        monto_col = 0
-    if "itemsQuantity" in d.columns:
-        unidades_col = pd.to_numeric(d["itemsQuantity"], errors="coerce").fillna(0)
-    elif "itemsPickedQuantity" in d.columns:
-        unidades_col = pd.to_numeric(d["itemsPickedQuantity"], errors="coerce").fillna(0)
-    else:
-        unidades_col = 0
     out = pd.DataFrame({
         "Id": d["commerceSequentialId"].values,
         "date_creacion": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
         "date_entrega": pd.to_datetime(d["deliveryFinishDate"], errors="coerce").dt.normalize(),
         "Tienda": tienda_col,
         "pedidos": 1,
-        "monto": monto_col,
-        "unidades": unidades_col,
     })
     return out
 
@@ -388,9 +359,6 @@ def _pedidos_adaptar_hoja_vieja(d):
         "date_entrega": fecha,
         "Tienda": d["Tienda"].apply(_pedidos_norm_codigo),
         "pedidos": pd.to_numeric(d[_COL_PEDIDOS_VIEJO], errors="coerce").fillna(0),
-        # La hoja vieja (formato agregado) no trae $ ni unidades por pedido.
-        "monto": 0,
-        "unidades": 0,
     })
     return out
 
@@ -400,7 +368,7 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
     """Lee 'Vs de ventas' UNA sola vez y arma los dos criterios de pedidos
     (fecha de creación y fecha de entrega) juntos, para no tener que abrir y
     filtrar el archivo (que puede ser grande) dos veces."""
-    cols_dia = ["date", "orders_vsventas", "monto_vsventas", "unidades_vsventas"]
+    cols_dia = ["date", "orders_vsventas"]
     cols_tienda = ["date", "Tienda", "orders_vsventas"]
     vacio_dia = pd.DataFrame(columns=cols_dia)
     vacio_tienda = pd.DataFrame(columns=cols_tienda)
@@ -442,15 +410,9 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
             base.groupby(["date", "Tienda"], as_index=False)["pedidos"].sum()
             .rename(columns={"pedidos": "orders_vsventas"})
         )
-        # A nivel día (no por tienda) también sumamos monto $ y unidades —
-        # se usan como respaldo de "Venta - Ecommerce"/"Unidades" cuando la
-        # facturación todavía no cargó el día en curso (ver más abajo).
         pedidos_dia = (
-            base.groupby("date", as_index=False)
-            .agg(pedidos=("pedidos", "sum"), monto=("monto", "sum"), unidades=("unidades", "sum"))
-            .rename(columns={
-                "pedidos": "orders_vsventas", "monto": "monto_vsventas", "unidades": "unidades_vsventas",
-            })
+            base.groupby("date", as_index=False)["pedidos"].sum()
+            .rename(columns={"pedidos": "orders_vsventas"})
         )
         return pedidos_dia, pedidos_tienda
 
@@ -473,11 +435,7 @@ _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS
 df = df.rename(columns={"orders": "orders_facturados"})
 df = df.merge(_pedidos_dia_vs, on="date", how="left")
 df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["orders_facturados"])
-# "monto_vsventas"/"unidades_vsventas" de este merge (por fecha de CREACIÓN)
-# no se usan: el respaldo de $ y Unidades que necesitamos es por fecha de
-# ENTREGA (ver más abajo, "monto_entrega_real"/"units_entrega_real"), para
-# que coincida con lo que de verdad se entregó ese día.
-df = df.drop(columns=["orders_vsventas", "monto_vsventas", "unidades_vsventas"])
+df = df.drop(columns=["orders_vsventas"])
 
 if len(df_tiendas):
     df_tiendas = df_tiendas.rename(columns={"orders": "orders_facturados"})
@@ -496,11 +454,7 @@ if len(df_tiendas):
 # creación, consistente con el "acc_orders" (creación) que queda sin usar
 # para mostrar pero se mantiene calculado por si hace falta más adelante.
 _pedidos_dia_vs_entrega = _pedidos_dia_vs_entrega.rename(
-    columns={
-        "orders_vsventas": "orders_vsventas_entrega",
-        "monto_vsventas": "monto_vsventas_entrega",
-        "unidades_vsventas": "unidades_vsventas_entrega",
-    }
+    columns={"orders_vsventas": "orders_vsventas_entrega"}
 )
 _pedidos_tienda_vs_entrega = _pedidos_tienda_vs_entrega.rename(
     columns={"orders_vsventas": "orders_vsventas_entrega"}
@@ -520,17 +474,7 @@ df["orders_entrega"] = df["orders_vsventas_entrega"].where(
 # Top 5 del día siguen usando "orders_entrega" (con respaldo) más abajo,
 # sin cambios.
 df["orders_entrega_real"] = df["orders_vsventas_entrega"].fillna(0)
-# "monto_entrega_real"/"units_entrega_real": $ y Unidades de Pedidos por
-# fecha de ENTREGA. Se usan más abajo como respaldo de "Venta - Ecommerce"
-# y "Unidades" del día en curso cuando la Facturación todavía no cargó ese
-# día (queda en $0 hasta que se factura) — a pedido de Emi ("esto vendimos
-# ecom para que lo agregues"). No se usan para MES EN CURSO (eso sigue
-# tomando solo la Facturación, sin cambios, para no mezclar bases).
-df["monto_entrega_real"] = df["monto_vsventas_entrega"].fillna(0)
-df["units_entrega_real"] = df["unidades_vsventas_entrega"].fillna(0)
-df = df.drop(columns=[
-    "orders_vsventas_entrega", "monto_vsventas_entrega", "unidades_vsventas_entrega",
-])
+df = df.drop(columns=["orders_vsventas_entrega"])
 
 if len(df_tiendas):
     df_tiendas = df_tiendas.merge(_pedidos_tienda_vs_entrega, on=["date", "Tienda"], how="left")
@@ -642,43 +586,12 @@ weekend_full_company = friday_company + saturday_company + sunday_company
 weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_company else 0
 weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_sunday.strftime('%d-%m')}"
 
-## Si el archivo ya trae la fila de HOY (ver más arriba: ya no se descarta),
-# `latest` puede ser el día en curso en vez del último día cerrado — en ese
-# caso la tarjeta pasa a llamarse "VENTA DE HOY" (mostrando ese día), en vez
-# de "VENTA DÍA ANTERIOR" con el valor de hoy puesto a la fuerza bajo un
-# nombre que ya no correspondería.
-latest_es_hoy = latest["date"].date() == arg_today
-
-# Respaldo con datos de Pedidos: la Facturación del último día del archivo
-# (sea "hoy" o ya "ayer" si todavía no se subió una versión más nueva del
-# archivo) queda en $0 (y 0 unidades) hasta que se factura, aunque ya se
-# esté entregando y vendiendo — a pedido de Emi ("esto vendimos ecom para
-# que lo agregues"), mientras eso pasa usamos el $ y las Unidades que trae
-# el archivo de Pedidos (por fecha de ENTREGA) como estimado de ese día.
-# Aplica a cualquiera de las dos cards (HOY o DÍA ANTERIOR, lo que
-# corresponda según la fecha) y solo mientras la Facturación todavía no
-# cargó nada para esa fecha (si ya cargó un valor, por poco que sea, se
-# respeta ese valor real). No se toca "MES EN CURSO" (acc_ecom/acc_units):
-# sigue siendo 100% Facturación.
-latest_ecom_estimado = False
-latest_ecom_efectivo = latest["ecommerce_tax"]
-latest_units_efectivo = latest["units"]
-if not latest_ecom_efectivo and latest.get("monto_entrega_real", 0):
-    latest_ecom_efectivo = latest["monto_entrega_real"]
-    if not latest_units_efectivo and latest.get("units_entrega_real", 0):
-        latest_units_efectivo = latest["units_entrega_real"]
-    latest_ecom_estimado = True
-
-if latest_es_hoy:
-    sales_label = "VENTA DE HOY"
-    sales_value = latest_ecom_efectivo
-elif is_monday:
+sales_label = "VENTA DÍA ANTERIOR"
+if is_monday:
     # Los lunes no tomamos el domingo como "día anterior": usamos el sábado.
-    sales_label = "VENTA DÍA ANTERIOR"
     sales_value = saturday_sales
 else:
-    sales_label = "VENTA DÍA ANTERIOR"
-    sales_value = latest_ecom_efectivo
+    sales_value = latest["ecommerce_tax"]
 days_elapsed = len(current)
 days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 
@@ -695,7 +608,7 @@ gap = target - share
 projection = acc_ecom / days_elapsed * days_month if days_elapsed else 0
 
 day_change = (
-    (latest_ecom_efectivo / prev["ecommerce_tax"]) - 1
+    (latest["ecommerce_tax"] / prev["ecommerce_tax"]) - 1
     if prev is not None and prev["ecommerce_tax"]
     else 0
 )
@@ -860,10 +773,7 @@ def pct_change(v):
 def intfmt(v):
     return f"{int(v):,}".replace(",", ".")
 
-# Usa el $ efectivo (con respaldo de Pedidos si aplica, ver más arriba) para
-# que la Participación del día no muestre 0,00% mientras la Facturación
-# todavía no cargó, pero ya hay ventas reales según Pedidos.
-share_daily = (latest_ecom_efectivo / latest["company_tax"]) if latest["company_tax"] else 0
+share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -1002,7 +912,6 @@ def generar_resumen_imagen(
     fecha_diaria_label, mes_label,
     daily_company, daily_ecom, daily_orders, daily_units, share_daily_v,
     mes_company, mes_ecom, mes_orders, mes_units, share_mes_v,
-    nota_estimado_diaria=False,
 ):
     W, H = 1600, 650
     C_BG = "#ffffff"
@@ -1073,13 +982,11 @@ def generar_resumen_imagen(
             x0=48, header_color=C_RED, header_lines=["VENTA DIARIA"],
             company=daily_company, ecom=daily_ecom, orders=daily_orders, units=daily_units,
             share=share_daily_v, share_label="SHARE ECOMMERCE DIARIO", bottom_bg=C_PINK_BG,
-            ecom_label=("ECOMMERCE *" if nota_estimado_diaria else "ECOMMERCE"),
         ),
         dict(
             x0=48 + panel_w + gap, header_color=C_ORANGE, header_lines=["VENTA MENSUAL", mes_label],
             company=mes_company, ecom=mes_ecom, orders=mes_orders, units=mes_units,
             share=share_mes_v, share_label="SHARE ECOMMERCE MENSUAL", bottom_bg=C_CREAM_BG,
-            ecom_label="ECOMMERCE",
         ),
     ]
 
@@ -1113,7 +1020,7 @@ def generar_resumen_imagen(
         row1_y = body_top + 24
 
         d.text((colA_x, row1_y), "COMPAÑÍA", font=f_col_label, fill=C_GRAY)
-        d.text((colB_x, row1_y), p["ecom_label"], font=f_col_label, fill=C_RED)
+        d.text((colB_x, row1_y), "ECOMMERCE", font=f_col_label, fill=C_RED)
 
         pill_y0 = row1_y + 26
         pill_h = 58
@@ -1150,14 +1057,6 @@ def generar_resumen_imagen(
         vw = _resumen_text_w(d, val_txt, f_share_value)
         d.text((x1 - pad - vw, share_cy - 13), val_txt, font=f_share_value, fill=C_RED)
 
-    if nota_estimado_diaria:
-        f_nota = _resumen_font(False, 12)
-        d.text(
-            (48, 578),
-            "* Ecommerce/Unidades diario: estimado con datos de Pedidos, Facturación de hoy sin cargar aún.",
-            font=f_nota, fill="#9a6700",
-        )
-
     footer_y = 598
     if logo_img is not None:
         lw, lh = logo_img.size
@@ -1185,10 +1084,10 @@ try:
     _resumen_png_bytes = generar_resumen_imagen(
         fecha_diaria_label=latest["date"].strftime("%d-%m"),
         mes_label=f"{MES_ACTUAL_NOMBRE.upper()} {REF_YEAR}",
-        daily_company=latest["company_tax"], daily_ecom=latest_ecom_efectivo,
-        daily_orders=latest["orders_entrega"], daily_units=latest_units_efectivo, share_daily_v=share_daily,
+        daily_company=latest["company_tax"], daily_ecom=latest["ecommerce_tax"],
+        daily_orders=latest["orders_entrega"], daily_units=latest["units"], share_daily_v=share_daily,
         mes_company=acc_company, mes_ecom=acc_ecom, mes_orders=acc_orders_entrega, mes_units=acc_units,
-        share_mes_v=share, nota_estimado_diaria=latest_ecom_estimado,
+        share_mes_v=share,
     )
     st.download_button(
         "🖼️ Descargar resumen (imagen)",
@@ -1568,7 +1467,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
 <div class="card" style="border-top:4px solid #e8432c;">
 <div class="label" style="color:#e8432c;">{sales_label}</div>
 <div class="value" style="color:#e8432c;">{html.escape(money(sales_value))}</div>
-  <div class="small">Vs día previo: {html.escape(pct_change(day_change))}{' · estimado con datos de Pedidos, Facturación sin cargar aún' if latest_ecom_estimado else ''}</div>
+  <div class="small">Vs día previo: {html.escape(pct_change(day_change))}</div>
 </div>
 
 <div class="card" style="border-top:4px solid #59636e;">
@@ -1684,15 +1583,11 @@ with tab1:
         """, unsafe_allow_html=True)
 
     with c2:
-        _sales_nota_estimado = (
-            ' · <span style="color:#9a6700;">estimado con datos de Pedidos, Facturación sin cargar aún</span>'
-            if latest_ecom_estimado else ""
-        )
         st.markdown(f"""
         <div class="card" style="border-top:4px solid #e8432c;">
           <div class="label" style="color:#e8432c;">{sales_label}</div>
     <div class="value" style="color:#e8432c;">{money(sales_value)}</div>
-          <div class="small">Vs día previo: {pct_change(day_change)}{_sales_nota_estimado}</div>
+          <div class="small">Vs día previo: {pct_change(day_change)}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1738,13 +1633,8 @@ with tab1:
     """, unsafe_allow_html=True)
 
     # ---- Resumen visual: Compañía vs Ecommerce (Diario / Mensual) ----
-    share_daily = (latest_ecom_efectivo / latest["company_tax"]) if latest["company_tax"] else 0
+    share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
-    _gdn_nota_estimado = (
-        '<div style="font-size:10px;color:#9a6700;margin-top:6px;">'
-        'Ecommerce/Unidades estimado con datos de Pedidos — Facturación de hoy sin cargar aún.</div>'
-        if latest_ecom_estimado else ""
-    )
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;">
       <div style="flex:1;min-width:260px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e8ebef;box-shadow:0 2px 10px rgba(0,0,0,.06);">
@@ -1761,7 +1651,7 @@ with tab1:
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
-              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(latest_ecom_efectivo)}</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(latest["ecommerce_tax"])}</div>
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
@@ -1772,10 +1662,9 @@ with tab1:
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest_units_efectivo)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["units"])}</div>
             </div>
           </div>
-          {_gdn_nota_estimado}
         </div>
         <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
           <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE DIARIO</span>
@@ -1998,12 +1887,7 @@ with tab2:
         unsafe_allow_html=True
     )
 
-    share_daily_gdn = (latest_ecom_efectivo / latest["company_tax"]) if latest["company_tax"] else 0
-    _gdn_nota_estimado2 = (
-        '<div style="font-size:10px;color:#9a6700;margin-top:6px;">'
-        'Ecommerce/Unidades estimado con datos de Pedidos — Facturación de hoy sin cargar aún.</div>'
-        if latest_ecom_estimado else ""
-    )
+    share_daily_gdn = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;">
@@ -2021,7 +1905,7 @@ with tab2:
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:#e8432c;">ECOMMERCE</div>
               <div style="font-size:11px;color:#9ca3af;">VENTA DIARIA</div>
-              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(latest_ecom_efectivo)}</div>
+              <div style="font-size:22px;font-weight:800;color:#e8432c;margin-top:2px;">{money(latest["ecommerce_tax"])}</div>
             </div>
           </div>
           <div style="border-top:1px solid #eee;margin:14px 0;"></div>
@@ -2032,10 +1916,9 @@ with tab2:
             </div>
             <div style="flex:1;">
               <div style="font-size:11px;color:#9ca3af;">UNIDADES</div>
-              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest_units_efectivo)}</div>
+              <div style="font-size:18px;font-weight:700;color:#20252b;">{intfmt(latest["units"])}</div>
             </div>
           </div>
-          {_gdn_nota_estimado2}
         </div>
         <div style="background:#fdeceb;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
           <span style="font-size:12px;font-weight:700;color:#6b7280;">SHARE ECOMMERCE DIARIO</span>
