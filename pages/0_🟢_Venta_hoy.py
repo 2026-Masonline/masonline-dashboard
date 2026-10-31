@@ -219,6 +219,11 @@ def intfmt(v):
 # ---------------------------------------------------------------------
 SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
+# Archivo aparte, solo para la card CREADOS: a pedido de Emi, los pedidos
+# CREADOS hoy (aunque se entreguen más adelante) salen de este archivo
+# dedicado en vez de depender de que el archivo de Pedidos de arriba (que
+# puede ir atrás) ya los tenga. Mismo formato/columnas que ese archivo.
+SHARED_CREADOS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "pedidos_creados_hoy.xlsx"
 
 def _vh_pedidos_github_headers():
     token = st.secrets.get("GITHUB_TOKEN") if hasattr(st, "secrets") else None
@@ -521,6 +526,35 @@ _vsventas_bytes_hoy = _vsventas_bytes_nuevo or _vh_pedidos_get_shared_bytes(SHAR
 _tienda_codes_hoy = tuple(sorted(TIENDA_MAP.keys()))
 _pedidos_completo_hoy = _vh_cargar_pedidos_completo(_vsventas_bytes_hoy, _tienda_codes_hoy)
 
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:12px 16px;margin:10px 0 10px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    SUBIR ARCHIVO DE PEDIDOS CREADOS HOY
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Archivo APARTE, solo para la card CREADOS: los pedidos que se crearon hoy,
+    aunque se vayan a entregar más adelante — así la cantidad de gente que pidió
+    hoy no depende de que el archivo de Pedidos de arriba (que puede ir atrás)
+    ya los tenga cargados. Mismas columnas que ese archivo (commerceDateCreated,
+    commerceId, totalAmount, itemsPickedQuantity, etc.).
+  </div>
+</div>
+""", unsafe_allow_html=True)
+upload_pedidos_creados_hoy = st.file_uploader(
+    "Archivo de Pedidos creados hoy", type=["xlsx", "xls"], key="upload_pedidos_creados_venta_hoy",
+    label_visibility="collapsed",
+    help='Archivo con los pedidos CREADOS hoy — mismo formato que "Vs de ventas" / order-operation'
+)
+_creados_bytes_nuevo = _vh_pedidos_save_shared_bytes(
+    upload_pedidos_creados_hoy, SHARED_CREADOS_PATH_PEDIDOS, "Pedidos creados hoy (desde Venta hoy)"
+)
+_creados_bytes_hoy = _creados_bytes_nuevo or _vh_pedidos_get_shared_bytes(SHARED_CREADOS_PATH_PEDIDOS)
+_pedidos_completo_creados_hoy = _vh_cargar_pedidos_completo(_creados_bytes_hoy, _tienda_codes_hoy)
+_hay_archivo_creados_dedicado = (
+    _pedidos_completo_creados_hoy is not None and len(_pedidos_completo_creados_hoy) > 0
+)
+
 # Fecha a mostrar: el archivo de Pedidos puede traer varios días (no solo
 # "hoy" en el sentido estricto) — se arma un selector con las fechas de
 # ENTREGA que realmente trae el archivo subido, para poder elegir cualquiera
@@ -548,6 +582,22 @@ else:
 _pedidos_entregados_sinfiltro, _pedidos_creados_sinfiltro = _vh_pedidos_del_dia(
     _pedidos_completo_hoy, fecha_mostrada
 )
+
+# Si hay archivo dedicado de "Pedidos creados hoy", CREADOS sale de ahí en
+# vez de salir de fecha de creación dentro del archivo de Pedidos de
+# arriba — se usa la fecha de creación MÁS RECIENTE que traiga ese archivo
+# dedicado (no fecha_mostrada, que es de ENTREGA y puede no coincidir con
+# ningún pedido creado ese mismo día). Sin archivo dedicado, sigue
+# funcionando como antes (respaldo).
+_detalle_cols_creados = ["Pedido", "Tienda", "Metodo", "Estado", "Monto", "Unidades"]
+if _hay_archivo_creados_dedicado:
+    _fechas_creacion_dedicado = _pedidos_completo_creados_hoy["FechaCreacion"].dropna().dt.date
+    fecha_creados_mostrada = max(_fechas_creacion_dedicado) if len(_fechas_creacion_dedicado) else arg_today
+    _pedidos_creados_sinfiltro = _pedidos_completo_creados_hoy[
+        _pedidos_completo_creados_hoy["FechaCreacion"].dt.date == fecha_creados_mostrada
+    ][_detalle_cols_creados]
+else:
+    fecha_creados_mostrada = fecha_mostrada
 
 # Filtro de Tienda — se arma con las tiendas que realmente aparecen ese día
 # (entregados o creados), para no ofrecer tiendas sin nada que mostrar.
@@ -679,6 +729,7 @@ else:
     # medida que se van entregando), y CREADOS sube con los pedidos nuevos.
     # Todas muestran cantidad de pedidos Y el monto $ correspondiente.
     _fecha_card = fecha_mostrada.strftime("%d/%m")
+    _fecha_card_creados = fecha_creados_mostrada.strftime("%d/%m")
     cc0, cc1, cc2, cc3 = st.columns(4)
     with cc0:
         st.markdown(f"""
@@ -709,7 +760,7 @@ else:
         <div class="card" style="border-top:4px solid #59636e;">
           <div class="label">CREADOS</div>
           <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
-          <div class="small">{money(pedidos_creados_hoy_monto)} — {_fecha_card}</div>
+          <div class="small">{money(pedidos_creados_hoy_monto)} — {_fecha_card_creados}</div>
         </div>
         """, unsafe_allow_html=True)
     if cancelados_dia_count:
@@ -1112,7 +1163,7 @@ table.rank-table td {{ padding: 8px 12px; border-bottom: 1px solid #eef0ef; }}
   <div class="card" style="border-top:4px solid #59636e;">
     <div class="label">CREADOS</div>
     <div class="value">{intfmt(pedidos_creados_hoy_count)}</div>
-    <div class="small">{html.escape(money(pedidos_creados_hoy_monto))} — {fecha_mostrada.strftime('%d/%m')}</div>
+    <div class="small">{html.escape(money(pedidos_creados_hoy_monto))} — {fecha_creados_mostrada.strftime('%d/%m')}</div>
   </div>
 </div>
 
