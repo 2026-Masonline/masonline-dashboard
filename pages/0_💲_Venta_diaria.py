@@ -609,6 +609,14 @@ friday_company = current[current["date"] == last_friday]["company_tax"].sum()
 saturday_company = current[current["date"] == last_saturday]["company_tax"].sum()
 sunday_company = current[current["date"] == last_sunday]["company_tax"].sum()
 
+# Para el % SHARE (no para la tarjeta de $ COMPAÑÍA, que sigue sin impuesto),
+# Emi pidió que la comparación sea impuesto contra impuesto: Ecommerce con
+# impuesto / Compañía con impuesto (Facturación), no contra la Compañía sin
+# impuesto que se usa para la tarjeta de $.
+friday_company_con_imp = current[current["date"] == last_friday]["company_tax_con_impuesto"].sum()
+saturday_company_con_imp = current[current["date"] == last_saturday]["company_tax_con_impuesto"].sum()
+sunday_company_con_imp = current[current["date"] == last_sunday]["company_tax_con_impuesto"].sum()
+
 # Fin de semana = Viernes + Sábado (no se suma el Domingo) — se usa en la card
 # "VENTA DÍA ANTERIOR" de los lunes.
 weekend = friday_sales + saturday_sales
@@ -620,7 +628,12 @@ weekend_full_ecom = friday_sales + saturday_sales + sunday_sales
 weekend_full_units = friday_units + saturday_units + sunday_units
 weekend_full_orders = friday_orders + saturday_orders + sunday_orders
 weekend_full_company = friday_company + saturday_company + sunday_company
-weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_company else 0
+weekend_full_company_con_imp = (
+    friday_company_con_imp + saturday_company_con_imp + sunday_company_con_imp
+)
+weekend_full_share = (
+    (weekend_full_ecom / weekend_full_company_con_imp) if weekend_full_company_con_imp else 0
+)
 weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_sunday.strftime('%d-%m')}"
 
 sales_label = "VENTA DÍA ANTERIOR"
@@ -634,11 +647,14 @@ days_month = calendar.monthrange(REF_YEAR, REF_MONTH)[1]
 
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
+# Para el % SHARE MENSUAL (no para la tarjeta de $ COMPAÑÍA): comparación
+# impuesto contra impuesto, a pedido de Emi.
+acc_company_con_imp = current["company_tax_con_impuesto"].sum()
 acc_orders = current["orders"].sum()
 acc_orders_entrega = current["orders_entrega_real"].sum()
 acc_units = current["units"].sum()
 
-share = acc_ecom / acc_company if acc_company else 0
+share = acc_ecom / acc_company_con_imp if acc_company_con_imp else 0
 target = 0.03
 gap = target - share
 
@@ -805,7 +821,10 @@ def pct_change(v):
 def intfmt(v):
     return f"{int(v):,}".replace(",", ".")
 
-share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+share_daily = (
+    (latest["ecommerce_tax"] / latest["company_tax_con_impuesto"])
+    if latest["company_tax_con_impuesto"] else 0
+)
 
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
@@ -1665,7 +1684,10 @@ with tab1:
     """, unsafe_allow_html=True)
 
     # ---- Resumen visual: Compañía vs Ecommerce (Diario / Mensual) ----
-    share_daily = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+    share_daily = (
+    (latest["ecommerce_tax"] / latest["company_tax_con_impuesto"])
+    if latest["company_tax_con_impuesto"] else 0
+)
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;">
@@ -1919,7 +1941,10 @@ with tab2:
         unsafe_allow_html=True
     )
 
-    share_daily_gdn = (latest["ecommerce_tax"] / latest["company_tax"]) if latest["company_tax"] else 0
+    share_daily_gdn = (
+    (latest["ecommerce_tax"] / latest["company_tax_con_impuesto"])
+    if latest["company_tax_con_impuesto"] else 0
+)
 
     st.markdown(f"""
     <div style="display:flex;flex-wrap:wrap;gap:16px;">
