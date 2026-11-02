@@ -317,24 +317,31 @@ last_saturday = last_data_date - pd.Timedelta(days=days_since_saturday)
 last_friday = last_saturday - pd.Timedelta(days=1)
 last_sunday = last_saturday + pd.Timedelta(days=1)
 
-friday_sales = current[current["date"] == last_friday]["ecommerce_tax"].sum()
+# OJO: estas búsquedas son sobre "df" (TODO el histórico, sin filtrar por
+# mes), no sobre "current" (que es solo el mes en curso) — el fin de semana
+# puede caer a caballo entre dos meses (ej. Viernes 30-10, Sábado 31-10,
+# Domingo 01-11: dos días de octubre y uno de noviembre). Buscar en
+# "current" se perdía silenciosamente los días del mes anterior, haciendo
+# que, apenas arrancaba un mes nuevo, "VENTA FIN DE SEMANA" terminara
+# mostrando lo mismo que "ACUMULADO" (ambos con un solo día cargado).
+friday_sales = df[df["date"] == last_friday]["ecommerce_tax"].sum()
 saturday_sales = (
-    current[current["date"].isin([last_saturday, last_sunday])]["ecommerce_tax"].sum()
+    df[df["date"].isin([last_saturday, last_sunday])]["ecommerce_tax"].sum()
 )
 
-friday_units = current[current["date"] == last_friday]["units"].sum()
+friday_units = df[df["date"] == last_friday]["units"].sum()
 saturday_units = (
-    current[current["date"].isin([last_saturday, last_sunday])]["units"].sum()
+    df[df["date"].isin([last_saturday, last_sunday])]["units"].sum()
 )
 
-friday_orders = current[current["date"] == last_friday]["orders"].sum()
+friday_orders = df[df["date"] == last_friday]["orders"].sum()
 saturday_orders = (
-    current[current["date"].isin([last_saturday, last_sunday])]["orders"].sum()
+    df[df["date"].isin([last_saturday, last_sunday])]["orders"].sum()
 )
 
-friday_company = current[current["date"] == last_friday]["company_tax"].sum()
+friday_company = df[df["date"] == last_friday]["company_tax"].sum()
 saturday_company = (
-    current[current["date"].isin([last_saturday, last_sunday])]["company_tax"].sum()
+    df[df["date"].isin([last_saturday, last_sunday])]["company_tax"].sum()
 )
 
 # "Fin de semana" para esta página = Viernes + Sábado, pero el número del
