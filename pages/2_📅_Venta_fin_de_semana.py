@@ -380,6 +380,7 @@ finde_tabla = (
         venta=("ecommerce_tax", "sum"),
         pedidos=("orders", "sum"),
         unidades=("units", "sum"),
+        company=("company_tax", "sum"),
     )
     .sort_values("finde_inicio")
     .reset_index(drop=True)
@@ -387,46 +388,14 @@ finde_tabla = (
 finde_tabla["rango"] = finde_tabla["finde_inicio"].apply(
     lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
 )
-# Participación de cada fin de semana sobre la venta ecommerce TOTAL de su
-# propio mes (no sobre acc_ecom solo, que es únicamente el mes en curso —
-# como la tabla ahora junta mes en curso + mes anterior, cada finde se
-# compara contra el total de ESE mes).
-_mes_anterior_df = df[
-    (df["date"].dt.year == PREV_YEAR) & (df["date"].dt.month == PREV_MONTH)
-]
-acc_ecom_prev = _mes_anterior_df["ecommerce_tax"].sum()
-_total_ecom_por_mes = {
-    (REF_YEAR, REF_MONTH): acc_ecom,
-    (PREV_YEAR, PREV_MONTH): acc_ecom_prev,
-}
-
-# Ojo: cuando un fin de semana cae a caballo entre dos meses (ej. Vie 30/10
-# – Sáb 31/10, cuyo Domingo es 01/11), la columna "venta" de la tabla suma
-# los 3 días (incluido ese Domingo de noviembre) a propósito, para que el
-# número de venta del finde esté completo. Pero para el % DEL MES no
-# corresponde comparar esa venta "completa" contra el total de UN solo mes
-# (infla el %) — para la participación usamos solo los días que realmente
-# caen en el mismo mes que el finde (se excluye el día que se pasó al otro
-# mes).
-finde_rows["mismo_mes_finde"] = (
-    (finde_rows["date"].dt.year == finde_rows["finde_inicio"].dt.year) &
-    (finde_rows["date"].dt.month == finde_rows["finde_inicio"].dt.month)
-)
-_venta_participacion = (
-    finde_rows[finde_rows["mismo_mes_finde"]]
-    .groupby("finde_inicio")["ecommerce_tax"].sum()
-)
-finde_tabla["venta_participacion"] = (
-    finde_tabla["finde_inicio"].map(_venta_participacion).fillna(0)
-)
-
-def _participacion_finde(row):
-    total_mes = _total_ecom_por_mes.get(
-        (row["finde_inicio"].year, row["finde_inicio"].month), 0
-    )
-    return (row["venta_participacion"] / total_mes) if total_mes else 0
-
-finde_tabla["participacion"] = finde_tabla.apply(_participacion_finde, axis=1)
+# Participación de cada fin de semana = share Ecommerce/Compañía DE ESE
+# FINDE (mismo criterio que la tarjeta "SHARE ECOMMERCE" del resto de la
+# página: ecommerce_tax / company_tax), no un % sobre el total del mes.
+# Como numerador y denominador suman exactamente los mismos días (Viernes+
+# Sábado+Domingo de ese finde), no hay problema de cruce de mes acá.
+finde_tabla["participacion"] = (
+    finde_tabla["venta"] / finde_tabla["company"]
+).where(finde_tabla["company"] != 0, 0)
 
 # ---- Mismo período, abierto día por día (Viernes/Sábado) ----
 # El domingo no se muestra como fila aparte: su venta se suma a la fila
@@ -871,7 +840,7 @@ def build_standalone_html():
                 <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
                 <th style="padding:10px 14px;">PEDIDOS</th>
                 <th style="padding:10px 14px;">UNIDADES</th>
-                <th style="padding:10px 14px;">% DEL MES</th>
+                <th style="padding:10px 14px;">% ECOMM/CÍA</th>
               </tr>
             </thead>
             <tbody>{finde_rows_html_static}</tbody>
@@ -1144,7 +1113,7 @@ if len(finde_tabla):
             <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
             <th style="padding:10px 14px;">PEDIDOS</th>
             <th style="padding:10px 14px;">UNIDADES</th>
-            <th style="padding:10px 14px;">% DEL MES</th>
+            <th style="padding:10px 14px;">% ECOMM/CÍA</th>
           </tr>
         </thead>
         <tbody>
