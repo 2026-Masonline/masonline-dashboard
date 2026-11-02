@@ -400,11 +400,31 @@ _total_ecom_por_mes = {
     (PREV_YEAR, PREV_MONTH): acc_ecom_prev,
 }
 
+# Ojo: cuando un fin de semana cae a caballo entre dos meses (ej. Vie 30/10
+# – Sáb 31/10, cuyo Domingo es 01/11), la columna "venta" de la tabla suma
+# los 3 días (incluido ese Domingo de noviembre) a propósito, para que el
+# número de venta del finde esté completo. Pero para el % DEL MES no
+# corresponde comparar esa venta "completa" contra el total de UN solo mes
+# (infla el %) — para la participación usamos solo los días que realmente
+# caen en el mismo mes que el finde (se excluye el día que se pasó al otro
+# mes).
+finde_rows["mismo_mes_finde"] = (
+    (finde_rows["date"].dt.year == finde_rows["finde_inicio"].dt.year) &
+    (finde_rows["date"].dt.month == finde_rows["finde_inicio"].dt.month)
+)
+_venta_participacion = (
+    finde_rows[finde_rows["mismo_mes_finde"]]
+    .groupby("finde_inicio")["ecommerce_tax"].sum()
+)
+finde_tabla["venta_participacion"] = (
+    finde_tabla["finde_inicio"].map(_venta_participacion).fillna(0)
+)
+
 def _participacion_finde(row):
     total_mes = _total_ecom_por_mes.get(
         (row["finde_inicio"].year, row["finde_inicio"].month), 0
     )
-    return (row["venta"] / total_mes) if total_mes else 0
+    return (row["venta_participacion"] / total_mes) if total_mes else 0
 
 finde_tabla["participacion"] = finde_tabla.apply(_participacion_finde, axis=1)
 
