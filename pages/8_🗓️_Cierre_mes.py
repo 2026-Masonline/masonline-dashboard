@@ -130,6 +130,11 @@ try:
     if "company_tax_neto" not in base_df.columns:
         base_df["company_tax_neto"] = pd.NA
     base_df["company_tax_neto"] = pd.to_numeric(base_df["company_tax_neto"], errors="coerce")
+    # Guardamos la Compañía CON impuesto aparte (antes de pisarla con la
+    # versión sin impuesto) — la tarjeta COMPAÑÍA sigue mostrando sin
+    # impuesto, pero el % SHARE compara impuesto contra impuesto (Ecommerce
+    # con impuesto / Compañía con impuesto), a pedido de Emi.
+    base_df["company_tax_con_impuesto"] = base_df["company_tax"]
     base_df["company_tax"] = base_df["company_tax_neto"].where(
         base_df["company_tax_neto"].notna(), base_df["company_tax"]
     )
@@ -416,9 +421,12 @@ def intfmt(v):
 
 acc_ecom = current["ecommerce_tax"].sum()
 acc_company = current["company_tax"].sum()
+# Para el % SHARE (no para la tarjeta de $ COMPAÑÍA, que sigue sin
+# impuesto): comparación impuesto contra impuesto, a pedido de Emi.
+acc_company_con_imp = current["company_tax_con_impuesto"].sum()
 acc_orders = current["orders"].sum()
 acc_units = current["units"].sum()
-share = acc_ecom / acc_company if acc_company else 0
+share = acc_ecom / acc_company_con_imp if acc_company_con_imp else 0
 target = 0.03
 gap = target - share
 
