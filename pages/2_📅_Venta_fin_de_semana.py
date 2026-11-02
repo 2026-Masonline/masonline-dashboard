@@ -277,6 +277,10 @@ arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
 df = df[df["date"].dt.date < arg_today].copy()
 
 REF_YEAR, REF_MONTH = arg_today.year, arg_today.month
+if REF_MONTH == 1:
+    PREV_YEAR, PREV_MONTH = REF_YEAR - 1, 12
+else:
+    PREV_YEAR, PREV_MONTH = REF_YEAR, REF_MONTH - 1
 
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
              "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
@@ -353,11 +357,20 @@ weekend_full_company = friday_company + saturday_company
 weekend_full_share = (weekend_full_ecom / weekend_full_company) if weekend_full_company else 0
 weekend_full_label = f"{last_friday.strftime('%d-%m')} al {last_sunday.strftime('%d-%m')}"
 
-# ---- Venta por fin de semana del mes en curso ----
-# finde_rows incluye el domingo (weekday 6) para que su venta entre en la
-# suma del fin de semana — pero el domingo se va a fusionar con el sábado
-# más abajo, antes de mostrar nada, así que nunca aparece como fila propia.
-finde_rows = current[current["date"].dt.weekday.isin([4, 5, 6])].copy()
+# ---- Venta por fin de semana: mes en curso + mes anterior ----
+# A pedido de Emi, esta tabla ya no se corta en el mes en curso (antes,
+# apenas arrancaba un mes nuevo, solo mostraba los findes de ESE mes y
+# "perdía" los de encima del mes anterior) — ahora toma mes en curso +
+# mes anterior juntos, mismo criterio de 2 meses que ya usa "app" (cajas
+# "Mes en curso"/"Mes anterior"). finde_rows incluye el domingo (weekday 6)
+# para que su venta entre en la suma del fin de semana — pero el domingo
+# se va a fusionar con el sábado más abajo, antes de mostrar nada, así que
+# nunca aparece como fila propia.
+_dos_meses = df[
+    ((df["date"].dt.year == REF_YEAR) & (df["date"].dt.month == REF_MONTH)) |
+    ((df["date"].dt.year == PREV_YEAR) & (df["date"].dt.month == PREV_MONTH))
+]
+finde_rows = _dos_meses[_dos_meses["date"].dt.weekday.isin([4, 5, 6])].copy()
 finde_rows["finde_inicio"] = finde_rows["date"] - pd.to_timedelta(
     (finde_rows["date"].dt.weekday - 4) % 7, unit="D"
 )
@@ -436,7 +449,7 @@ def render_finde_cards_html(finde_tabla, detalle_dia):
     if not len(finde_tabla):
         return (
             '<div class="upload-box"><div class="upload-text">'
-            'Todavía no hay ningún fin de semana (viernes y sábado) cargado este mes.'
+            'Todavía no hay ningún fin de semana (viernes y sábado) cargado entre el mes en curso y el anterior.'
             '</div></div>'
         )
     orden_dia = {"Viernes": 0, "Sábado": 1}
@@ -829,7 +842,7 @@ def build_standalone_html():
     else:
         tabla_html = (
             '<div class="upload-box"><div class="upload-text">'
-            'Todavía no hay ningún fin de semana (viernes y sábado) cargado este mes.'
+            'Todavía no hay ningún fin de semana (viernes y sábado) cargado entre el mes en curso y el anterior.'
             '</div></div>'
         )
 
@@ -974,7 +987,7 @@ body {{
   </div>
 </div>
 
-<div class="section">Venta por fin de semana del mes</div>
+<div class="section">Venta por fin de semana</div>
 {tabla_html}
 
 <div class="section">Detalle por día</div>
@@ -1068,7 +1081,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="section">Venta por fin de semana del mes</div>', unsafe_allow_html=True)
+st.markdown('<div class="section">Venta por fin de semana</div>', unsafe_allow_html=True)
 
 if len(finde_tabla):
     finde_rows_html = ""
@@ -1102,7 +1115,7 @@ if len(finde_tabla):
 else:
     st.markdown(
         '<div class="upload-box"><div class="upload-text">'
-        'Todavía no hay ningún fin de semana (viernes y sábado) cargado este mes.'
+        'Todavía no hay ningún fin de semana (viernes y sábado) cargado entre el mes en curso y el anterior.'
         '</div></div>',
         unsafe_allow_html=True
     )
