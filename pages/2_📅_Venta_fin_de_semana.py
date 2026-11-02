@@ -387,9 +387,26 @@ finde_tabla = (
 finde_tabla["rango"] = finde_tabla["finde_inicio"].apply(
     lambda d: f"Vie {d.strftime('%d/%m')} – Sáb {(d + pd.Timedelta(days=1)).strftime('%d/%m')}"
 )
-finde_tabla["participacion"] = (
-    finde_tabla["venta"] / acc_ecom if acc_ecom else 0
-)
+# Participación de cada fin de semana sobre la venta ecommerce TOTAL de su
+# propio mes (no sobre acc_ecom solo, que es únicamente el mes en curso —
+# como la tabla ahora junta mes en curso + mes anterior, cada finde se
+# compara contra el total de ESE mes).
+_mes_anterior_df = df[
+    (df["date"].dt.year == PREV_YEAR) & (df["date"].dt.month == PREV_MONTH)
+]
+acc_ecom_prev = _mes_anterior_df["ecommerce_tax"].sum()
+_total_ecom_por_mes = {
+    (REF_YEAR, REF_MONTH): acc_ecom,
+    (PREV_YEAR, PREV_MONTH): acc_ecom_prev,
+}
+
+def _participacion_finde(row):
+    total_mes = _total_ecom_por_mes.get(
+        (row["finde_inicio"].year, row["finde_inicio"].month), 0
+    )
+    return (row["venta"] / total_mes) if total_mes else 0
+
+finde_tabla["participacion"] = finde_tabla.apply(_participacion_finde, axis=1)
 
 # ---- Mismo período, abierto día por día (Viernes/Sábado) ----
 # El domingo no se muestra como fila aparte: su venta se suma a la fila
@@ -822,6 +839,7 @@ def build_standalone_html():
                 f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
                 f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
                 f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
+                f'<td style="padding:10px 14px;color:#6b7280;">{pct(r["participacion"])}</td>'
                 '</tr>'
             )
         tabla_html = f"""
@@ -833,6 +851,7 @@ def build_standalone_html():
                 <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
                 <th style="padding:10px 14px;">PEDIDOS</th>
                 <th style="padding:10px 14px;">UNIDADES</th>
+                <th style="padding:10px 14px;">% DEL MES</th>
               </tr>
             </thead>
             <tbody>{finde_rows_html_static}</tbody>
@@ -1092,6 +1111,7 @@ if len(finde_tabla):
             f'<td style="padding:10px 14px;font-weight:700;color:#e8432c;">{money(r["venta"])}</td>'
             f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["pedidos"])}</td>'
             f'<td style="padding:10px 14px;color:#20252b;">{intfmt(r["unidades"])}</td>'
+            f'<td style="padding:10px 14px;color:#6b7280;">{pct(r["participacion"])}</td>'
             '</tr>'
         )
 
@@ -1104,6 +1124,7 @@ if len(finde_tabla):
             <th style="padding:10px 14px;">VENTA ECOMMERCE</th>
             <th style="padding:10px 14px;">PEDIDOS</th>
             <th style="padding:10px 14px;">UNIDADES</th>
+            <th style="padding:10px 14px;">% DEL MES</th>
           </tr>
         </thead>
         <tbody>
