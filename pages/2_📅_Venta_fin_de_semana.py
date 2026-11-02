@@ -937,9 +937,9 @@ body {{
 </div>
 
 <div class="card" style="border-top:4px solid #f5a623;">
-  <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
+  <div class="label" style="color:#f5a623;">SHARE ECOMMERCE ACUMULADO</div>
   <div class="value">{html.escape(pct(share))}</div>
-  <div class="small">Objetivo: {html.escape(pct(target))}</div>
+  <div class="small">Objetivo: {html.escape(pct(target))} · del finde: {html.escape(pct(weekend_full_share))}</div>
 </div>
 
 <div class="card" style="border-top:4px solid #2f9e66;">
@@ -1024,9 +1024,9 @@ with c1:
 with c2:
     st.markdown(f"""
     <div class="card" style="border-top:4px solid #f5a623;">
-      <div class="label" style="color:#f5a623;">SHARE ECOMMERCE</div>
+      <div class="label" style="color:#f5a623;">SHARE ECOMMERCE ACUMULADO</div>
       <div class="value">{pct(share)}</div>
-      <div class="small">Objetivo: {pct(target)}</div>
+      <div class="small">Objetivo: {pct(target)} · del finde: {pct(weekend_full_share)}</div>
     </div>
     """, unsafe_allow_html=True)
 
