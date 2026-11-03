@@ -235,8 +235,10 @@ def _adaptar_hoja_detalle_pedidos(d):
       ya es una commerceSequentialId distinta).
     - "Venta - Ecommerce" y "Facturacion" = totalAmount (lo vendido en $,
       con impuesto incluido).
-    - "Cantidad" (unidades) = itemsPickedQuantity (unidades efectivamente
-      pickeadas), no itemsQuantity (unidades pedidas).
+    - "Cantidad" (unidades) = itemsQuantity, con itemsPickedQuantity como
+      respaldo solo si itemsQuantity no viene en el archivo (algunos
+      exports no traen itemsPickedQuantity, o la traen vacía, y ahí
+      Unidades quedaba en 0).
     - El día que cuenta para cada pedido es "commerceDateCreated" (fecha de
       CREACIÓN del pedido), no "deliveryFinishDate" (fecha de entrega) — a
       pedido de Emi, todas las métricas (Pedidos, Venta $ y Unidades) se
@@ -255,7 +257,11 @@ def _adaptar_hoja_detalle_pedidos(d):
         "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
         COL_VENTA: monto,
         COL_FACTURACION: monto,
-        COL_UNIDADES: pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce").fillna(0),
+        COL_UNIDADES: (
+            pd.to_numeric(d.get("itemsQuantity"), errors="coerce")
+            if "itemsQuantity" in d.columns
+            else pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce")
+        ).fillna(0),
         COL_PEDIDOS: 1,
     })
     return out
