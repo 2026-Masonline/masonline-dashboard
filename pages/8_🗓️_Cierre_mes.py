@@ -230,7 +230,7 @@ def _pedidos_get_shared_bytes(shared_path):
 
 _PEDIDOS_RAW_COLS = {
     "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
-    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+    "salesChannelPrefix", "totalAmount", "itemsQuantity",
 }
 _COL_PEDIDOS_VIEJO = "Pedidos Facturados con Venta Operativa - Ecommerce"
 _COL_UNIDADES_VIEJO = "Cantidad Venta Operativa - Ecommerce"
