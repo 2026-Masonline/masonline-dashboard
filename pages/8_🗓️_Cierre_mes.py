@@ -274,7 +274,14 @@ def _pedidos_adaptar_hoja_detalle(d, tienda_codes):
         )
     else:
         tienda_col = ""
-    if "itemsPickedQuantity" in d.columns:
+    # itemsQuantity es la columna que siempre viene en el archivo; algunos
+    # exports no traen itemsPickedQuantity (o la traen vacía), y ahí las
+    # Unidades quedaban en 0 — a pedido de Emi, ahora toma itemsQuantity
+    # como principal, con itemsPickedQuantity como respaldo solo si
+    # itemsQuantity no está.
+    if "itemsQuantity" in d.columns:
+        unidades_col = pd.to_numeric(d["itemsQuantity"], errors="coerce").fillna(0)
+    elif "itemsPickedQuantity" in d.columns:
         unidades_col = pd.to_numeric(d["itemsPickedQuantity"], errors="coerce").fillna(0)
     else:
         unidades_col = 0
