@@ -1144,7 +1144,7 @@ def load_all_sheets_from_xl(xl, required_cols, required=True):
 
 _PEDIDOS_RAW_COLS_OP = [
     "commerceId", "commerceDateCreated", "deliveryFinishDate", "status",
-    "originalAmount", "shippingWarehouseName",
+    "totalAmount", "shippingWarehouseName",
 ]
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1784,10 +1784,7 @@ if df_pedidos_raw is not None:
     tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
     d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
     d["Estado"] = d.get("status", "").apply(norm_txt)
-    # "totalAmount" en este archivo es lo que paga el cliente por el ENVÍO,
-    # no el pedido en sí — a pedido de Emi, el Monto real del pedido sale de
-    # "originalAmount".
-    d["Monto"] = d.get("originalAmount").apply(parse_pedidos_monto)
+    d["Monto"] = d.get("totalAmount").apply(parse_pedidos_monto)
     fecha_creacion = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
     # "Sin mover +72h" se mide contra la fecha de CREACIÓN del pedido
     # (commerceDateCreated), a pedido de Emi: cuenta como atrasado un pedido
@@ -1836,9 +1833,7 @@ if df_pedidos_raw is not None:
     d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
     d["Fecha"] = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
     d["Estado"] = d.get("status", "").apply(norm_txt)
-    # Mismo criterio que en "sin mover +72h" más arriba: Monto sale de
-    # "originalAmount", no de "totalAmount" (que es el envío).
-    d["Monto"] = d.get("originalAmount").apply(parse_pedidos_monto)
+    d["Monto"] = d.get("totalAmount").apply(parse_pedidos_monto)
     d = d.dropna(subset=["Fecha"])
     if len(d):
         candidate_times.append(d["Fecha"].max())
