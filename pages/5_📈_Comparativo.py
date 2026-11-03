@@ -212,7 +212,7 @@ COL_FACTURACION = "Facturacion"
 
 RAW_ORDER_COLS = {
     "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
-    "salesChannelPrefix", "totalAmount", "itemsQuantity",
+    "salesChannelPrefix", "originalAmount", "itemsQuantity",
 }
 
 def _es_hoja_detalle_pedidos(d):
@@ -233,8 +233,9 @@ def _adaptar_hoja_detalle_pedidos(d):
       commerceSequentialId puede repetirse entre envíos de un mismo pedido,
       aunque en la práctica, una vez sacados PM y RMA, cada fila que queda
       ya es una commerceSequentialId distinta).
-    - "Venta - Ecommerce" y "Facturacion" = totalAmount (lo vendido en $,
-      con impuesto incluido).
+    - "Venta - Ecommerce" y "Facturacion" = originalAmount (lo vendido en $,
+      con impuesto incluido) — no "totalAmount", que en este archivo es lo
+      que paga el cliente por el ENVÍO, no el pedido en sí.
     - "Cantidad" (unidades) = itemsQuantity, con itemsPickedQuantity como
       respaldo solo si itemsQuantity no viene en el archivo (algunos
       exports no traen itemsPickedQuantity, o la traen vacía, y ahí
@@ -250,7 +251,7 @@ def _adaptar_hoja_detalle_pedidos(d):
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
     d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
     monto = pd.to_numeric(
-        d["totalAmount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+        d["originalAmount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
         errors="coerce"
     ).fillna(0)
     out = pd.DataFrame({
