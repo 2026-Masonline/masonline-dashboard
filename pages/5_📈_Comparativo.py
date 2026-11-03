@@ -212,7 +212,7 @@ COL_FACTURACION = "Facturacion"
 
 RAW_ORDER_COLS = {
     "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
-    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+    "salesChannelPrefix", "totalAmount", "itemsQuantity",
 }
 
 def _es_hoja_detalle_pedidos(d):
