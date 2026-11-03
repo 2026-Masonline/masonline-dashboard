@@ -311,7 +311,11 @@ def _adaptar_hoja_detalle_pedidos(d):
         "Fecha": pd.to_datetime(d["deliveryFinishDate"], errors="coerce"),
         COL_VENTA: monto,
         COL_FACTURACION: monto,
-        COL_UNIDADES: pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce").fillna(0),
+        COL_UNIDADES: (
+            pd.to_numeric(d.get("itemsQuantity"), errors="coerce")
+            if "itemsQuantity" in d.columns
+            else pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce")
+        ).fillna(0),
         COL_PEDIDOS: 1,
     })
     return out
