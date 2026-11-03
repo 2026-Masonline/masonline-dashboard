@@ -197,9 +197,16 @@ _PEDIDOS_72H_COLS = [
 # con estas antes de guardar el combinado — reduce bastante el tamaño del
 # archivo (y la memoria que ocupa cada vez que una pestaña lo vuelve a leer),
 # algo que pesa más todavía ahora que se pueden subir varios archivos juntos.
+# IMPORTANTE: "originalAmount" tiene que estar en esta lista — es de donde
+# Operativo.py y Resumen.py sacan el "Monto" real del pedido ("totalAmount"
+# en este archivo es lo que paga el cliente por el ENVÍO, no el pedido). Si
+# se sacara de acá, esas dos pestañas dejarían de reconocer el archivo
+# guardado por completo (es lo que pasó: quedó afuera de este recorte al
+# cambiar esas pestañas a pedir "originalAmount", y el Excel combinado que
+# quedaba guardado nunca la tenía).
 _PEDIDOS_72H_COLS_UTILES = [
     "commerceId", "salesChannelPrefix", "commerceDateCreated", "deliveryFinishDate",
-    "status", "totalAmount", "shippingWarehouseName", "shippingLocationName",
+    "status", "totalAmount", "originalAmount", "shippingWarehouseName", "shippingLocationName",
 ]
 
 def _norm_cols_pedidos(df):
