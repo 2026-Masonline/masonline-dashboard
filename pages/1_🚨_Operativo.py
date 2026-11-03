@@ -1,113 +1,670 @@
+import re
+import io
+import json
+import base64
+import tempfile
+import unicodedata
+import hashlib
+from pathlib import Path
 import streamlit as st
 import pandas as pd
-import io
-import tempfile
-import calendar
-from pathlib import Path
-import base64
+import numpy as np
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# Historial mensual de Faltantes: se guarda en un Google Sheet aparte (no en
+# esta app) para que sobreviva a los reinicios/actualizaciones de Streamlit
+# Cloud. Si todavía no se configuraron las credenciales en Secrets (ver guía),
+# la librería puede ni siquiera estar instalada — por eso el import va
+# "blindado": si falla, el resto de la página funciona igual y el ranking
+# mensual simplemente muestra un aviso de "todavía no conectado".
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials as _GCreds
+    _GSHEETS_LIB_OK = True
+except Exception:
+    _GSHEETS_LIB_OK = False
+
 st.set_page_config(
-    page_title="MásOnline | Comparativo",
-    page_icon="📈",
+    page_title="MásOnline | Operativo",
+    page_icon="🚨",
     layout="wide"
 )
 
-CSS_TEXT = """
+APP_CSS = """
     .stApp { background: #ffffff; }
-    .block-container { max-width: 1300px; padding: 0 1.2rem 1.2rem; }
+    .block-container { max-width: 1500px; padding: 0 1.2rem 1.2rem; }
 
     .hero {
         background: #ffffff;
         margin: -1rem -1.2rem 1.2rem;
         padding: 22px 28px;
-        color: #000000;
+        color: #20252b;
         display: flex;
         justify-content: space-between;
         align-items: center;
         border-bottom: 4px solid #ff5a1f;
     }
     .hero-brand { font-size: 26px; font-weight: 800; letter-spacing: -.5px; }
-    .hero-brand span { font-weight: 400; }
     .hero-sub { font-size: 11px; letter-spacing: 3px; margin-top: 3px; opacity: .85; }
-    .periodo-badge {
-        background: #fafaf8; border: 1px solid #e8ebef; border-radius: 12px;
-        padding: 10px 16px; text-align: right;
+    .hero-date { text-align: right; font-size: 15px; font-weight: 700; color:#6b7280; }
+    .hero-date small { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; }
+
+    .upload-box {
+        background: white; border-radius: 14px; padding: 14px 16px 10px;
+        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.05);
+        margin-bottom: 6px; min-height: 74px; border-top: 4px solid #ff5a1f;
     }
-    .periodo-badge .lbl { color: #000000; font-size: 11px; font-weight: 700; letter-spacing:.03em; }
-    .periodo-badge .val { color: #000000; font-size: 16px; font-weight: 800; margin-top: 2px; }
-    .periodo-badge small { display:block; color:#000000; font-size:11px; font-weight:700; margin-top:3px; }
+    .upload-title { color:#20252b; font-size:13px; font-weight:800; }
+    .upload-text { color:#6b7280; font-size:11.5px; margin-top:4px; }
 
-    .section { font-size: 20px; font-weight: 800; color: #000000; margin: 26px 0 2px; }
-    .section-desc { color: #000000; font-size: 13px; margin: 0 0 14px; }
+    .section {
+        font-size: 19px; font-weight: 800; color: #20252b;
+        margin: 26px 0 4px; display:flex; align-items:center; gap:10px;
+    }
+    .section .count-pill {
+        font-size: 15px; font-weight: 800; background:#fdeee5; color:#ff5a1f;
+        border-radius: 999px; padding: 3px 15px; box-shadow: 0 1px 5px rgba(255,90,31,.22);
+    }
+    .section-desc { color:#6b7280; font-size:12.5px; margin: -2px 0 10px; }
 
-    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
-    .kpi-card {
-        background: white; border-radius: 14px; padding: 18px 20px;
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 10px; }
+    .kpi {
+        background: white; border-radius: 14px; padding: 16px 18px;
         box-shadow: 0 2px 10px rgba(0,0,0,.06); border: 1px solid #e8ebef;
     }
-    .kpi-icon {
-        width: 36px; height: 36px; border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 17px; margin-bottom: 10px;
-    }
-    .kpi-icon.blue { background: #e7f0fd; }
-    .kpi-icon.red { background: #fde9e9; }
-    .kpi-icon.green { background: #e6f5ea; }
-    .kpi-icon.orange { background: #fdf0e0; }
-    .kpi-label { color: #000000; font-size: 13px; font-weight: 700; }
-    .kpi-value { color: #000000; font-size: 26px; font-weight: 800; margin-top: 4px; }
-    .kpi-delta-line { margin-top: 8px; }
-    .kpi-delta-line .kpi-delta { font-size: 13px; font-weight: 700; }
-    .kpi-delta-line .sub { font-size: 13px; font-weight: 700; margin-top: 2px; }
-    .kpi-delta-line.positive, .kpi-delta-line.positive .kpi-delta, .kpi-delta-line.positive .sub { color: #208653; }
-    .kpi-delta-line.negative, .kpi-delta-line.negative .kpi-delta, .kpi-delta-line.negative .sub { color: #d64545; }
-    .kpi-delta-line.neutral, .kpi-delta-line.neutral .kpi-delta, .kpi-delta-line.neutral .sub { color: #000000; font-weight: 700; }
+    .kpi .label { color: #6b7280; font-size: 11.5px; font-weight: 700; text-transform:uppercase; letter-spacing:.04em;}
+    .kpi .value { color: #20252b; font-size: 26px; font-weight: 800; margin-top: 6px; }
+    .kpi .sub { color: #6b7280; font-size: 12px; margin-top: 6px; }
+    .kpi.good .value { color:#0ca30c; }
+    .kpi.warn .value { color:#c98500; }
+    .kpi.crit .value { color:#d03b3b; }
 
-    .cmp-table-wrap {
-        background: white; border-radius: 14px; overflow: hidden;
-        border: 1px solid #e8ebef; box-shadow: 0 2px 10px rgba(0,0,0,.06);
+    a.kpi-link { text-decoration: none; display: block; }
+    a.kpi-link .kpi { cursor: pointer; transition: box-shadow .15s, transform .15s; position: relative; }
+    a.kpi-link .kpi::after {
+        content: "⬇ HTML"; position: absolute; top: 10px; right: 12px;
+        font-size: 9.5px; font-weight: 700; color: #ff5a1f; opacity: 0;
+        transition: opacity .15s; letter-spacing: .03em;
     }
-    table.cmp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    table.cmp-table thead th {
-        background: #20252b; color: #ffffff; font-weight: 700;
-        padding: 12px 16px; text-align: left; white-space: nowrap;
+    a.kpi-link:hover .kpi { box-shadow: 0 6px 18px rgba(0,0,0,.14); transform: translateY(-2px); }
+    a.kpi-link:hover .kpi::after { opacity: 1; }
+
+    .badge {
+        display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700;
+        padding: 3px 10px; border-radius: 999px; white-space: nowrap;
     }
-    table.cmp-table thead th:not(:first-child) { text-align: center; }
-    table.cmp-table td {
-        padding: 13px 16px; border-top: 1px solid #f1f3f5; color: #000000;
+    .badge.good { background: #e6f5e6; color: #0ca30c; }
+    .badge.notice { background: #e8f1fb; color: #2f7fd1; }
+    .badge.warning { background: #fdf1d9; color: #c98500; }
+    .badge.serious { background: #fdeae1; color: #ec835a; }
+    .badge.critical { background: #fbe6e6; color: #d03b3b; }
+    .badge.neutral { background: #eef0eb; color: #565d5f; }
+
+    .empty-box {
+        background:#fafaf8; border:1px dashed #dfe2db; border-radius:12px;
+        padding: 22px; text-align:center; color:#868d8e; font-size:13px; margin-top:8px;
     }
-    table.cmp-table td:not(:first-child) { text-align: center; font-weight: 700; }
-    table.cmp-table td:first-child { display:flex; align-items:center; gap:8px; font-weight:700; }
+
+    .resumen-title {
+        font-size: 12.5px; font-weight: 800; color:#565d5f; text-transform:uppercase;
+        letter-spacing:.04em; margin: 4px 0 6px;
+    }
+    table.dashtable {
+        width: 100%; border-collapse: collapse; font-size: 13px;
+        background: white; border-radius: 10px; overflow: hidden;
+    }
+    table.dashtable thead th {
+        background: #20252b; color: #ffffff; text-align: left;
+        padding: 9px 12px; font-size: 11.5px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: .03em;
+        position: sticky; top: 0;
+    }
+    table.dashtable tbody td {
+        padding: 8px 12px; border-bottom: 1px solid #eef0ef; color:#20252b;
+    }
+    table.dashtable tbody tr:nth-child(even) { background: #fafaf8; }
+    table.dashtable tbody tr:hover { background: #fdf1e8; }
+    table.dashtable tbody tr.total-row {
+        background: #d7ecfc; font-weight: 800; color:#0f3a5c;
+        border-top: 2px solid #7fb8e8;
+    }
+    table.dashtable tbody tr.total-row td { padding: 10px 12px; font-size: 13.5px; }
+    table.dashtable tbody tr.total-row:hover { background: #d7ecfc; }
+
+    div[data-testid="stDownloadButton"] button {
+        background: #ffffff; color: #ff5a1f; border: 1.5px solid #ff5a1f;
+        border-radius: 8px; font-size: 12.5px; font-weight: 700; padding: 4px 14px;
+    }
+    div[data-testid="stDownloadButton"] button:hover {
+        background: #ff5a1f; color: #ffffff; border-color: #ff5a1f;
+    }
+
+    div[data-testid="stExpander"] {
+        border: 1px solid #e8ebef; border-radius: 10px; margin-top: 6px;
+    }
+    div[data-testid="stExpander"] summary {
+        background: #f4f5f4; border-radius: 10px; padding: 10px 14px;
+    }
+    div[data-testid="stExpander"] summary:hover {
+        background: #fdeee5;
+    }
+    div[data-testid="stExpander"] summary p,
+    div[data-testid="stExpander"] summary span {
+        color: #20252b !important; font-weight: 800 !important; font-size: 13.5px !important;
+    }
+    div[data-testid="stExpander"] summary svg {
+        fill: #ff5a1f !important;
+    }
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    .field-label {
+        color:#ff5a1f; font-size:13px; font-weight:700; margin-bottom:2px;
+    }
 
     @media (max-width: 600px) {
         .block-container { padding: 0 0.6rem 1rem; }
         .hero { flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 18px; margin: -1rem -0.6rem 1rem; }
-        .hero img { max-width: 170px !important; height: 40px !important; }
-        .periodo-badge { text-align: left; }
-        .section { font-size: 17px; }
-        .kpi-value { font-size: 22px; }
+        .hero img { max-width: 170px !important; height: 38px !important; }
+        .hero-brand { font-size: 20px; }
+        .section { font-size: 16px; margin: 20px 0 4px; }
+        .kpi-row { grid-template-columns: 1fr; gap: 8px; }
+        .kpi .value { font-size: 22px; }
+        table.dashtable { font-size: 12px; }
+        table.dashtable thead th, table.dashtable tbody td { padding: 7px 8px; }
     }
-
-    .filtro-row {
-        display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
-        margin: -4px 0 4px;
-    }
-    .filtro-row > div[data-testid="stSelectbox"] { min-width: 220px; }
 """
-st.markdown(f"<style>{CSS_TEXT}</style>", unsafe_allow_html=True)
 
-LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
+st.markdown(f"<style>{APP_CSS}</style>", unsafe_allow_html=True)
 
-# Esta pestaña no tiene uploader propio: el archivo "Vs de ventas" se sube en
-# la pestaña "app" (tarjeta "COMPARATIVO") y queda guardado en una carpeta
-# compartida en el servidor, igual que Pedidos/Reclamos/Pickers/etc. en
-# Operativo — acá solo se lee la última copia que haya quedado ahí.
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+
+def norm_cols(df):
+    df = df.copy()
+    df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
+    return df
+
+def get_col_ci(df, name):
+    """Devuelve la columna que coincide con `name` sin importar mayúsc/minúsc
+    (por si el export cambia el casing de una columna de un día a otro).
+    Si no la encuentra, devuelve una serie vacía del mismo largo que df."""
+    if df is None:
+        return pd.Series([], dtype=object)
+    for c in df.columns:
+        if str(c).strip().lower() == name.lower():
+            return df[c]
+    return pd.Series([""] * len(df), index=df.index)
+
+def get_col_ci_first(df, names):
+    """Como get_col_ci, pero prueba una lista de nombres posibles en orden y
+    devuelve la primera columna que exista de verdad (para cuando el mismo
+    dato viene con un nombre distinto según el archivo, ej. 'ordenes' en el
+    archivo nuevo de la tarjeta ON-TIME vs 'Pedifod' en el viejo Reporte
+    diario)."""
+    if df is None:
+        return pd.Series([], dtype=object)
+    lower_cols = {str(c).strip().lower(): c for c in df.columns}
+    for name in names:
+        key = name.lower()
+        if key in lower_cols:
+            return df[lower_cols[key]]
+    return pd.Series([""] * len(df), index=df.index)
+
+def norm_txt(v):
+    if pd.isna(v):
+        return ""
+    return str(v).replace("\xa0", " ").strip()
+
+def norm_codigo(v):
+    """Como norm_txt, pero evita que un código (ej. de barras) quede como
+    '7790580146115.0' por venir de una columna numérica del Excel."""
+    if pd.isna(v):
+        return ""
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return norm_txt(v)
+
+# ---------------------------------------------------------------------
+# Tipificaciones de Reclamos (del archivo "Tipificaciones CC Ecommerce"):
+# cada tipo de reclamo es "Operativo" (problema del sector Ecom) o "No
+# operativo" (otro problema, ajeno a Ecom). Se usa para que "Resumen por
+# tienda" y "Resumen por tipo" (dentro de Reclamos) solo cuenten los
+# reclamos Operativos.
+# ---------------------------------------------------------------------
+TIPIFICACIONES_OPS = {
+    "cobrado no entregado": "Operativo",
+    "producto equivocado": "Operativo",
+    "producto danado gm": "No operativo",
+    "fuera de fecha y hora": "Operativo",
+    "disconformidad con criterio de sustitucion": "Operativo",
+    "producto vencido / danado / mal estado": "Operativo",
+    "faltante de partes y piezas": "Operativo",
+    "reclamo factura a": "Operativo",
+    "otros": "No operativo",
+    "anulaciones desde tienda": "Operativo",
+    "faltante de comprobante de pago": "Operativo",
+    "reagendamiento desde tienda": "Operativo",
+    "devolucion no aplicada fiserv": "No operativo",
+    "devolucion no aplicada mercadopago": "No operativo",
+    "mala actitud ecommerce": "Operativo",
+    "problema con cupon": "No operativo",
+    "problema sitio web": "No operativo",
+    "diferencia de precio entre pedido y facturado": "No operativo",
+    "descuento bancario no aplicado": "No operativo",
+    "errores con medios de pago": "No operativo",
+    "errores masivos": "No operativo",
+    "solicitud de reagendamiento": "No operativo",
+    "solicitud de cambio o devolucion": "No operativo",
+    "servicio tecnico": "No operativo",
+    "solicitud de anulacion o boton de arrepentimiento": "No operativo",
+    "solicitud de tercero autorizado": "No operativo",
+    "solicitud de factura a": "No operativo",
+    "anulacion o disconformidad por falta de stock": "Operativo",
+    "pedido equivocado": "Operativo",
+    "anulacion o demora por validacion": "No operativo",
+    "devolucion no aplicada modo": "No operativo",
+    "devolucion de cobro de envases de cerveza": "Operativo",
+}
+
+# Alias para variantes de redacción que aparecen en el export real de
+# Reclamos pero no coinciden letra a letra con "Nombre de la tipificacion"
+# del archivo de referencia (plural/singular, con o sin "Solicitud de").
+_TIPIFICACION_ALIASES = {
+    "devolucion no aplicada mercado pago": "devolucion no aplicada mercadopago",
+    "anulacion o demoras por validacion": "anulacion o demora por validacion",
+    "problemas con cupon": "problema con cupon",
+    "factura a": "reclamo factura a",
+    "3ero autorizado": "solicitud de tercero autorizado",
+    "3ro autorizado": "solicitud de tercero autorizado",
+    "reagendamiento cd/proveedor": "solicitud de reagendamiento",
+}
+
+def _norm_tipificacion(v):
+    """Normaliza un 'Tipo' de reclamo para buscarlo en TIPIFICACIONES_OPS.
+    El export de Reclamos trae el 'Tipo' como ruta completa separada por
+    '|' (ej. 'Stock de tienda|Reclamo Stock|Cobrado no entregado') — acá
+    nos quedamos con el último tramo, que es la tipificación en sí.
+    También colapsa espacios alrededor de '/' (ej. 'vencido/dañado' vs
+    'vencido / dañado'), minúsculas y sin acentos."""
+    s = norm_txt(v)
+    if "|" in s:
+        s = s.split("|")[-1]
+    s = s.lower()
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    s = re.sub(r"\s*/\s*", "/", s)
+    return " ".join(s.split())
+
+_TIPIFICACIONES_NORM = {_norm_tipificacion(k): v for k, v in TIPIFICACIONES_OPS.items()}
+
+def clasificar_tipo_reclamo(tipo):
+    """'Operativo' / 'No operativo' según la tipificación, o 'Sin clasificar'
+    si el tipo no está en la lista (para que se vea en vez de asumir mal)."""
+    key = _norm_tipificacion(tipo)
+    key = _TIPIFICACION_ALIASES.get(key, key)
+    return _TIPIFICACIONES_NORM.get(key, "Sin clasificar")
+
+TIENDA_ALIASES = {
+    "grafa": "Constituyentes",
+}
+
+def strip_sucursal(v):
+    """Quita el prefijo 'Sucursal ' y normaliza espacios, para poder unificar
+    nombres de tienda que vienen distinto de una hoja a otra. También aplica
+    alias manuales para tiendas que figuran con un nombre distinto en una
+    planilla puntual (ej. 'Grafa' en Faltantes = 'Constituyentes' en el resto
+    de los reportes)."""
+    s = norm_txt(v)
+    s = re.sub(r"(?i)^sucursal\s+", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    alias = TIENDA_ALIASES.get(s.lower())
+    if alias:
+        return alias
+    return s
+
+def fold_tienda_key(s):
+    """Clave sin acentos/mayúsculas para agrupar nombres de tienda equivalentes
+    aunque vengan escritos distinto entre hojas (ej. 'Cordoba Oeste' vs 'Córdoba Oeste')."""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower()
+
+# Código de tienda (columna "warehouseName" del archivo de Faltantes, cuando
+# viene como número, ej. "Inv-Full-1006") -> nombre. Mismo listado que se usa
+# en "app" y "Productividad Pickers".
+TIENDA_CODE_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+# Alias puntuales para nombres de depósito que no salen bien solo con
+# mayúscula inicial (ej. "larioja" -> "Larioja" en vez de "La Rioja").
+WAREHOUSE_NAME_ALIASES = {
+    "larioja": "La Rioja",
+}
+
+_WAREHOUSE_PREFIX_RE = re.compile(r"(?i)^inv-(fullgm|full|mg|pp)-")
+
+def warehouse_to_tienda(v):
+    """El archivo de Faltantes mensual trae el depósito como
+    'Inv-Full-San Fernando', 'inv-fullgm-viedma', 'Inv-Full-1006' (código),
+    etc. en vez del nombre de tienda tal cual. Le saca el prefijo técnico y
+    lo deja como nombre de tienda; strip_sucursal/apply_tienda_canon (más
+    abajo) terminan de unificarlo con la ortografía que ya usan las demás
+    hojas del Reporte diario."""
+    s = norm_txt(v)
+    s = _WAREHOUSE_PREFIX_RE.sub("", s)
+    s = re.sub(r"[-_]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return s
+    if s.isdigit():
+        return TIENDA_CODE_MAP.get(s, s)
+    alias = WAREHOUSE_NAME_ALIASES.get(s.lower())
+    if alias:
+        return alias
+    return s.title()
+
+def clean_shipping_location(v):
+    """El archivo de Pedidos trae 'shippingLocationName', que casi siempre
+    ya es el nombre de tienda legible (ej. 'Sucursal San Justo', alguna vez
+    con la errata 'Sucurcal'), a veces con un código de depósito pegado al
+    final (ej. 'Sucursal Tucuman 1020'). Devuelve '' si no había nada útil,
+    para que warehouse_to_tienda(shippingWarehouseName) sirva de respaldo."""
+    s = norm_txt(v)
+    if not s:
+        return ""
+    s = re.sub(r"(?i)^sucur[sc]al\s+", "", s)
+    s = re.sub(r"\s+\d{3,6}$", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def parse_pedidos_monto(v):
+    """El archivo de Pedidos trae el monto como '$122014.84' (punto decimal,
+    sin separador de miles) — a diferencia del '$46K' del Reporte diario de
+    siempre, que sí espera la notación argentina que usa ar_number(). Lo
+    dejamos como número de una — ar_number() más abajo, al recibir ya un
+    número, lo deja pasar tal cual."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return 0.0
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return float(v)
+    s = norm_txt(v).replace("$", "").replace(" ", "")
+    if not s:
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+# Mapa Tienda -> Auditor, armado a partir de "tiendas por formato.xlsx". La
+# clave es fold_tienda_key(nombre de la tienda tal como aparece en los
+# reportes), para que funcione sin importar acentos/mayúsculas. Pendiente de
+# confirmar con Emi: "Comodoro Rivadavia" / "Comodoro Rivadavia Norte" (hay
+# más de una tienda "Comodoro" en los reportes y no se pudo saber cuál es
+# cuál) y "R.S. Peña, Chaco" (aparece con dos ortografías distintas en los
+# reportes: "Roque Saenz Peña" y "Sáenz Peña. Chaco"). Esas tiendas, hasta
+# aclararlo, no muestran auditor.
+AUDITOR_MAP = {
+    "3 de febrero": "Pedro",
+    "alte brown": "Nicolas",
+    "avellaneda": "Nicolas",
+    "bahia blanca": "Nicolas",
+    "bariloche": "Nicolas",
+    "campana": "Nicolas",
+    "caseros": "Nicolas",
+    "catamarca": "German",
+    "cipolletti": "Nicolas",
+    "claypole": "German",
+    "clorinda": "Pedro",
+    "constituyentes": "German",
+    "cordoba este": "German",
+    "cordoba oeste": "German",
+    "cordoba sur": "German",
+    "corrientes": "Pedro",
+    "corrientes av. maipu": "Pedro",
+    "donato alvarez": "German",
+    "formosa": "Pedro",
+    "formosa 2": "Pedro",
+    "fuerza aerea cba.": "German",
+    "fuerza aerea salta": "Pedro",
+    "general roca": "Nicolas",
+    "gonzalez catan": "Pedro",
+    "goya": "Pedro",
+    "gral pico": "Nicolas",
+    "guaymallen": "German",
+    "hc avellaneda 2": "German",
+    "hurlingham vergara": "Pedro",
+    "hurlingham villegas": "Pedro",
+    "jose c paz": "Pedro",
+    "jujuy": "Pedro",
+    "junin": "Nicolas",
+    "la pampa": "Nicolas",
+    "la plata": "Pedro",
+    "la rioja": "German",
+    "laferrere": "Pedro",
+    "lanus": "Nicolas",
+    "las heras": "German",
+    "lomas de zamora": "Nicolas",
+    "lujan": "Nicolas",
+    "maipu": "German",
+    "malvinas": "Nicolas",
+    "mataderos": "Pedro",
+    "moreno": "Pedro",
+    "moreno derqui": "Pedro",
+    "moreno shopping": "Pedro",
+    "moron": "Nicolas",
+    "neuquen": "Nicolas",
+    "neuquen 2": "Nicolas",
+    "olavarria": "Nicolas",
+    "oran": "Pedro",
+    "palmares": "German",
+    "parana": "German",
+    "parana 2": "German",
+    "pergamino": "Nicolas",
+    "pilar": "Pedro",
+    "posadas": "Pedro",
+    "posadas 2": "Pedro",
+    "puerto madryn": "Nicolas",
+    "quilmes": "Nicolas",
+    "rawson san juan": "German",
+    "resistencia": "Pedro",
+    "rio cuarto": "German",
+    "rio sali": "Pedro",
+    "salta": "Pedro",
+    "san fernando": "German",
+    "san juan": "German",
+    "san juan norte": "German",
+    "san justo": "Pedro",
+    "san luis": "German",
+    "san martin": "German",
+    "san martin mendoza": "German",
+    "san pedro jujuy": "Pedro",
+    "san vicente": "Nicolas",
+    "santa fe": "German",
+    "santa rosa": "Nicolas",
+    "santiago": "Pedro",
+    "santiago del estero sur": "Pedro",
+    "tablada": "Pedro",
+    "tartagal": "Pedro",
+    "tigre": "Nicolas",
+    "trelew": "Nicolas",
+    "tucuman": "Pedro",
+    "tucuman av. jujuy": "Pedro",
+    "tucuman concepcion": "Pedro",
+    "tucuman ejercito nor.": "Pedro",
+    "viedma": "Nicolas",
+    "villa mercedes": "German",
+    "villa nueva": "German",
+}
+
+def get_auditor(tienda):
+    """Devuelve el auditor/coordinador de una tienda ya canonicalizada, o
+    None si no lo tenemos mapeado."""
+    return AUDITOR_MAP.get(fold_tienda_key(norm_txt(tienda)))
+
+def build_tienda_canon_map(dfs):
+    """Unifica nombres de tienda entre hojas (mayúsculas/minúsculas, acentos, prefijo
+    'Sucursal', espacios) usando la ortografía más frecuente como canónica."""
+    from collections import Counter
+    counts = {}
+    for d in dfs:
+        if d is None or "Tienda" not in d.columns:
+            continue
+        for v in d["Tienda"]:
+            s = strip_sucursal(v)
+            if not s:
+                continue
+            key = fold_tienda_key(s)
+            counts.setdefault(key, Counter())[s] += 1
+    return {key: c.most_common(1)[0][0] for key, c in counts.items()}
+
+def apply_tienda_canon(d, canon_map):
+    if d is None or "Tienda" not in d.columns:
+        return d
+    d = d.copy()
+    d["Tienda"] = d["Tienda"].apply(strip_sucursal).apply(
+        lambda s: canon_map.get(fold_tienda_key(s), s)
+    )
+    return d
+
+def ar_number(v):
+    """Parse an Argentine-formatted number that may come as a plain value
+    or as a string like '9.473 ▼ 12.6%vs MA' / '1.565' / '$464K'."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return 0.0
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return float(v)
+    s = norm_txt(v)
+    if not s:
+        return 0.0
+    token = s.split(" ")[0]
+    token = token.replace("$", "")
+    mult = 1.0
+    if token.upper().endswith("K"):
+        mult = 1_000.0
+        token = token[:-1]
+    elif token.upper().endswith("M"):
+        mult = 1_000_000.0
+        token = token[:-1]
+    token = token.replace("%", "")
+    token = token.replace(".", "").replace(",", ".")
+    try:
+        return float(token) * mult
+    except ValueError:
+        return 0.0
+
+def ar_pct(v):
+    """Parsea un porcentaje que puede venir como número (0.977 o 97.7) o como
+    texto con '%' en notación estándar (punto decimal, ej. '97.7%', '50.0%').
+    A diferencia de ar_number, acá el '.' siempre es punto decimal y nunca
+    separador de miles (los porcentajes no lo necesitan)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return float(v)
+    s = norm_txt(v)
+    if not s:
+        return None
+    token = s.split(" ")[0].replace("%", "").strip()
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+def hhmm_to_minutes(v):
+    """Parsea un tiempo del archivo de Pickers en formato 'HH:MM' (ej.
+    'orderAverage' = '00:22' -> 22 minutos, '01:15' -> 75 minutos) a minutos
+    totales. Devuelve NaN si no se puede leer."""
+    s = norm_txt(v)
+    if not s or ":" not in s:
+        return np.nan
+    partes = s.split(":")
+    try:
+        h = int(partes[0])
+        m = int(partes[1])
+        return float(h * 60 + m)
+    except (ValueError, IndexError):
+        return np.nan
+
+def fmt_minutos(v):
+    """Minutos -> texto legible, ej. 22.4 -> '22,4 min'."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "-"
+    return f"{v:.1f} min".replace(".", ",")
+
+def find_sheet(xl, required_cols):
+    """Return the (sheet_name, df) whose normalized columns cover required_cols."""
+    required = {c.lower() for c in required_cols}
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if required.issubset(cols):
+            return name, df
+    return None, None
+
+def safe_open_excel(uploaded_file, nombre=None):
+    """Abre un archivo subido como pd.ExcelFile, mostrando un error prolijo si
+    falla. 'nombre' identifica qué reporte es (ej. "Reclamos"), para que el
+    mensaje diga cuál archivo hay que volver a subir en vez de un error
+    genérico que obliga a adivinar."""
+    if uploaded_file is None:
+        return None
+    try:
+        return pd.ExcelFile(uploaded_file)
+    except Exception as e:
+        etiqueta = f" de {nombre}" if nombre else ""
+        st.error(f"No pude leer el archivo{etiqueta}: {e}. Volvé a subirlo en la pestaña \"app\".")
+        return None
+
+# ---------------------------------------------------------------------
+# Guardado compartido: para que los auditores (o cualquiera con el link)
+# vean el último reporte que subiste sin tener que subir nada ellos. Se
+# guarda una copia del archivo en el disco donde corre la app; mientras la
+# app siga "despierta", todos los que entren ven esa misma copia. Si
+# Streamlit la reinicia por inactividad, o subís un cambio nuevo a GitHub,
+# esa copia se borra y hace falta volver a subir el reporte una vez para
+# que se vuelva a compartir con todos.
+# ---------------------------------------------------------------------
+
 SHARED_DIR = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
-SHARED_VSVENTAS_PATH = SHARED_DIR / "vsventas.xlsx"
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
+SHARED_REPORTE_PATH = SHARED_DIR / "reporte_diario.xlsx"
+SHARED_FALTANTES_PATH = SHARED_DIR / "faltantes.xlsx"
+SHARED_PEDIDOS_PATH = SHARED_DIR / "pedidos.xlsx"
+SHARED_RECLAMOS_PATH = SHARED_DIR / "reclamos.xlsx"
+SHARED_PICKERS_PATH = SHARED_DIR / "pickers.xlsx"
 
 def _github_headers():
     token = st.secrets.get("GITHUB_TOKEN")
@@ -127,9 +684,10 @@ def fetch_shared_from_github(shared_path):
     Pide el archivo en formato "raw" (Accept: vnd.github.raw+json) en vez
     del formato normal (JSON + contenido en base64): el formato normal solo
     trae el contenido completo para archivos de hasta 1 MB — con uno más
-    pesado, GitHub devuelve el contenido vacío sin avisar, y acá terminaba
-    leyéndose como un Excel de 0 bytes ("no pude determinar el formato del
-    archivo"). El formato "raw" no tiene ese límite (soporta hasta 100 MB)."""
+    pesado (como Pedidos +72h, que ronda 1,6 MB), GitHub devuelve el
+    contenido vacío sin avisar, y acá terminaba leyéndose como un Excel de
+    0 bytes ("no pude determinar el formato del archivo"). El formato
+    "raw" no tiene ese límite (soporta hasta 100 MB)."""
     headers = _github_headers()
     if not headers:
         return None
@@ -147,15 +705,18 @@ def fetch_shared_from_github(shared_path):
         return None
 
 def get_shared_bytes(shared_path):
-    """Primero intenta la copia local (rápida); si el servidor se reinició y
-    la copia local se perdió, la trae de GitHub (donde queda guardada para
-    siempre) y la vuelve a dejar en local para la próxima.
+    """Esta pestaña ya no tiene uploader propio: "Pedidos", "Reclamos
+    Operativos", "Pickers" y "Faltantes" se suben en la pestaña "app". Primero
+    intenta la copia local (rápida); si el servidor se reinició y la copia
+    local se perdió, la trae de GitHub (donde queda guardada para siempre) y
+    la vuelve a dejar en local para la próxima.
 
     Si la copia local está vacía (0 bytes) la descarta y va directo a
-    GitHub: un bug viejo (ya arreglado) podía dejar guardada ahí una copia
-    vacía/corrupta de un archivo pesado — como todas las pestañas comparten
-    esta misma carpeta temporal, sin este chequeo esa copia rota se seguía
-    leyendo para siempre, aunque la causa original ya esté arreglada."""
+    GitHub: un bug viejo en otras pestañas (ya arreglado) podía dejar
+    guardada ahí una copia vacía/corrupta de un archivo pesado — como todas
+    las pestañas comparten esta misma carpeta temporal, sin este chequeo
+    esa copia rota se seguía leyendo para siempre, aunque la causa original
+    ya esté arreglada."""
     if shared_path.exists():
         try:
             data = shared_path.read_bytes()
@@ -172,776 +733,1901 @@ def get_shared_bytes(shared_path):
         return content
     return None
 
-vsventas_bytes = get_shared_bytes(SHARED_VSVENTAS_PATH)
+def get_shared_date(shared_path):
+    """Lee la fecha (Argentina) con la que se guardó este reporte la última
+    vez que se subió uno nuevo (ver stamp_date en app.py). None si ese
+    reporte nunca se subió con este control, o es de antes de que existiera."""
+    date_path = shared_path.with_name(shared_path.name + ".date")
+    if date_path.exists():
+        try:
+            return date_path.read_text().strip()
+        except Exception:
+            pass
+    content = fetch_shared_from_github(date_path)
+    if content is not None:
+        try:
+            date_path.write_text(content.decode("utf-8"))
+        except Exception:
+            pass
+        return content.decode("utf-8").strip()
+    return None
 
-if vsventas_bytes is None:
-    st.markdown("""
-    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
-    padding:12px 16px;margin-bottom:14px;">
-      <div style="font-size:13px;font-weight:800;color:#000000;margin-bottom:5px;">
-        TODAVÍA NO HAY ARCHIVO CARGADO
-      </div>
-      <div style="font-size:12px;color:#000000;">
-        Subí el Excel "Vs de ventas" (con una hoja por año, ej. "2025" y "2026")
-        en la pestaña <b>app</b> (menú de la izquierda), tarjeta "COMPARATIVO".
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
+# ---------------------------------------------------------------------
+# Historial mensual de Faltantes: cada vez que subís un archivo de Faltantes
+# nuevo, se agregan sus filas (con la fecha de hoy) a un Google Sheet, para
+# poder armar un ranking de qué SKUs fueron faltante más veces en el mes. A
+# diferencia del guardado compartido de arriba (que solo se acuerda del
+# último archivo), esto SÍ sobrevive a que la app se reinicie o se actualice,
+# porque vive afuera, en Google Sheets.
+# ---------------------------------------------------------------------
 
-st.markdown(
-    '<div style="color:#000000;font-size:12px;margin:-6px 0 14px;">'
-    'Los datos se cargan desde la pestaña <b>app</b> (menú de la izquierda) — subí '
-    'ahí el Excel "Vs de ventas" cuando quieras actualizarlos.'
-    '</div>',
-    unsafe_allow_html=True
-)
+FALTANTES_LOG_HEADERS = ["Fecha", "Tienda", "Producto", "SKU", "CantidadFaltante", "Sustituido", "NoSustituido"]
 
-# El archivo trae una hoja por año (ej. "2025", "2026"). Hasta acá, cada hoja
-# traía los totales ya armados por tienda y por día (una fila = una
-# tienda-día, con las 4 columnas de abajo ya calculadas). A partir de la hoja
-# 2026, en cambio, el archivo trae el detalle de pedidos sin armar (una fila
-# por pedido, columnas tipo commerceId/totalAmount/itemsQuantity/status) — lo
-# detectamos por esas columnas y armamos nosotros mismos las 4 columnas que
-# necesitamos. Así conviven las dos hojas sin que importe cómo se llamen ni
-# cuántos años tenga el archivo.
-COL_VENTA = "Venta - Ecommerce"
-COL_PEDIDOS = "Pedidos Facturados con Venta Operativa - Ecommerce"
-COL_UNIDADES = "Cantidad Venta Operativa - Ecommerce"
-COL_FACTURACION = "Facturacion"
+# Historial diario de Productividad Pickers: mismo mecanismo y misma planilla
+# de Google Sheets que Faltantes (una hoja aparte, "HistorialPickers"), para
+# poder armar la evolución día a día en la pestaña "Productividad Pickers".
+# TiempoPromedioMin (minutos por pedido, "orderAverage" del archivo de
+# Pickers) se guarda ahí para que la pestaña "Productividad Pickers" pueda
+# calcular su propio % on time preparación acumulado del mes.
+PICKER_LOG_HEADERS = [
+    "Fecha", "Picker", "Deposito", "Pedidos", "Unidades",
+    "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate", "TiempoPromedioMin"
+]
 
-RAW_ORDER_COLS = {
-    "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
-    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
-}
+# Historial diario de Pedidos +72h: misma planilla de Google Sheets que
+# Faltantes/Pickers (hoja aparte, "HistorialPedidos72h"). A diferencia de
+# Faltantes (que trae el mes completo en cada archivo), el archivo de
+# Pedidos +72h es siempre "la foto de ahora" — los pedidos que están
+# atrasados en este momento, no un historial. Por eso acá no se reemplaza
+# por mes: se reemplaza únicamente lo que quedó guardado con la fecha de
+# HOY (por si subís el archivo más de una vez en el día) y se deja intacto
+# todo lo de días anteriores, para que se vaya acumulando real mes a mes.
+PEDIDOS_LOG_HEADERS = ["Fecha", "Pedido", "Tienda", "Estado", "Dias", "Monto"]
 
-def _es_hoja_detalle_pedidos(d):
-    return RAW_ORDER_COLS.issubset(set(d.columns))
+# Guarda el motivo puntual por el que no se pudo conectar (para mostrarlo en
+# pantalla mientras estamos activando esto por primera vez). No es sensible
+# — solo dice qué falló, nunca la clave en sí. Va detrás de cache_resource
+# (en vez de ser un dict suelto a nivel de módulo) para que el mismo objeto
+# sobreviva entre re-renders — si no, como Streamlit vuelve a ejecutar todo
+# el archivo en cada interacción, un dict suelto se reinicia en cada
+# re-render y pierde el mensaje apenas _gsheets_client() queda cacheada.
+@st.cache_resource(show_spinner=False)
+def _gsheets_debug_box():
+    return {"msg": None}
 
-def _adaptar_hoja_detalle_pedidos(d):
-    """Arma, a partir del detalle de pedidos (una fila por pedido), las
-    mismas 4 columnas por día que traían las hojas viejas ya agregadas, con
-    el criterio que indicó Emi:
-    - Se descartan los pedidos del canal Pick&Mix (salesChannelPrefix =
-      "PM") y las devoluciones (commerceId que contiene "RMA") — igual que
-      ya se hace con Pedidos +72h en Operativo. De paso, esos son
-      exactamente los únicos casos sin "commerceSequentialId" cargado, así
-      que se descarta también cualquier fila sin ese dato como chequeo
-      extra.
-    - "Pedidos" = cada fila cuenta un pedido (identificado por
-      commerceSequentialId, no por commerceId — una misma
-      commerceSequentialId puede repetirse entre envíos de un mismo pedido,
-      aunque en la práctica, una vez sacados PM y RMA, cada fila que queda
-      ya es una commerceSequentialId distinta).
-    - "Venta - Ecommerce" y "Facturacion" = totalAmount (lo vendido en $,
-      con impuesto incluido).
-    - "Cantidad" (unidades) = itemsQuantity, con itemsPickedQuantity como
-      respaldo solo si itemsQuantity no viene en el archivo (algunos
-      exports no traen itemsPickedQuantity, o la traen vacía, y ahí
-      Unidades quedaba en 0).
-    - El día que cuenta para cada pedido es "commerceDateCreated" (fecha de
-      CREACIÓN del pedido), no "deliveryFinishDate" (fecha de entrega) — a
-      pedido de Emi, todas las métricas (Pedidos, Venta $ y Unidades) se
-      agrupan por este criterio. Un pedido sin commerceDateCreated cargado
-      se descarta (se cae solo más abajo, al sacar las filas sin fecha
-      válida)."""
-    d = d.copy()
-    es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
-    es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
-    d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
-    monto = pd.to_numeric(
-        d["totalAmount"].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
-        errors="coerce"
-    ).fillna(0)
-    out = pd.DataFrame({
-        "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
-        COL_VENTA: monto,
-        COL_FACTURACION: monto,
-        COL_UNIDADES: (
-            pd.to_numeric(d.get("itemsQuantity"), errors="coerce")
-            if "itemsQuantity" in d.columns
-            else pd.to_numeric(d.get("itemsPickedQuantity"), errors="coerce")
-        ).fillna(0),
-        COL_PEDIDOS: 1,
-    })
-    return out
+@st.cache_resource(show_spinner=False)
+def _gsheets_client():
+    """Cliente autenticado contra Google Sheets, o None si todavía no se
+    cargaron las credenciales en Secrets (la app sigue funcionando igual,
+    solo que sin el ranking mensual acumulado)."""
+    if not _GSHEETS_LIB_OK:
+        _gsheets_debug_box()["msg"] = "La librería gspread no se instaló (revisá requirements.txt)."
+        return None
+    try:
+        # Forma simple: pegaste el .json de la cuenta de servicio entero en
+        # Secrets, en GCP_SERVICE_ACCOUNT_JSON. Si no está, probamos también
+        # la forma "a mano" con una tabla [gcp_service_account], por si en
+        # algún momento se cargó así.
+        raw_json = st.secrets.get("GCP_SERVICE_ACCOUNT_JSON")
+        if raw_json:
+            creds_dict = json.loads(raw_json)
+        else:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = _GCreds.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        _gsheets_debug_box()["msg"] = None
+        return client
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error de credenciales ({type(e).__name__}): {e}"
+        return None
 
-try:
-    xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
-    frames = []
-    for sheet in xl.sheet_names:
-        d = xl.parse(sheet)
-        d.columns = [str(c).strip() for c in d.columns]
-        if _es_hoja_detalle_pedidos(d):
-            d = _adaptar_hoja_detalle_pedidos(d)
-        if "Fecha" not in d.columns:
+def _faltantes_log_ws():
+    """Abre (o crea si no existe) la hoja 'HistorialFaltantes' dentro del
+    Google Sheet configurado en Secrets. None si no está conectado."""
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        _gsheets_debug_box()["msg"] = "Falta FALTANTES_SHEET_ID en Secrets."
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        try:
+            ws = sh.worksheet("HistorialFaltantes")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="HistorialFaltantes", rows=2000, cols=len(FALTANTES_LOG_HEADERS))
+            ws.append_row(FALTANTES_LOG_HEADERS)
+        _gsheets_debug_box()["msg"] = None
+        return ws
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
+        return None
+
+def replace_faltantes_meses_en_sheet(faltantes_df):
+    """El archivo de Faltantes ahora siempre trae el mes completo (desde el
+    día 1) con la fecha real de cada fila, en vez de una sola foto del día.
+    Por eso, en vez de simplemente agregar filas (lo que iría duplicando
+    todo lo ya cargado en cada subida), reemplaza en el historial las filas
+    de los meses que trae el archivo nuevo, y deja intactas las de
+    cualquier otro mes que ya estuviera guardado. Requiere que faltantes_df
+    tenga la columna FechaArchivo (fecha real, ya parseada) además de
+    Tienda/Producto/SKU/CantidadFaltante/Sustituido/NoSustituido (una fila
+    por tienda+producto+día, ya sumada). Devuelve True si pudo escribir (o
+    si no había nada para escribir), False si falló la conexión con Google
+    Sheets."""
+    ws = _faltantes_log_ws()
+    if ws is None:
+        return False
+    if faltantes_df is None or not len(faltantes_df):
+        return True
+    rows_df = faltantes_df.dropna(subset=["FechaArchivo"])
+    if not len(rows_df):
+        return True
+
+    meses_nuevos = set(rows_df["FechaArchivo"].dt.strftime("%Y-%m").unique())
+
+    try:
+        existing = ws.get_all_records()
+    except Exception:
+        existing = []
+
+    keep_rows = []
+    for r in existing:
+        try:
+            fecha_dt = datetime.strptime(str(r.get("Fecha", "")), "%d/%m/%Y")
+        except (ValueError, TypeError):
+            keep_rows.append([r.get(h, "") for h in FALTANTES_LOG_HEADERS])
             continue
-        d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
-        d = d.dropna(subset=["Fecha"])
-        if len(d):
-            frames.append(d)
-    raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-except Exception as e:
-    st.error(f"No se pudo leer el archivo 'Vs de ventas': {e}")
-    st.stop()
+        if fecha_dt.strftime("%Y-%m") not in meses_nuevos:
+            keep_rows.append([r.get(h, "") for h in FALTANTES_LOG_HEADERS])
 
-if raw.empty:
-    st.error("No encontré filas con fecha válida en el archivo 'Vs de ventas'.")
-    st.stop()
+    new_rows = [
+        [r["FechaArchivo"].strftime("%d/%m/%Y"), r.get("Tienda", ""), r.get("Producto", ""),
+         r.get("SKU", ""), r.get("CantidadFaltante", ""), r.get("Sustituido", ""), r.get("NoSustituido", "")]
+        for _, r in rows_df.iterrows()
+    ]
 
-for col in [COL_VENTA, COL_PEDIDOS, COL_UNIDADES, COL_FACTURACION]:
-    if col not in raw.columns:
-        raw[col] = 0
-    raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
+    try:
+        ws.clear()
+        ws.append_row(FALTANTES_LOG_HEADERS)
+        todas = keep_rows + new_rows
+        if todas:
+            ws.append_rows(todas, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
 
-raw["date"] = raw["Fecha"].dt.normalize()
-df = raw.groupby("date", as_index=False).agg({
-    COL_VENTA: "sum", COL_PEDIDOS: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum"
-}).rename(columns={
-    COL_VENTA: "ecommerce_tax", COL_PEDIDOS: "orders",
-    COL_UNIDADES: "units", COL_FACTURACION: "company_tax"
-})
+def _pickers_log_ws():
+    """Abre (o crea si no existe) la hoja 'HistorialPickers' dentro del mismo
+    Google Sheet que Faltantes. None si no está conectado."""
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        _gsheets_debug_box()["msg"] = "Falta FALTANTES_SHEET_ID en Secrets."
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        try:
+            ws = sh.worksheet("HistorialPickers")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="HistorialPickers", rows=2000, cols=len(PICKER_LOG_HEADERS))
+            ws.append_row(PICKER_LOG_HEADERS)
+        _gsheets_debug_box()["msg"] = None
+        return ws
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
+        return None
 
-# Siempre mostramos el último día cerrado en Argentina (igual que Venta diaria).
-arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
-df = df[df["date"].dt.date < arg_today].copy()
+def replace_pickers_meses_en_sheet(pickers_df):
+    """La hoja 'Data Picker' del Reporte diario ahora también trae el mes
+    completo (desde el día 1) con la fecha real de cada fila, igual que
+    Faltantes — antes era una sola foto del día, estampada con la fecha de
+    hoy. Por eso, en vez de reemplazar solo "el día de hoy", reemplaza en el
+    historial las filas de los meses que trae el archivo nuevo (usando la
+    fecha real de cada fila), y deja intactas las de cualquier otro mes ya
+    guardado. Requiere que pickers_df tenga la columna FechaArchivo (fecha
+    real, ya parseada) además de Picker/Deposito/Pedidos/Unidades/
+    Rendimiento/RendimientoPicking/FoundRate/FillRate. De paso, saca
+    duplicados exactos que hayan quedado de antes de este cambio (cuando se
+    agregaba con append_rows a secas y cada reinicio de la app volvía a
+    sumar las mismas filas). Devuelve True si pudo escribir (o si no había
+    nada para escribir), False si falló la conexión con Google Sheets."""
+    ws = _pickers_log_ws()
+    if ws is None:
+        return False
+    if pickers_df is None or not len(pickers_df):
+        return True
+    rows_df = pickers_df.dropna(subset=["FechaArchivo"])
+    if not len(rows_df):
+        return True
 
-if df.empty:
-    st.error("Todavía no hay datos cargados para un día anterior a hoy.")
-    st.stop()
+    meses_nuevos = set(rows_df["FechaArchivo"].dt.strftime("%Y-%m").unique())
 
-# Por default, "Resultados del período" compara un solo día (el último
-# día cerrado cargado) contra el mismo día del año anterior — no el
-# acumulado del mes. Las tarjetas suman el rango Desde/Hasta que se elija
-# acá abajo, así que para ver un acumulado (ej. todo el mes) alcanza con
-# mover "Desde" al día 1.
-available_dates = sorted(df["date"].unique(), reverse=True)
-_min_fecha = df["date"].min().date()
-_max_fecha = df["date"].max().date()
-_default_desde = _max_fecha
+    try:
+        existing = ws.get_all_records()
+    except Exception:
+        existing = []
 
-col_desde, col_hasta = st.columns(2)
-with col_desde:
-    rango_desde = st.date_input(
-        "**Desde**", value=_default_desde, min_value=_min_fecha, max_value=_max_fecha,
-        key="comparativo_rango_desde",
-    )
-with col_hasta:
-    rango_hasta = st.date_input(
-        "**Hasta**", value=_max_fecha, min_value=_min_fecha, max_value=_max_fecha,
-        key="comparativo_rango_hasta",
-    )
-if rango_desde > rango_hasta:
-    rango_desde, rango_hasta = rango_hasta, rango_desde
+    keep_rows = []
+    _vistas = set()
+    for r in existing:
+        try:
+            fecha_dt = datetime.strptime(str(r.get("Fecha", "")), "%d/%m/%Y")
+            es_mes_nuevo = fecha_dt.strftime("%Y-%m") in meses_nuevos
+        except (ValueError, TypeError):
+            es_mes_nuevo = False
+        if es_mes_nuevo:
+            continue
+        row = tuple(r.get(h, "") for h in PICKER_LOG_HEADERS)
+        if row in _vistas:
+            continue
+        _vistas.add(row)
+        keep_rows.append(list(row))
 
-last_date = pd.Timestamp(available_dates[0])
-cur_year, cur_month = last_date.year, last_date.month
-n = last_date.day  # día del mes al que se corta (p.ej. 30 = acumulado al 30); lo usa "Día a día"
+    new_rows = [
+        [r["FechaArchivo"].strftime("%d/%m/%Y"), r.get("Picker", ""), r.get("Deposito", ""),
+         r.get("Pedidos", ""), r.get("Unidades", ""), r.get("Rendimiento", ""),
+         r.get("RendimientoPicking", ""), r.get("FoundRate", ""), r.get("FillRate", ""),
+         round(r["TiempoPromedioPedidoMin"], 2) if pd.notna(r.get("TiempoPromedioPedidoMin")) else ""]
+        for _, r in rows_df.iterrows()
+    ]
 
-MESES_ES = {
-    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
-    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
-}
-mes_nombre = MESES_ES.get(cur_month, "").capitalize()
+    try:
+        ws.clear()
+        ws.append_row(PICKER_LOG_HEADERS)
+        todas = keep_rows + new_rows
+        if todas:
+            ws.append_rows(todas, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
+
+@st.cache_data(ttl=180, show_spinner=False)
+def load_faltantes_log():
+    """Lee todo el historial acumulado (cacheado 3 minutos para no golpear la
+    API de Google en cada click). None = todavía no conectado. DataFrame
+    vacío = conectado pero sin filas cargadas aún."""
+    ws = _faltantes_log_ws()
+    if ws is None:
+        return None
+    try:
+        records = ws.get_all_records()
+    except Exception:
+        return None
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=FALTANTES_LOG_HEADERS)
+    if "Fecha" in df.columns:
+        df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+    return df
+
+def _pedidos_log_ws():
+    """Abre (o crea si no existe) la hoja 'HistorialPedidos72h' dentro del
+    mismo Google Sheet que Faltantes/Pickers. None si no está conectado."""
+    client = _gsheets_client()
+    if client is None:
+        return None
+    sheet_id = st.secrets.get("FALTANTES_SHEET_ID")
+    if not sheet_id:
+        _gsheets_debug_box()["msg"] = "Falta FALTANTES_SHEET_ID en Secrets."
+        return None
+    try:
+        sh = client.open_by_key(sheet_id)
+        try:
+            ws = sh.worksheet("HistorialPedidos72h")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="HistorialPedidos72h", rows=2000, cols=len(PEDIDOS_LOG_HEADERS))
+            ws.append_row(PEDIDOS_LOG_HEADERS)
+        _gsheets_debug_box()["msg"] = None
+        return ws
+    except Exception as e:
+        _gsheets_debug_box()["msg"] = f"Error abriendo la planilla ({type(e).__name__}): {e}"
+        return None
+
+def replace_pedidos_hoy_en_sheet(pedidos_df):
+    """Guarda en el historial los pedidos +72h de HOY. Como el archivo de
+    Pedidos +72h es siempre "la foto de ahora" (no trae un historial dentro
+    del archivo como Faltantes), acá se reemplaza únicamente lo que ya
+    estuviera guardado con la fecha de hoy (por si se sube el archivo más de
+    una vez en el día) y se deja intacto todo lo de días anteriores — así se
+    va acumulando real, día a día, mes a mes. Requiere que pedidos_df tenga
+    las columnas Pedido/Tienda/Estado/Dias/MontoNum. Devuelve True si pudo
+    escribir (o si no había nada para escribir), False si falló la conexión
+    con Google Sheets."""
+    ws = _pedidos_log_ws()
+    if ws is None:
+        return False
+    if pedidos_df is None or not len(pedidos_df):
+        return True
+    hoy_str = fecha_hoy.strftime("%d/%m/%Y")
+
+    try:
+        existing = ws.get_all_records()
+    except Exception:
+        existing = []
+
+    keep_rows = [
+        [r.get(h, "") for h in PEDIDOS_LOG_HEADERS]
+        for r in existing
+        if str(r.get("Fecha", "")) != hoy_str
+    ]
+    new_rows = [
+        [hoy_str, r.get("Pedido", ""), r.get("Tienda", ""), r.get("Estado", ""),
+         round(r["Dias"], 1), r.get("MontoNum", "")]
+        for _, r in pedidos_df.iterrows()
+    ]
+
+    try:
+        ws.clear()
+        ws.append_row(PEDIDOS_LOG_HEADERS)
+        todas = keep_rows + new_rows
+        if todas:
+            ws.append_rows(todas, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
+
+@st.cache_data(ttl=180, show_spinner=False)
+def load_pedidos_log():
+    """Lee todo el historial acumulado de Pedidos +72h (cacheado 3 minutos).
+    None = todavía no conectado. DataFrame vacío = conectado pero sin filas
+    cargadas aún."""
+    ws = _pedidos_log_ws()
+    if ws is None:
+        return None
+    try:
+        records = ws.get_all_records()
+    except Exception:
+        return None
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=PEDIDOS_LOG_HEADERS)
+    if "Fecha" in df.columns:
+        df["FechaDt"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+    return df
+
+def load_section_from_xl(xl, required_cols, required=True):
+    """Busca, dentro de un pd.ExcelFile ya abierto, la hoja cuyas columnas
+    cubren required_cols. Permite reusar el mismo Excel para varias secciones
+    sin tener que volver a leerlo del disco. Con required=False no muestra
+    error si no la encuentra (para una hoja que puede faltar sin que sea un
+    problema, ej. Pedidos +72h dentro del Reporte diario ahora que se sube
+    aparte)."""
+    if xl is None:
+        return None
+    name, df = find_sheet(xl, required_cols)
+    if df is None:
+        if required:
+            st.error(
+                "No encontré una hoja con las columnas esperadas "
+                f"({', '.join(required_cols)}) en el archivo subido."
+            )
+        return None
+    return df
+
+def load_section(uploaded_file, required_cols):
+    """Load an uploaded file (single-sheet export OR the full Reporte diario.xlsx)
+    and return the dataframe matching required_cols, or None."""
+    return load_section_from_xl(safe_open_excel(uploaded_file), required_cols)
+
+def load_all_sheets_from_xl(xl, required_cols, required=True):
+    """Como load_section_from_xl, pero en vez de quedarse con la PRIMERA hoja
+    que matchea las columnas esperadas, lee y junta TODAS las hojas que las
+    tengan. Pensado para el archivo de Pedidos cuando viene separado por mes
+    (una hoja por mes — "Enero", "Febrero", ..., "Octubre" — todas con el
+    mismo esquema de columnas): si nos quedáramos con la primera hoja nomás,
+    perderíamos todos los meses menos ese."""
+    if xl is None:
+        return None
+    required_set = {c.lower() for c in required_cols}
+    partes = []
+    for name in xl.sheet_names:
+        try:
+            df = xl.parse(name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if required_set.issubset(cols):
+            partes.append(df)
+    if not partes:
+        if required:
+            st.error(
+                "No encontré ninguna hoja con las columnas esperadas "
+                f"({', '.join(required_cols)}) en el archivo subido."
+            )
+        return None
+    return pd.concat(partes, ignore_index=True, sort=False)
+
+_PEDIDOS_RAW_COLS_OP = [
+    "commerceId", "commerceDateCreated", "deliveryFinishDate", "status",
+    "originalAmount", "shippingWarehouseName",
+]
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cargar_pedidos_completo(pedidos_bytes):
+    """Abre y junta TODAS las hojas del archivo de Pedidos (que ahora puede
+    venir separado por mes y pesar varias decenas de MB). Esto se cachea
+    porque, sin cachear, Streamlit volvía a abrir y parsear el archivo
+    ENTERO en cada click (cambiar de mes, de tienda, etc.) — con un archivo
+    de ~300 mil filas eso tarda más de un minuto y usa varios cientos de MB
+    cada vez, que es lo que hacía sentir la página "colgada" o en 0."""
+    if pedidos_bytes is None:
+        return None
+    try:
+        # Motor calamine (si está instalada la librería python-calamine):
+        # igual de correcto que el default (openpyxl) pero varias veces más
+        # rápido para un archivo de este tamaño — pasa de ~48s a ~7s en este
+        # archivo. Si no está instalada, o falla, se sigue con el default.
+        xl = pd.ExcelFile(io.BytesIO(pedidos_bytes), engine="calamine")
+    except Exception:
+        try:
+            xl = pd.ExcelFile(io.BytesIO(pedidos_bytes))
+        except Exception:
+            return None
+    df = load_all_sheets_from_xl(xl, _PEDIDOS_RAW_COLS_OP, required=False)
+    if df is not None and "commerceId" in df.columns:
+        # Los meses que se tocan (ej. fin de Septiembre / principio de
+        # Octubre) a veces traen el mismo pedido repetido en varias hojas
+        # — nos quedamos con un solo registro por pedido para no duplicar
+        # conteos (ni en "+72h sin mover" ni en "Cancelados"). IMPORTANTE:
+        # keep="last" (no el default "first"), porque las hojas vienen en
+        # orden cronológico (Enero..Octubre) y cuando un pedido se repite,
+        # la hoja más nueva tiene su estado más actualizado — con "first" se
+        # quedaba con el estado VIEJO (ej. seguía marcado "pendiente" aunque
+        # ya figuraba entregado en una hoja posterior), inflando "sin mover
+        # +72h" con pedidos que en realidad ya se habían resuelto. Mismo
+        # criterio que ya usa app.py al combinar estas hojas (keep="last").
+        df = df.drop_duplicates(subset=["commerceId"], keep="last")
+    return df
+
+def load_cancelados_from_xl(xl, required=True):
+    """Carga Pedidos cancelados. Cuando la hoja no trae la columna 'Total $'
+    (pasa algunos días), tiene exactamente las mismas columnas base que
+    'Data +72hs' (Pedido/Tienda/Fecha/Estado/Monto) — así que primero
+    probamos identificarla por el NOMBRE de la hoja (contiene 'cancel') para
+    no terminar leyendo por error los datos de +72hs. required=False porque
+    los cancelados ahora salen del archivo de Pedidos — esta hoja del
+    Reporte diario puede faltar sin que sea un error."""
+    if xl is None:
+        return None
+    named = [s for s in xl.sheet_names if "cancel" in s.lower()]
+    for sheet_name in named:
+        try:
+            df = xl.parse(sheet_name)
+        except Exception:
+            continue
+        df = norm_cols(df)
+        cols = {c.lower() for c in df.columns}
+        if {"pedido", "tienda", "fecha", "estado"}.issubset(cols):
+            return df
+    name, df = find_sheet(xl, ["Pedido", "Tienda", "Fecha", "Estado", "Total $"])
+    if df is not None:
+        return df
+    if required:
+        st.error(
+            "No encontré una hoja con las columnas esperadas "
+            "(Pedido, Tienda, Fecha, Estado, Total $) en el archivo subido."
+        )
+    return None
+
+def load_reclamos_from_xl(xl, required=True):
+    """Carga Reclamos desde la hoja ya traducida ('Data Reclamos': Reclamo/Pedido/
+    Tienda/Tipo/Estado/Fecha) o desde el export crudo del sistema de reclamos
+    (ej. 'claim-page-1.xlsx': displayId/typeName/orderCommerceSequentialId/
+    storeName/statusName/dateCreated). En el export crudo, sólo se toman las
+    filas cuyo typeName contiene la palabra 'reclamo'. Con required=False no
+    muestra error si no la encuentra (para cuando se intenta como respaldo,
+    ej. la hoja vieja dentro del Reporte diario)."""
+    if xl is None:
+        return None
+
+    # Formato ya traducido (hoja "Data Reclamos" del Reporte diario)
+    name, df = find_sheet(xl, ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha"])
+    if df is not None:
+        return df
+
+    # Formato crudo del sistema de reclamos
+    raw_cols = ["displayId", "typeName", "orderCommerceSequentialId", "storeName", "statusName", "dateCreated"]
+    name, raw = find_sheet(xl, raw_cols)
+    if raw is None:
+        if required:
+            st.error(
+                "No encontré una hoja con las columnas esperadas de Reclamos "
+                "(Reclamo/Pedido/Tienda/Tipo/Estado/Fecha, o el export crudo con "
+                "displayId/typeName/orderCommerceSequentialId/storeName/statusName/dateCreated) "
+                "en el archivo subido."
+            )
+        return None
+
+    raw = raw[raw["typeName"].apply(norm_txt).str.lower().str.contains("reclamo", na=False)].copy()
+    return pd.DataFrame({
+        "Reclamo": raw["displayId"].apply(norm_txt),
+        # norm_codigo (no int() a secas): la mayoría son ids numéricos, pero
+        # algunos pedidos con más de un reclamo vienen con sufijo, ej.
+        # "11404682-1", y forzar int() ahí rompía toda la carga.
+        "Pedido": raw["orderCommerceSequentialId"].apply(norm_codigo),
+        "Tienda": raw["storeName"].apply(norm_txt),
+        "Tipo": raw["typeName"].apply(norm_txt),
+        "Estado": raw["statusName"].apply(norm_txt),
+        "Fecha": pd.to_datetime(raw["dateCreated"], format="%d/%m/%Y %H:%M:%S", errors="coerce"),
+    })
+
+def load_reclamos(uploaded_file):
+    return load_reclamos_from_xl(safe_open_excel(uploaded_file))
 
 def money(v):
-    """Mismo formato que el resto del dashboard: número completo debajo del
-    millón (ej. $213.945), 'M' entre 1 millón y 999 millones, 'MM' de ahí
-    en más."""
     try:
         v = float(v)
     except (TypeError, ValueError):
         return "$0"
-    av = abs(v)
-    if av < 1_000_000:
-        return f"${v:,.0f}".replace(",", ".")
-    if av < 1_000_000_000 and round(av / 1_000_000, 3) < 1000:
-        txt = f"${v/1_000_000:,.3f} M"
-    else:
-        txt = f"${v/1_000_000_000:,.3f} MM"
-    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"${v:,.0f}".replace(",", ".")
 
-def intfmt(v):
-    return f"{int(round(v)):,}".replace(",", ".")
+def pct1(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    return f"{v:.1f}%".replace(".", ",")
 
-#  El archivo "Vs de ventas" trae una fila por DÍA y por TIENDA, con el
-#  valor de ESE día puntual (no acumulado) — más arriba ya sumamos todas
-#  las tiendas por fecha (el "df" de acá es uno-fila-por-día). Por eso para
-#  sumar un rango de fechas alcanza con filtrar esas filas y sumarlas
-#  directo, sin restar nada.
+def badge(level, label):
+    icons = {"good": "●", "notice": "●", "warning": "▲", "serious": "▲", "critical": "✕", "neutral": "●"}
+    return f'<span class="badge {level}">{icons.get(level,"●")} {label}</span>'
 
-def suma_rango(desde_ts, hasta_ts):
-    sub = df[(df["date"] >= desde_ts) & (df["date"] <= hasta_ts)]
-    if sub.empty:
-        return None
-    return {
-        "orders": sub["orders"].sum(),
-        "ecommerce_tax": sub["ecommerce_tax"].sum(),
-        "units": sub["units"].sum(),
-        "company_tax": sub["company_tax"].sum(),
-    }
+_TABLE_HTML_MAX_FILAS = 500
 
-def _mismo_dia_año_pasado(ts):
-    try:
-        return ts.replace(year=ts.year - 1)
-    except ValueError:
-        # 29 de febrero sin equivalente el año anterior
-        return ts.replace(year=ts.year - 1, day=28)
+def table_html(df, max_filas=_TABLE_HTML_MAX_FILAS):
+    """Tabla de detalle, con el estilo .dashtable en vez del default de pandas.
+    Va envuelta en un contenedor con scroll horizontal para que en el celular,
+    si la tabla no entra en el ancho de la pantalla, se pueda desplazar en vez
+    de romper el diseño de la página.
 
-rango_desde_ts = pd.Timestamp(rango_desde)
-rango_hasta_ts = pd.Timestamp(rango_hasta)
-tot_rango_cur = suma_rango(rango_desde_ts, rango_hasta_ts) or {
-    "orders": 0, "ecommerce_tax": 0, "units": 0, "company_tax": 0
-}
-pedidos_cur = tot_rango_cur["orders"]
-venta_cur = tot_rango_cur["ecommerce_tax"]
-unidades_cur = tot_rango_cur["units"]
-ticket_cur = (venta_cur / pedidos_cur) if pedidos_cur else 0
+    Tope de filas: generar una tabla HTML con varios miles de filas (ej. un
+    archivo con un problema de datos que infla "sin mover +72h" a 28 mil
+    pedidos, o Cancelados con 6 mil+) puede llegar a trabar el navegador por
+    completo ("la página no responde"). Como estas tablas siempre vienen ya
+    ordenadas por lo más urgente/reciente antes de llamar a table_html, cortar
+    acá deja ver siempre lo más relevante primero."""
+    total = len(df)
+    truncado = total > max_filas
+    if truncado:
+        df = df.head(max_filas)
+    inner = df.to_html(escape=False, index=False, classes="dashtable", border=0)
+    aviso = (
+        f'<div style="padding:8px 4px;color:#9ca3af;font-size:12px;">'
+        f'Mostrando los primeros {max_filas:,} de {total:,} registros — '
+        'usá los filtros de arriba (tienda, mes, estado) para acotar.</div>'.replace(",", ".")
+        if truncado else ""
+    )
+    return f'<div class="table-scroll">{inner}</div>{aviso}'
 
-rango_desde_prev_ts = _mismo_dia_año_pasado(rango_desde_ts)
-rango_hasta_prev_ts = _mismo_dia_año_pasado(rango_hasta_ts)
-tot_rango_prev = suma_rango(rango_desde_prev_ts, rango_hasta_prev_ts)
-hay_prev = tot_rango_prev is not None
-if hay_prev:
-    pedidos_prev = tot_rango_prev["orders"]
-    venta_prev = tot_rango_prev["ecommerce_tax"]
-    unidades_prev = tot_rango_prev["units"]
-else:
-    pedidos_prev = venta_prev = unidades_prev = 0
-ticket_prev = (venta_prev / pedidos_prev) if pedidos_prev else 0
+def kpi_card(label, value, sub, cls=""):
+    return f"""
+    <div class="kpi {cls}">
+      <div class="label">{label}</div>
+      <div class="value">{value}</div>
+      <div class="sub">{sub}</div>
+    </div>
+    """
 
-_es_un_solo_dia = rango_desde_ts == rango_hasta_ts
-
-if _es_un_solo_dia:
-    rango_label_cur = rango_desde_ts.strftime('%d/%m/%Y')
-    rango_label_prev = rango_desde_prev_ts.strftime('%d/%m/%Y')
-else:
-    rango_label_cur = f"{rango_desde_ts.strftime('%d/%m/%Y')} al {rango_hasta_ts.strftime('%d/%m/%Y')}"
-    rango_label_prev = f"{rango_desde_prev_ts.strftime('%d/%m/%Y')} al {rango_hasta_prev_ts.strftime('%d/%m/%Y')}"
-col_cur_label = rango_label_cur
-col_prev_label = rango_label_prev if hay_prev else f"{rango_label_prev} (sin datos)"
-comparar_vs_year = f"{rango_desde_prev_ts.year}"
-comparar_vs_sub = f"mismo día {rango_desde_prev_ts.year}" if _es_un_solo_dia else f"mismo rango {rango_desde_prev_ts.year}"
-if _es_un_solo_dia:
-    periodo_val_label = "Día puntual"
-    periodo_small_label = f"Datos del {rango_desde_ts.strftime('%d/%m')} vs. mismo día {rango_desde_prev_ts.year}"
-else:
-    periodo_val_label = "Rango acumulado"
-    periodo_small_label = f"Datos acumulados del {rango_desde_ts.strftime('%d/%m')} al {rango_hasta_ts.strftime('%d/%m')}"
-
-def delta_badge(v, is_money=False):
-    if not hay_prev:
-        return (
-            '<div class="kpi-delta-line neutral">'
-            f'<span class="kpi-delta">Sin datos de {comparar_vs_year} para comparar</span>'
-            '</div>'
+def resumen_table_html(agg, label_col, col_formatters, total_label="Total general"):
+    """Tabla resumen tipo tabla dinámica de Excel: una fila por tienda + una fila
+    de 'Total general' resaltada al pie. col_formatters: {columna: función de formato}."""
+    cols = list(col_formatters.keys())
+    thead = "".join(f"<th>{c}</th>" for c in [label_col] + cols)
+    body_rows = []
+    for _, r in agg.iterrows():
+        tds = f"<td>{r[label_col]}</td>" + "".join(
+            f"<td>{col_formatters[c](r[c])}</td>" for c in cols
         )
-    cls = "positive" if v >= 0 else "negative"
-    arrow = "▲" if v >= 0 else "▼"
-    sign = "+" if v >= 0 else "−"
-    body = money(abs(v))[1:] if is_money else intfmt(abs(v))
+        body_rows.append(f"<tr>{tds}</tr>")
+    total_tds = f"<td>{total_label}</td>" + "".join(
+        f"<td>{col_formatters[c](agg[c].sum())}</td>" for c in cols
+    )
+    body_rows.append(f'<tr class="total-row">{total_tds}</tr>')
+    inner = (
+        '<table class="dashtable"><thead><tr>' + thead + '</tr></thead>'
+        '<tbody>' + "".join(body_rows) + '</tbody></table>'
+    )
+    return f'<div class="table-scroll">{inner}</div>'
+
+def export_section_html(section_title, section_desc, body_html):
+    """Arma un HTML standalone (con el mismo look del panel) para descargar una sección sola."""
+    corte_html = ""
+    if now_ref is not None:
+        corte_html = (
+            '<div class="hero-date">Fecha de corte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y")}</small></div>'
+        )
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MásOnline · {section_title}</title>
+<style>
+{APP_CSS}
+body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }}
+.wrap {{ max-width: 1400px; margin: 0 auto; padding: 0 20px 28px; }}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div>
+    {brand_html}
+    <div class="hero-sub">ALERTAS OPERATIVAS</div>
+  </div>
+  {corte_html}
+</div>
+<div class="wrap">
+<div class="section">{section_title}</div>
+<div class="section-desc">{section_desc}</div>
+{body_html}
+</div>
+</body>
+</html>"""
+
+def section_download_button(html_doc, filename, key):
+    st.download_button(
+        "⬇️ Descargar esta sección (HTML)",
+        data=html_doc.encode("utf-8"),
+        file_name=filename,
+        mime="text/html",
+        key=key,
+    )
+
+# ---- severity rules (same thresholds as el Pulso Operativo VMont) ----
+
+def sev_pedido_72h(dias):
+    if dias >= 10:
+        return "critical", "Crítico"
+    if dias >= 6:
+        return "serious", "Grave"
+    if dias >= 3:
+        return "warning", "Atención"
+    return "notice", "48-72hs"
+
+def sev_reclamo(horas, estado):
+    if estado in ("Cerrado", "No aplica-Anulado"):
+        return "neutral", estado
+    if horas > 72:
+        return "critical", ">72h sin acción"
+    if horas >= 24:
+        return "warning", "24–72h"
+    return "good", "<24h"
+
+# ---------------------------------------------------------------------
+# HTML de cada sección, generado antes que las tarjetas KPI para poder
+# linkearlas directo (clickear la tarjeta baja el HTML de esa sección).
+# ---------------------------------------------------------------------
+
+def _body_pedidos(pedidos_f):
+    if pedidos_f is None or not len(pedidos_f):
+        return None
+    show = pedidos_f.copy().sort_values("Dias", ascending=False)
+    show["Días"] = show["Dias"].round(1)
+    show["Monto"] = show["MontoNum"].apply(money)
+    show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    detail_cols = ["Pedido", "Tienda", "Estado", "Fecha", "Días", "Monto", "Urgencia"]
+    agg = pedidos_f.groupby("Tienda").agg(
+        Cantidad=("Pedido", "count")
+    ).reset_index().sort_values("Cantidad", ascending=False)
+    top10 = agg.head(10)[["Tienda", "Cantidad"]]
+    top10_html = resumen_table_html(
+        top10, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
+    )
     return (
-        f'<div class="kpi-delta-line {cls}">'
-        f'<span class="kpi-delta">{arrow} {sign} {body}</span>'
-        f'<div class="sub">vs {comparar_vs_sub}</div>'
-        '</div>'
+        '<div class="resumen-title">Top 10 tiendas con más pedidos +48hs</div>' + top10_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle de pedidos</div>'
+        + table_html(show[detail_cols])
     )
 
-d_pedidos = pedidos_cur - pedidos_prev
-d_venta = venta_cur - venta_prev
-d_unidades = unidades_cur - unidades_prev
-d_ticket = ticket_cur - ticket_prev
-
-prev_pedidos_txt = intfmt(pedidos_prev) if hay_prev else "—"
-prev_venta_txt = money(venta_prev) if hay_prev else "—"
-prev_unidades_txt = intfmt(unidades_prev) if hay_prev else "—"
-prev_ticket_txt = money(ticket_prev) if hay_prev else "—"
-
-kpis_html = f"""
-<div class="kpi-row">
-  <div class="kpi-card">
-    <div class="kpi-icon blue">🛒</div>
-    <div class="kpi-label">Pedidos Facturados</div>
-    <div class="kpi-value">{intfmt(pedidos_cur)}</div>
-    <div>{delta_badge(d_pedidos, is_money=False)}</div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-icon red">💰</div>
-    <div class="kpi-label">Venta Ecommerce (con impuesto)</div>
-    <div class="kpi-value">{money(venta_cur)}</div>
-    <div>{delta_badge(d_venta, is_money=True)}</div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-icon green">📦</div>
-    <div class="kpi-label">Unidades</div>
-    <div class="kpi-value">{intfmt(unidades_cur)}</div>
-    <div>{delta_badge(d_unidades, is_money=False)}</div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-icon orange">🏷️</div>
-    <div class="kpi-label">Ticket promedio</div>
-    <div class="kpi-value">{money(ticket_cur)}</div>
-    <div>{delta_badge(d_ticket, is_money=True)}</div>
-  </div>
-</div>
-"""
-
-table_html = f"""
-<div class="cmp-table-wrap">
-<div class="table-scroll">
-<table class="cmp-table">
-  <thead>
-    <tr>
-      <th>Indicador</th>
-      <th>{col_cur_label}</th>
-      <th>{col_prev_label}</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(pedidos_cur)}</td><td>{prev_pedidos_txt}</td></tr>
-    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(venta_cur)}</td><td>{prev_venta_txt}</td></tr>
-    <tr><td>📦 Unidades</td><td>{intfmt(unidades_cur)}</td><td>{prev_unidades_txt}</td></tr>
-    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_cur)}</td><td>{prev_ticket_txt}</td></tr>
-  </tbody>
-</table>
-</div>
-</div>
-"""
-
-footnote_html = (
-    '<div style="color:#000000;font-size:11px;margin-top:14px;">'
-    f'"{col_prev_label}" toma el mismo rango de fechas (día y mes) un año antes, '
-    'para que la comparación sea pareja.'
-    '</div>'
-)
-
-# ---------------------------------------------------------------------
-# Primer fin de semana del mes: Viernes + Sábado + Domingo de la primera
-# semana completa del mes, comparado con el mismo fin de semana (primer
-# finde de ese mismo mes) del año anterior. El archivo trae el valor de
-# CADA día puntual (no acumulado), así que alcanza con sumar esos 3 días.
-# ---------------------------------------------------------------------
-
-def primer_finde_fechas(year, month):
-    d1 = pd.Timestamp(year=year, month=month, day=1)
-    offset = (4 - d1.weekday()) % 7  # 4 = viernes
-    friday = d1 + pd.Timedelta(days=offset)
-    saturday = friday + pd.Timedelta(days=1)
-    sunday = friday + pd.Timedelta(days=2)
-    return friday, saturday, sunday
-
-def finde_acumulado(year, month):
-    """Totales (venta, pedidos, unidades, facturación) del primer fin de
-    semana de ese mes/año — o None si los datos cargados todavía no
-    llegan a esa fecha (no hay fila para el domingo)."""
-    friday, saturday, sunday = primer_finde_fechas(year, month)
-    if df[df["date"] == sunday].empty:
+def html_doc_pedidos(pedidos_f):
+    body = _body_pedidos(pedidos_f)
+    if body is None:
         return None
-    sub = df[df["date"].isin([friday, saturday, sunday])]
-    totales = {col: sub[col].sum() for col in ["ecommerce_tax", "orders", "units", "company_tax"]}
-    return friday, sunday, totales
+    return export_section_html(
+        "📦 Pedidos sin movimiento (48hs+)",
+        "Pedidos que llevan 48hs o más en el mismo estado sin avanzar — "
+        "separados en 48–72hs (aviso temprano) y +72hs (crítico).",
+        body
+    )
 
-finde_cur = finde_acumulado(cur_year, cur_month)
-finde_prev = finde_acumulado(cur_year - 1, cur_month)
-
-if finde_cur is None:
-    _friday_cur, _, _ = primer_finde_fechas(cur_year, cur_month)
-    finde_section_html = f"""
-<div class="section" style="margin-top:30px;">Primer fin de semana de {mes_nombre}</div>
-<div style="background:white;border:1px solid #e8ebef;border-radius:12px;padding:12px 16px;color:#000000;font-size:13px;">
-  Todavía no llegamos al primer fin de semana de {mes_nombre} {cur_year}
-  (arranca el viernes {_friday_cur.strftime('%d/%m')}).
-</div>
-"""
-else:
-    friday_cur, sunday_cur, tot_cur = finde_cur
-    label_finde_cur = f"{friday_cur.strftime('%d/%m')} al {sunday_cur.strftime('%d/%m')}"
-    ticket_finde_cur = (tot_cur["ecommerce_tax"] / tot_cur["orders"]) if tot_cur["orders"] else 0
-
-    if finde_prev is not None:
-        friday_prev, sunday_prev, tot_prev = finde_prev
-        label_finde_prev = f"{friday_prev.strftime('%d/%m')} al {sunday_prev.strftime('%d/%m')} ({cur_year - 1})"
-        ticket_finde_prev = (tot_prev["ecommerce_tax"] / tot_prev["orders"]) if tot_prev["orders"] else 0
-        prev_pedidos_finde_txt = intfmt(tot_prev["orders"])
-        prev_venta_finde_txt = money(tot_prev["ecommerce_tax"])
-        prev_unidades_finde_txt = intfmt(tot_prev["units"])
-        prev_ticket_finde_txt = money(ticket_finde_prev)
-    else:
-        label_finde_prev = f"Primer finde {mes_nombre} {cur_year - 1} (sin datos)"
-        prev_pedidos_finde_txt = prev_venta_finde_txt = prev_unidades_finde_txt = prev_ticket_finde_txt = "—"
-
-    finde_table_html = f"""
-<div class="cmp-table-wrap">
-<div class="table-scroll">
-<table class="cmp-table">
-  <thead>
-    <tr>
-      <th>Indicador</th>
-      <th>{label_finde_cur}</th>
-      <th>{label_finde_prev}</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(tot_cur["orders"])}</td><td>{prev_pedidos_finde_txt}</td></tr>
-    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(tot_cur["ecommerce_tax"])}</td><td>{prev_venta_finde_txt}</td></tr>
-    <tr><td>📦 Unidades</td><td>{intfmt(tot_cur["units"])}</td><td>{prev_unidades_finde_txt}</td></tr>
-    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_finde_cur)}</td><td>{prev_ticket_finde_txt}</td></tr>
-  </tbody>
-</table>
-</div>
-</div>
-"""
-    finde_section_html = f"""
-<div class="section" style="margin-top:30px;">Primer fin de semana de {mes_nombre}</div>
-<div class="section-desc">Viernes + sábado + domingo de la primera semana completa del mes, comparado con el mismo fin de semana de {cur_year - 1}.</div>
-{finde_table_html}
-"""
-
-# ---------------------------------------------------------------------
-# Último fin de semana cerrado (el más reciente con datos cargados, no
-# necesariamente el primero del mes) comparado con el mismo fin de semana
-# —el mismo número de fin de semana dentro del mes— del año anterior.
-# El archivo trae el valor de cada día puntual, así que alcanza con sumar.
-# ---------------------------------------------------------------------
-
-def finde_totales(friday, saturday, sunday):
-    """Totales de un viernes/sábado/domingo puntuales — o None si ninguno
-    de los tres tiene datos cargados."""
-    sub = df[df["date"].isin([friday, saturday, sunday])]
-    if sub.empty:
+def _body_reclamos(reclamos_f):
+    if reclamos_f is None or not len(reclamos_f):
         return None
-    return {col: sub[col].sum() for col in ["ecommerce_tax", "orders", "units", "company_tax"]}
-
-def nth_finde_fechas(year, month, n):
-    friday1, _, _ = primer_finde_fechas(year, month)
-    friday = friday1 + pd.Timedelta(weeks=n - 1)
-    return friday, friday + pd.Timedelta(days=1), friday + pd.Timedelta(days=2)
-
-_ultima_fecha_cargada = df["date"].max()
-_dias_desde_sabado = (_ultima_fecha_cargada.weekday() - 5) % 7  # Monday=0 ... Saturday=5, Sunday=6
-ultimo_sabado = _ultima_fecha_cargada - pd.Timedelta(days=_dias_desde_sabado)
-ultimo_viernes = ultimo_sabado - pd.Timedelta(days=1)
-ultimo_domingo = ultimo_sabado + pd.Timedelta(days=1)
-
-_primer_viernes_ese_mes, _, _ = primer_finde_fechas(ultimo_viernes.year, ultimo_viernes.month)
-n_ultimo_finde = int(round((ultimo_viernes - _primer_viernes_ese_mes).days / 7)) + 1
-mes_ultimo_finde = MESES_ES.get(ultimo_viernes.month, "").capitalize()
-
-friday_up, saturday_up, sunday_up = nth_finde_fechas(
-    ultimo_viernes.year - 1, ultimo_viernes.month, n_ultimo_finde
-)
-
-tot_ultimo = finde_totales(ultimo_viernes, ultimo_sabado, ultimo_domingo)
-tot_ultimo_prev = finde_totales(friday_up, saturday_up, sunday_up)
-
-label_ultimo = f"{ultimo_viernes.strftime('%d/%m')} al {ultimo_domingo.strftime('%d/%m')}"
-ticket_ultimo = (tot_ultimo["ecommerce_tax"] / tot_ultimo["orders"]) if tot_ultimo["orders"] else 0
-
-if tot_ultimo_prev is not None:
-    label_ultimo_prev = f"{friday_up.strftime('%d/%m')} al {sunday_up.strftime('%d/%m')} ({ultimo_viernes.year - 1})"
-    ticket_ultimo_prev = (tot_ultimo_prev["ecommerce_tax"] / tot_ultimo_prev["orders"]) if tot_ultimo_prev["orders"] else 0
-    prev_pedidos_ultimo_txt = intfmt(tot_ultimo_prev["orders"])
-    prev_venta_ultimo_txt = money(tot_ultimo_prev["ecommerce_tax"])
-    prev_unidades_ultimo_txt = intfmt(tot_ultimo_prev["units"])
-    prev_ticket_ultimo_txt = money(ticket_ultimo_prev)
-else:
-    label_ultimo_prev = f"Mismo finde {ultimo_viernes.year - 1} (sin datos)"
-    prev_pedidos_ultimo_txt = prev_venta_ultimo_txt = prev_unidades_ultimo_txt = prev_ticket_ultimo_txt = "—"
-
-ultimo_finde_table_html = f"""
-<div class="cmp-table-wrap">
-<div class="table-scroll">
-<table class="cmp-table">
-  <thead>
-    <tr>
-      <th>Indicador</th>
-      <th>{label_ultimo}</th>
-      <th>{label_ultimo_prev}</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>🛒 Pedidos facturados</td><td>{intfmt(tot_ultimo["orders"])}</td><td>{prev_pedidos_ultimo_txt}</td></tr>
-    <tr><td>💰 Venta Ecommerce (con impuesto)</td><td>{money(tot_ultimo["ecommerce_tax"])}</td><td>{prev_venta_ultimo_txt}</td></tr>
-    <tr><td>📦 Unidades</td><td>{intfmt(tot_ultimo["units"])}</td><td>{prev_unidades_ultimo_txt}</td></tr>
-    <tr><td>🏷️ Ticket promedio</td><td>{money(ticket_ultimo)}</td><td>{prev_ticket_ultimo_txt}</td></tr>
-  </tbody>
-</table>
-</div>
-</div>
-"""
-ultimo_finde_section_html = f"""
-<div class="section" style="margin-top:30px;">Último fin de semana</div>
-<div class="section-desc">Viernes + sábado + domingo del fin de semana más reciente ya cerrado, comparado con ese mismo fin de semana (el fin de semana n.º {n_ultimo_finde} del mes) de {mes_ultimo_finde} {ultimo_viernes.year - 1}.</div>
-{ultimo_finde_table_html}
-"""
-
-# ---------------------------------------------------------------------
-# Día a día: de lunes a viernes, una fila por día (misma fecha del mes —
-# día 1, 2, 3...— de este año vs el mismo día del mes del año anterior).
-# Sábado y domingo, en cambio, se funden en una sola fila (el sábado se
-# muestra junto con el domingo siguiente, igual que ya hace "Venta fin de
-# semana") — el domingo nunca aparece como fila propia. Qué días forman
-# cada "finde" se decide por el calendario del año EN CURSO (según cuándo
-# cae el fin de semana este año); la comparación contra el año anterior
-# sigue siendo por número de día del mes (no por día de la semana), así
-# que el grupo "día 4 y 5" de este año se compara contra la suma de los
-# días 4 y 5 del año anterior, caigan en el día de la semana que caigan.
-# El archivo ya trae el valor de CADA día puntual (no acumulado), así que
-# se usa directo, sin restar nada.
-# ---------------------------------------------------------------------
-
-_DIA_A_DIA_COLS = ["dia", "ecommerce_tax", "orders", "units", "company_tax"]
-
-def dia_a_dia(year, month):
-    sub = df[(df["date"].dt.year == year) & (df["date"].dt.month == month)].sort_values("date").copy()
-    if sub.empty:
-        # Importante: devolver siempre estas columnas (aunque vacío), porque
-        # más abajo se hace un merge(on="dia", ...) entre dia_cur y dia_prev.
-        # Si alguno de los dos meses no tiene datos (ej. el archivo todavía no
-        # trae el mes anterior), un DataFrame vacío SIN la columna "dia"
-        # rompía ese merge con un KeyError.
-        return pd.DataFrame(columns=_DIA_A_DIA_COLS)
-    sub["dia"] = sub["date"].dt.day
-    return sub[_DIA_A_DIA_COLS]
-
-dia_cur_full = dia_a_dia(cur_year, cur_month)
-dia_prev_full = dia_a_dia(cur_year - 1, cur_month)
-
-def _grupos_dia_a_dia(year, month, hasta_dia):
-    """Lista de (dias_del_grupo, es_finde) para un mes, agrupando sábado +
-    domingo (según el calendario de ESE año) en un solo grupo y dejando
-    lunes a viernes como grupos de un día. Un grupo entra en la lista
-    apenas arrancó (su primer día es <= hasta_dia), aunque el segundo día
-    del finde todavía no haya llegado (se suma como 0 hasta que llegue,
-    igual que en Venta fin de semana)."""
-    dias_en_mes = calendar.monthrange(year, month)[1]
-    grupos = []
-    dia = 1
-    while dia <= dias_en_mes:
-        weekday = pd.Timestamp(year=year, month=month, day=dia).weekday()  # Lunes=0 ... Domingo=6
-        if weekday == 5 and dia + 1 <= dias_en_mes:  # Sábado seguido de domingo
-            dias_grupo = [dia, dia + 1]
-            dia += 2
-        else:
-            dias_grupo = [dia]
-            dia += 1
-        if dias_grupo[0] > hasta_dia:
-            break
-        grupos.append((dias_grupo, weekday == 5))
-    return grupos
-
-grupos_cur = _grupos_dia_a_dia(cur_year, cur_month, n)
-
-def _suma_grupo(dia_df, dias_grupo):
-    sub = dia_df[dia_df["dia"].isin(dias_grupo)]
-    if sub.empty:
+    abiertos_todos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+    if not len(abiertos_todos):
         return None
+    # Toda esta sección es "Reclamos operativos": solo cuenta los reclamos
+    # clasificados como Operativos (problema del sector Ecom). Los No
+    # operativos (ej. "Devolución no aplicada FISERV", "Problema sitio web")
+    # no entran en ningún lado de esta sección — ni en el detalle, ni en los
+    # rankings, ni en los totales.
+    abiertos = abiertos_todos[abiertos_todos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+    if not len(abiertos):
+        return None
+    show = abiertos.copy().sort_values("Horas", ascending=False)
+    show["Horas"] = show["Horas"].round(1)
+    show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+    detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
+
+    # "Top 5 tiendas" sin los reclamos que no tienen tienda asociada (no
+    # corresponde sumarlos en un ranking por tienda).
+    agg = abiertos[abiertos["Tienda"] != ""].groupby("Tienda").apply(lambda g: pd.Series({
+        "Cantidad": len(g),
+        ">72h": int((g["Horas"] > 72).sum()),
+        "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
+    })).reset_index().sort_values("Cantidad", ascending=False).head(5)
+    resumen_html = resumen_table_html(
+        agg, "Tienda",
+        {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
+    )
+    agg_tipo = abiertos.groupby("Tipo").agg(
+        Cantidad=("Pedido", "count")
+    ).reset_index().sort_values("Cantidad", ascending=False).head(5)
+    resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
+    return (
+        '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos (abiertos)</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Top 5 reclamos Operativos (abiertos)</div>' + resumen_tipo_html
+        + '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(show[detail_cols])
+    )
+
+def html_doc_reclamos(reclamos_f):
+    body = _body_reclamos(reclamos_f)
+    if body is None:
+        return None
+    return export_section_html(
+        "🗣️ Reclamos operativos",
+        "Franjas de alerta: 24hs y 72hs sin acción.",
+        body
+    )
+
+def cancelados_bundle(can_f):
+    """Arma el Top 10 de tiendas con más cancelados, el resumen completo por
+    tienda y el detalle pedido a pedido, para la sección y para el HTML."""
+    if can_f is None or not len(can_f):
+        return None
+    agg = can_f.groupby("Tienda").agg(
+        Cancelados=("Pedido", "count"), Monto=("Total $", "sum")
+    ).reset_index().sort_values("Cancelados", ascending=False)
+
+    top10 = agg.head(10)[["Tienda", "Cancelados"]]
+    top10_html = resumen_table_html(
+        top10, "Tienda", {"Cancelados": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
+    )
+
+    resumen_html = resumen_table_html(agg, "Tienda", {"Cancelados": lambda v: f"{int(v)}", "Monto": money})
+
+    det = can_f.copy().sort_values("Fecha", ascending=False)
+    det["Total $"] = det["Total $"].apply(money)
+    detail_cols = ["Pedido", "Tienda", "Fecha", "Total $"]
+
+    body = (
+        '<div class="resumen-title">Top 10 tiendas con más cancelados</div>' + top10_html +
+        '<div class="resumen-title" style="margin-top:18px;">Resumen completo por tienda</div>' + resumen_html +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(det[detail_cols])
+    )
+    html_doc = export_section_html(
+        "🚫 Pedidos cancelados",
+        "Cancelaciones por tienda en el período del reporte.",
+        body
+    )
     return {
-        "ecommerce_tax": sub["ecommerce_tax"].sum(),
-        "orders": sub["orders"].sum(),
-        "units": sub["units"].sum(),
-        "company_tax": sub["company_tax"].sum(),
+        "agg": agg, "top10_html": top10_html, "resumen_html": resumen_html,
+        "det": det, "detail_cols": detail_cols, "html_doc": html_doc, "body": body,
     }
 
-def variacion_html(v):
-    if v is None:
-        return '<span style="color:#6b7280;">—</span>'
-    cls = "#208653" if v >= 0 else "#d64545"
-    arrow = "▲" if v >= 0 else "▼"
-    sign = "+" if v >= 0 else "−"
-    return f'<span style="color:{cls};font-weight:700;">{arrow} {sign}{abs(v) * 100:.1f}%</span>'
+def html_doc_cancelados(can_f):
+    b = cancelados_bundle(can_f)
+    return b["html_doc"] if b else None
 
-def _label_grupo(dias_grupo, es_finde):
-    if es_finde:
-        return f"{dias_grupo[0]} y {dias_grupo[1]} (finde)"
-    return str(dias_grupo[0])
+def _body_faltantes(falt_f):
+    if falt_f is None or not len(falt_f):
+        return None
+    show = falt_f.copy().sort_values(["Tienda", "Producto"])
+    show["Fecha"] = show["FechaArchivo"].dt.strftime("%d/%m/%Y")
+    show["Cantidad Faltante"] = show["CantidadFaltante"].apply(lambda v: f"{int(v)}")
+    detail_cols = ["Fecha", "Tienda", "Producto", "Cantidad Faltante"]
 
-dia_rows_html = ""
-for dias_grupo, es_finde in grupos_cur:
-    tot_cur_dia = _suma_grupo(dia_cur_full, dias_grupo) or {
-        "ecommerce_tax": 0, "orders": 0, "units": 0, "company_tax": 0
-    }
-    tot_prev_dia = _suma_grupo(dia_prev_full, dias_grupo)
-    hay_prev_dia = tot_prev_dia is not None
-    venta_prev_txt = money(tot_prev_dia["ecommerce_tax"]) if hay_prev_dia else "—"
-    variacion = (
-        (tot_cur_dia["ecommerce_tax"] / tot_prev_dia["ecommerce_tax"] - 1)
-        if hay_prev_dia and tot_prev_dia["ecommerce_tax"] else None
-    )
-    dia_rows_html += (
-        '<tr style="border-top:1px solid #f1f3f5;">'
-        f'<td style="padding:10px 16px;color:#000000;font-weight:700;">{_label_grupo(dias_grupo, es_finde)}</td>'
-        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{money(tot_cur_dia["ecommerce_tax"])}</td>'
-        f'<td style="padding:10px 16px;color:#000000;text-align:center;">{venta_prev_txt}</td>'
-        f'<td style="padding:10px 16px;text-align:center;">{variacion_html(variacion)}</td>'
-        '</tr>'
+    agg_tienda = falt_f.groupby("Tienda", as_index=False).agg(
+        CantidadFaltante=("CantidadFaltante", "sum")
+    ).sort_values("CantidadFaltante", ascending=False)
+    resumen_tienda_html = resumen_table_html(
+        agg_tienda, "Tienda", {"CantidadFaltante": lambda v: f"{int(v)}"}
     )
 
-if dia_rows_html:
-    dia_table_html = f"""
-<div class="cmp-table-wrap">
-<div class="table-scroll">
-<table class="cmp-table">
-  <thead>
-    <tr>
-      <th>Día</th>
-      <th>{mes_nombre} {cur_year}</th>
-      <th>{mes_nombre} {cur_year - 1}</th>
-      <th>Variación</th>
-    </tr>
-  </thead>
-  <tbody>{dia_rows_html}</tbody>
-</table>
+    agg_producto = falt_f.groupby("Producto", as_index=False).agg(
+        CantidadFaltante=("CantidadFaltante", "sum")
+    ).sort_values("CantidadFaltante", ascending=False).head(15)
+    agg_producto = agg_producto.rename(columns={"CantidadFaltante": "Cantidad faltante"})
+    agg_producto["Cantidad faltante"] = agg_producto["Cantidad faltante"].apply(lambda v: f"{int(v)}")
+
+    return (
+        '<div class="resumen-title">Resumen por tienda</div>' + resumen_tienda_html +
+        '<div class="resumen-title" style="margin-top:18px;">Top productos que más faltan</div>'
+        + table_html(agg_producto) +
+        '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+        + table_html(show[detail_cols])
+    )
+
+def html_doc_faltantes(falt_f):
+    body = _body_faltantes(falt_f)
+    if body is None:
+        return None
+    return export_section_html(
+        "📉 Faltantes ECOM",
+        "Unidades faltantes por tienda y producto, según el Reporte de Faltantes mensual.",
+        body
+    )
+
+def export_full_report_html(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
+    """Arma un único HTML con las tarjetas KPI de arriba + todas las secciones
+    que tengan datos cargados, para bajar de un solo golpe y mandarlo
+    (ej. por WhatsApp/mail al jefe)."""
+    can_b = cancelados_bundle(can_f)
+    sections = [
+        ("📦 Pedidos sin movimiento +72hs", "Pedidos que llevan más de 3 días en el mismo estado sin avanzar.", _body_pedidos(pedidos_f)),
+        ("🗣️ Reclamos operativos", "Franjas de alerta: 24hs y 72hs sin acción.", _body_reclamos(reclamos_f)),
+        ("🚫 Pedidos cancelados", "Cancelaciones por tienda en el período del reporte.", can_b["body"] if can_b else None),
+        ("📉 Faltantes ECOM", "Unidades faltantes por tienda y producto, según el Reporte de Faltantes mensual.", _body_faltantes(falt_f)),
+    ]
+    sections = [(title, desc, body) for title, desc, body in sections if body]
+    if not sections:
+        return None
+
+    kpis = build_kpis(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=filtro_activo, pickers_f=pickers_f)
+    kpi_row_html = f'<div class="kpi-row">{"".join(kpis)}</div>' if kpis else ""
+
+    corte_html = ""
+    if now_ref is not None:
+        corte_html = (
+            '<div class="hero-date">Fecha de corte<br>'
+            f'<small>{now_ref.strftime("%d/%m/%Y")}</small></div>'
+        )
+    blocks_html = "".join(
+        f'<div class="section">{title}</div><div class="section-desc">{desc}</div>{body}'
+        f'<div style="height:26px;"></div>'
+        for title, desc, body in sections
+    )
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MásOnline · Reporte Operativo Completo</title>
+<style>
+{APP_CSS}
+body {{ margin:0; background:#fafaf8; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }}
+.wrap {{ max-width: 1400px; margin: 0 auto; padding: 0 20px 28px; }}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div>
+    {brand_html}
+    <div class="hero-sub">ALERTAS OPERATIVAS — REPORTE COMPLETO</div>
+  </div>
+  {corte_html}
 </div>
+<div class="wrap">
+{kpi_row_html}
+{blocks_html}
 </div>
-"""
-else:
-    dia_table_html = (
-        '<div style="background:white;border:1px solid #e8ebef;border-radius:12px;'
-        'padding:12px 16px;color:#000000;font-size:13px;">Todavía no hay días cargados para comparar.</div>'
+</body>
+</html>"""
+
+def kpi_link_wrap(inner_html, html_doc, filename):
+    """Envuelve una tarjeta KPI en un link que descarga el HTML de esa sección al clickearla."""
+    if not html_doc:
+        return inner_html
+    b64 = base64.b64encode(html_doc.encode("utf-8")).decode("utf-8")
+    return (
+        f'<a class="kpi-link" href="data:text/html;base64,{b64}" download="{filename}" '
+        'title="Descargar esta sección como HTML">' + inner_html + '</a>'
     )
 
-dia_section_html = f"""
-<div class="section" style="margin-top:30px;">Día a día vs {cur_year - 1}</div>
-<div class="section-desc">Venta Ecommerce (con impuesto) de cada día del mes, comparada con el mismo número de día de {mes_nombre} {cur_year - 1} (no el mismo día de la semana). Sábado y domingo se suman en una sola fila; de lunes a viernes, un día por fila.</div>
-{dia_table_html}
-"""
+def build_kpis(pedidos_f, reclamos_f, can_f, falt_f, filtro_activo=False, pickers_f=None):
+    """Arma las tarjetas KPI de arriba de todo (clickeables para bajar el HTML
+    de esa sección). Se usa tanto para la fila en pantalla como para incluirlas
+    arriba del HTML combinado."""
+    kpis = []
+    if pedidos_f is not None:
+        p_72 = int((pedidos_f["Dias"] >= 3).sum())
+        p_48 = int((pedidos_f["Dias"] < 3).sum())
+        card = kpi_card(
+            "Pedidos +48h sin mover", f"{len(pedidos_f)}",
+            f"{p_72} con +72h · {p_48} entre 48–72h",
+            "crit" if p_72 > 0 else ("warn" if p_48 > 0 else "good")
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_pedidos(pedidos_f), "operativo_pedidos_72h.html"))
+    if reclamos_f is not None:
+        abiertos = reclamos_f[reclamos_f["Estado"].isin(["Nuevo", "En proceso"])]
+        # Solo Operativos: los No operativos no cuentan en esta tarjeta ni en
+        # el resto de la sección de Reclamos.
+        abiertos = abiertos[abiertos["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+        r72 = (abiertos["Horas"] > 72).sum()
+        r24 = ((abiertos["Horas"] >= 24) & (abiertos["Horas"] <= 72)).sum()
+        card = kpi_card(
+            "Reclamos Operativos abiertos", f"{len(abiertos)}",
+            f"{r72} con +72h · {r24} entre 24–72h",
+            "crit" if r72 > 0 else ("warn" if r24 > 0 else "good")
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_reclamos(reclamos_f), "operativo_reclamos.html"))
+    if can_f is not None:
+        card = kpi_card(
+            "Pedidos cancelados", f"{len(can_f)}",
+            f"{money(can_f['Total $'].sum())} totales"
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_cancelados(can_f), "operativo_cancelados.html"))
+    if falt_f is not None:
+        total_falt = int(falt_f["CantidadFaltante"].sum()) if len(falt_f) else 0
+        tiendas_afectadas = falt_f["Tienda"].nunique() if len(falt_f) else 0
+        card = kpi_card(
+            "Unidades faltantes ECOM", f"{total_falt}",
+            f"{tiendas_afectadas} tiendas afectadas" if total_falt else "",
+            "warn" if total_falt > 0 else "good"
+        )
+        kpis.append(kpi_link_wrap(card, html_doc_faltantes(falt_f), "operativo_faltantes.html"))
+    return kpis
 
 # ---------------------------------------------------------------------
-# Header
+# Header + uploaders
 # ---------------------------------------------------------------------
 
+# El logo vive en la raíz del repo; esta página está un nivel adentro (pages/).
+LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
 if LOGO_FILE.exists():
     logo_b64 = base64.b64encode(LOGO_FILE.read_bytes()).decode("utf-8")
     brand_html = (
         f'<img src="data:image/png;base64,{logo_b64}" '
-        'style="height:50px;max-width:290px;object-fit:contain;">'
+        'style="height:48px;max-width:280px;object-fit:contain;">'
     )
 else:
-    brand_html = '<div class="hero-brand">Más<span>Online</span></div>'
+    brand_html = '<div class="hero-brand">🚨 Operativo</div>'
 
 st.markdown(f"""
 <div class="hero">
   <div>
     {brand_html}
-    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
-  </div>
-  <div class="periodo-badge">
-    <div class="lbl">📅 PERÍODO</div>
-    <div class="val">{periodo_val_label}</div>
-    <small>{periodo_small_label}</small>
+    <div class="hero-sub">ALERTAS OPERATIVAS</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
+reporte_bytes = get_shared_bytes(SHARED_REPORTE_PATH)
+faltantes_bytes = get_shared_bytes(SHARED_FALTANTES_PATH)
+pedidos_bytes = get_shared_bytes(SHARED_PEDIDOS_PATH)
+reclamos_bytes = get_shared_bytes(SHARED_RECLAMOS_PATH)
+pickers_bytes = get_shared_bytes(SHARED_PICKERS_PATH)
+
+if (
+    reporte_bytes is not None or faltantes_bytes is not None or pedidos_bytes is not None
+    or reclamos_bytes is not None or pickers_bytes is not None
+):
+    st.markdown(
+        '<div style="font-size:11.5px;color:#0ca30c;font-weight:700;margin:2px 0 10px;">'
+        '● Mostrando los reportes subidos en la pestaña app — no hace falta subir nada acá.</div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown("""
+    <div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+    padding:12px 16px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+        TODAVÍA NO HAY REPORTES CARGADOS
+      </div>
+      <div style="font-size:12px;color:#6b7280;">
+        Subí "Pedidos", "Reclamos Operativos", "Pickers" y "Faltantes" en la pestaña <b>app</b>
+        (menú de la izquierda) para ver acá las alertas operativas.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------------
-# HTML descargable: copia independiente de esta pestaña (fecha elegida),
-# sin depender de Streamlit — se puede abrir en cualquier navegador o
-# mandar por mail/WhatsApp.
+# Parse each section
 # ---------------------------------------------------------------------
 
-def build_standalone_html():
-    if LOGO_FILE.exists():
-        html_logo = (
-            f'<img src="data:image/png;base64,{logo_b64}" '
-            'style="height:50px;max-width:290px;object-fit:contain;">'
+now_ref = None  # se calcula como el máximo timestamp visto en los archivos cargados
+
+xl_reporte = safe_open_excel(io.BytesIO(reporte_bytes), "Reporte diario") if reporte_bytes is not None else None
+# "Pedido" adentro del Reporte diario: se deja de requerir (required=False)
+# porque Pedidos ahora se sube en su propio archivo aparte, así que esta
+# hoja puede faltar sin que sea un error — queda solo como respaldo mientras
+# se termina de migrar.
+df_72h_raw = load_section_from_xl(xl_reporte, ["Pedido", "Tienda", "Fecha", "Estado", "Monto"], required=False)
+xl_reclamos = safe_open_excel(io.BytesIO(reclamos_bytes), "Reclamos") if reclamos_bytes is not None else None
+df_reclamos_raw = load_reclamos_from_xl(xl_reclamos)
+if df_reclamos_raw is None:
+    # Todavía no se subió el archivo nuevo de Reclamos Operativos (aparte) —
+    # por ahora seguimos leyendo la hoja vieja del Reporte diario, si está.
+    df_reclamos_raw = load_reclamos_from_xl(xl_reporte, required=False)
+df_cancelados_raw = load_cancelados_from_xl(xl_reporte, required=False)
+xl_faltantes = safe_open_excel(io.BytesIO(faltantes_bytes), "Faltantes") if faltantes_bytes is not None else None
+df_faltantes_raw = load_section_from_xl(
+    xl_faltantes,
+    ["warehouseName", "refName", "missingQuantity", "substitutedQuantity", "noSubstitutedQuantity"]
+)
+xl_pickers = safe_open_excel(io.BytesIO(pickers_bytes), "Pickers") if pickers_bytes is not None else None
+_PICKERS_COLS = ["firstName", "lastName", "warehouseRefId", "orders", "items", "performance"]
+df_picker_raw = load_section_from_xl(xl_pickers, _PICKERS_COLS, required=False)
+if df_picker_raw is None:
+    # Todavía no se subió el archivo nuevo de Pickers (aparte) — por ahora
+    # seguimos leyendo la hoja vieja "Data Picker" del Reporte diario, si está.
+    df_picker_raw = load_section_from_xl(xl_reporte, _PICKERS_COLS, required=False)
+# El archivo de Pedidos ahora puede venir separado por mes (una hoja por
+# mes, ej. "Enero".."Octubre", en vez de una sola hoja larga, y pesar
+# varias decenas de MB) — _cargar_pedidos_completo junta todas las hojas y
+# saca duplicados, y está cacheada para no volver a abrir/parsear el
+# archivo entero en cada click (eso era lo que lo dejaba en 0 / colgado).
+df_pedidos_raw = _cargar_pedidos_completo(pedidos_bytes)
+
+candidate_times = []
+
+pedidos_72h = None
+if df_pedidos_raw is not None:
+    # Archivo nuevo de Pedidos (export "order-operation"): un pedido por
+    # fila. Lo llevamos al mismo esquema Pedido/Tienda/Fecha/Estado/Monto
+    # que ya usa el resto de esta sección, para no tocar nada más abajo.
+    d = df_pedidos_raw.copy()
+    # Excluir Pick&Mix (salesChannelPrefix = "PM") y devoluciones/RMA
+    # (commerceId con "RMA"): no son pedidos "sin mover" reales para
+    # este reporte.
+    _sales_prefix = get_col_ci(d, "salesChannelPrefix").apply(norm_txt).str.upper()
+    _commerce_id_raw = d.get("commerceId", "").apply(norm_txt).str.upper()
+    d = d[(_sales_prefix != "PM") & (~_commerce_id_raw.str.contains("RMA"))]
+    d["Pedido"] = d.get("commerceId", "").apply(norm_txt)
+    tienda_loc = d.get("shippingLocationName", "").apply(clean_shipping_location)
+    tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
+    d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
+    d["Estado"] = d.get("status", "").apply(norm_txt)
+    # "totalAmount" en este archivo es lo que paga el cliente por el ENVÍO,
+    # no el pedido en sí — a pedido de Emi, el Monto real del pedido sale de
+    # "originalAmount".
+    d["Monto"] = d.get("originalAmount").apply(parse_pedidos_monto)
+    fecha_creacion = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
+    # "Sin mover +72h" se mide contra la fecha de CREACIÓN del pedido
+    # (commerceDateCreated), a pedido de Emi: cuenta como atrasado un pedido
+    # al que ya le pasaron 72h desde que se creó y todavía no figura como
+    # entregado. Los cancelados se sacan de acá y van a la sección de
+    # Cancelados aparte (más abajo).
+    d["Fecha"] = fecha_creacion
+    # NOTA: se probó también exigir que el pedido no tuviera ninguna entrega
+    # programada (deliveryFinishDate vacío) para contar como "sin mover",
+    # pero se revirtió: casi todos los pedidos realmente viejos (de meses
+    # anteriores, que Emi confirma que siguen pendientes) YA tienen una
+    # fecha de entrega asignada (quedó agendada en su momento) aunque nunca
+    # se haya concretado — exigir que no tuvieran entrega programada los
+    # dejaba afuera por completo. Volvemos al criterio simple: no cancelado
+    # y no entregado, sin importar si tiene o no una entrega programada.
+    d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
+    d = d.dropna(subset=["Fecha"])
+    if fecha_creacion.notna().any():
+        candidate_times.append(fecha_creacion.max())
+    pedidos_72h = d[["Pedido", "Tienda", "Fecha", "Estado", "Monto"]]
+elif df_72h_raw is not None:
+    d = df_72h_raw.copy()
+    d = d[~d["Estado"].astype(str).str.lower().isin(["delivered", "canceled", "cancelled"])]
+    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+    d = d.dropna(subset=["Fecha"])
+    candidate_times.append(d["Fecha"].max())
+    pedidos_72h = d
+
+reclamos = None
+if df_reclamos_raw is not None:
+    d = df_reclamos_raw.copy()
+    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+    d = d.dropna(subset=["Fecha"])
+    candidate_times.append(d["Fecha"].max())
+    reclamos = d
+
+cancelados = None
+if df_pedidos_raw is not None:
+    # Los cancelados del archivo nuevo de Pedidos (separados de "sin
+    # mover +72h" más arriba) van a esta sección.
+    d = df_pedidos_raw.copy()
+    d = d[d.get("status", "").apply(norm_txt).str.lower().isin(["canceled", "cancelled"])].copy()
+    d["Pedido"] = d.get("commerceId", "").apply(norm_txt)
+    tienda_loc = d.get("shippingLocationName", "").apply(clean_shipping_location)
+    tienda_wh = d.get("shippingWarehouseName", "").apply(warehouse_to_tienda)
+    d["Tienda"] = tienda_loc.where(tienda_loc.astype(bool), tienda_wh)
+    d["Fecha"] = pd.to_datetime(d.get("commerceDateCreated"), errors="coerce")
+    d["Estado"] = d.get("status", "").apply(norm_txt)
+    # Mismo criterio que en "sin mover +72h" más arriba: Monto sale de
+    # "originalAmount", no de "totalAmount" (que es el envío).
+    d["Monto"] = d.get("originalAmount").apply(parse_pedidos_monto)
+    d = d.dropna(subset=["Fecha"])
+    if len(d):
+        candidate_times.append(d["Fecha"].max())
+    cancelados = d[["Pedido", "Tienda", "Fecha", "Estado", "Monto"]]
+elif df_cancelados_raw is not None:
+    d = df_cancelados_raw.copy()
+    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+    d = d.dropna(subset=["Fecha"])
+    candidate_times.append(d["Fecha"].max())
+    cancelados = d
+
+if candidate_times:
+    now_ref = max([t for t in candidate_times if pd.notna(t)]).normalize()
+else:
+    now_ref = pd.Timestamp(
+        datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).replace(tzinfo=None)
+    ).normalize()
+
+# Fecha "de hoy" (Argentina) — se usa para estampar cada fila de Faltantes en
+# el historial mensual. Va aparte de now_ref porque Faltantes no trae su
+# propia fecha en el archivo: lo que importa es el día en que se subió.
+fecha_hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+fecha_hoy_str = fecha_hoy.strftime("%d/%m/%Y")
+
+# ---- Pedidos +48h/+72h ----
+# El listado ahora arranca en 48hs (2 días) en vez de 72hs (3 días), para dar
+# aviso temprano antes de que un pedido llegue al umbral crítico de 72hs.
+# sev_pedido_72h() separa los de 48-72hs ("notice", aviso temprano) de los de
+# +72hs (warning/serious/critical, como antes).
+if pedidos_72h is not None:
+    pedidos_72h["Dias"] = (now_ref - pedidos_72h["Fecha"].dt.normalize()).dt.days.astype(float)
+    pedidos_72h = pedidos_72h[pedidos_72h["Dias"] >= 2].copy()
+    pedidos_72h["MontoNum"] = pedidos_72h["Monto"].apply(ar_number)
+    pedidos_72h["Tienda"] = pedidos_72h["Tienda"].apply(norm_txt)
+    if len(pedidos_72h):
+        pedidos_72h[["Sev", "SevLabel"]] = pedidos_72h["Dias"].apply(
+            lambda d: pd.Series(sev_pedido_72h(d))
         )
     else:
-        html_logo = '<div class="hero-brand">Más<span>Online</span></div>'
+        # Sin esto, cuando no hay NINGÚN pedido con 3+ días (día bueno, o
+        # recién arrancando el mes) pandas no puede inferir que esta
+        # columna debería tener 2 columnas (Sev/SevLabel) a partir de un
+        # .apply() sobre cero filas, y la asignación de abajo explota con
+        # un ValueError que tira abajo toda la página.
+        pedidos_72h["Sev"] = pd.Series(dtype=object)
+        pedidos_72h["SevLabel"] = pd.Series(dtype=object)
 
-    return f"""<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MásOnline | Comparativo</title>
-<style>
-* {{ box-sizing: border-box; }}
-body {{ margin:0; padding:0; background:#ffffff; font-family: Arial, Helvetica, sans-serif; }}
-.block-container {{ max-width:1300px; margin:0 auto; padding:24px 20px 40px; }}
-{CSS_TEXT}
-</style>
-</head>
-<body>
-<div class="block-container">
+# ---- Reclamos ----
+if reclamos is not None:
+    reclamos["Horas"] = (now_ref - reclamos["Fecha"].dt.normalize()).dt.days.astype(float) * 24
+    reclamos["Tienda"] = reclamos["Tienda"].apply(norm_txt)
+    reclamos["Estado"] = reclamos["Estado"].apply(norm_txt)
+    reclamos["Tipo"] = reclamos["Tipo"].apply(norm_txt)
+    if len(reclamos):
+        reclamos[["Sev", "SevLabel"]] = reclamos.apply(
+            lambda r: pd.Series(sev_reclamo(r["Horas"], r["Estado"])), axis=1
+        )
+    else:
+        reclamos["Sev"] = pd.Series(dtype=object)
+        reclamos["SevLabel"] = pd.Series(dtype=object)
 
-<div class="hero">
-  <div>
-    {html_logo}
-    <div class="hero-sub">ECOMMERCE · RESUMEN DE RESULTADOS</div>
-  </div>
-  <div class="periodo-badge">
-    <div class="lbl">📅 PERÍODO</div>
-    <div class="val">{periodo_val_label}</div>
-    <small>{periodo_small_label}</small>
-  </div>
-</div>
+# ---- Cancelados ----
+if cancelados is not None:
+    cancelados["Tienda"] = cancelados["Tienda"].apply(norm_txt)
+    # "Total $" no siempre viene en el export (algunos días la hoja no trae esa
+    # columna, o la trae vacía) — en ese caso usamos "Monto" (ej. "$330K"),
+    # que es la que sí viene siempre con el importe.
+    if "Total $" in cancelados.columns:
+        _total_num = pd.to_numeric(cancelados["Total $"], errors="coerce")
+    else:
+        _total_num = pd.Series([np.nan] * len(cancelados), index=cancelados.index)
+    _monto_num = cancelados.get("Monto", pd.Series([np.nan] * len(cancelados), index=cancelados.index)).apply(ar_number)
+    cancelados["Total $"] = _total_num.fillna(_monto_num).fillna(0)
 
-<div class="section">Resultados del período</div>
-<div class="section-desc">Indicadores principales del canal ecommerce — <b>{periodo_small_label}</b>.</div>
-{kpis_html}
+# ---- Faltantes ----
+# Formato nuevo (archivo "Faltantes_Mensual"): una fila por cada producto
+# faltante dentro de cada pedido (tienda, producto, cantidad faltante,
+# sustituido o no, fecha) — ya no es "SKU marcado sin stock" con días sin
+# venta / alta rotación, así que esos conceptos se sacaron del todo.
+faltantes = None
+if df_faltantes_raw is not None:
+    d = df_faltantes_raw.copy()
+    d["Tienda"] = d["warehouseName"].apply(warehouse_to_tienda)
+    d["Producto"] = d["refName"].apply(norm_txt)
+    d["SKU"] = d.get("skuId", "").apply(norm_codigo)
+    d["CantidadFaltante"] = pd.to_numeric(d.get("missingQuantity"), errors="coerce").fillna(0)
+    d["Sustituido"] = pd.to_numeric(d.get("substitutedQuantity"), errors="coerce").fillna(0)
+    d["NoSustituido"] = pd.to_numeric(d.get("noSubstitutedQuantity"), errors="coerce").fillna(0)
+    _comprado = pd.to_numeric(d.get("purchasedQuantity"), errors="coerce")
+    # El archivo trae el mes completo (una fila por pedido) con la fecha real
+    # de cada fila, no una sola foto del día — de acá sale FechaArchivo.
+    d["FechaArchivo"] = pd.to_datetime(d.get("dateCreated"), errors="coerce").dt.normalize()
+    # Los productos "pesables" (se venden por peso, no por unidad —
+    # sellingMeasurementUnit = "KG") no se cuentan como faltante acá.
+    _unidad_venta = get_col_ci(d, "sellingMeasurementUnit").apply(norm_txt).str.upper()
+    # Filtro de sanidad: nunca puede faltar más cantidad de la que se compró
+    # en ese pedido. Una minoría de filas del archivo trae "missingQuantity"
+    # absurdamente alto (miles de unidades de un producto con purchasedQuantity
+    # de un dígito) — es un error del archivo de origen, no algo real; sin
+    # este filtro esas filas solas dominarían todos los rankings de abajo.
+    d = d[
+        (d["CantidadFaltante"] > 0)
+        & d["FechaArchivo"].notna()
+        & (d["CantidadFaltante"] <= _comprado.fillna(float("inf")))
+        & (_unidad_venta != "KG")
+    ]
+    # Un mismo producto puede faltar en varios pedidos distintos de la misma
+    # tienda el mismo día — se suma en una sola fila por tienda+producto+día
+    # (si no, el historial y los rankings de abajo quedarían con una fila
+    # por pedido en vez de por producto).
+    faltantes = d.groupby(
+        ["FechaArchivo", "Tienda", "Producto", "SKU"], as_index=False
+    ).agg(
+        CantidadFaltante=("CantidadFaltante", "sum"),
+        Sustituido=("Sustituido", "sum"),
+        NoSustituido=("NoSustituido", "sum"),
+    )
 
-<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>
-<div class="section-desc"><b>{periodo_small_label}</b>. Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>
-{table_html}
-{footnote_html}
-{finde_section_html}
-{ultimo_finde_section_html}
-{dia_section_html}
+# ---- Productividad de Pickers ----
+# Viene del archivo nuevo de Pickers (aparte, subido en "app"); si todavía no
+# se subió ninguno, sigue leyendo la vieja hoja "Data Picker" del Reporte
+# diario mientras se termina de migrar. Se usa acá para armar el historial
+# día a día; la tabla en sí se muestra en la pestaña aparte "Productividad
+# Pickers". Ninguno de los dos formatos trae una fecha por fila (es una foto
+# del día, no un historial dentro del archivo como Faltantes) — se estampa
+# con la fecha de hoy.
+pickers = None
+if df_picker_raw is not None:
+    d = df_picker_raw.copy()
+    d["Picker"] = (d["firstName"].apply(norm_txt) + " " + d["lastName"].apply(norm_txt)).str.strip()
+    d["Deposito"] = d["warehouseRefId"].apply(norm_txt)
+    d["Tienda"] = d["warehouseRefId"].apply(warehouse_to_tienda)
+    d["Pedidos"] = pd.to_numeric(d["orders"], errors="coerce").fillna(0)
+    d["Unidades"] = pd.to_numeric(d["items"], errors="coerce").fillna(0)
+    d["Rendimiento"] = pd.to_numeric(d["performance"], errors="coerce")
+    d["RendimientoPicking"] = pd.to_numeric(d.get("pickingPerformance"), errors="coerce")
+    d["FoundRate"] = pd.to_numeric(d.get("foundRate"), errors="coerce")
+    d["FillRate"] = pd.to_numeric(d.get("fillRate"), errors="coerce")
+    # Tiempo promedio de preparación por pedido, para la sección "Tiempo
+    # promedio de preparación por tienda" (no viene ninguna meta de minutos
+    # en el archivo, así que esto no es un % on time, solo un promedio).
+    d["TiempoPromedioPedidoMin"] = d.get("orderAverage").apply(hhmm_to_minutes)
+    d["FechaArchivo"] = pd.Timestamp(fecha_hoy)
+    d = d[d["Picker"] != ""]
+    pickers = d[[
+        "Picker", "Deposito", "Tienda", "Pedidos", "Unidades",
+        "Rendimiento", "RendimientoPicking", "FoundRate", "FillRate",
+        "TiempoPromedioPedidoMin", "FechaArchivo"
+    ]]
 
-</div>
-</body>
-</html>
-"""
+# ---------------------------------------------------------------------
+# Unificar nombres de tienda entre hojas (mayúsc/minúsc, prefijo "Sucursal")
+# y armar el filtro de tienda
+# ---------------------------------------------------------------------
 
-st.download_button(
-    "⬇️ Descargar comparativo HTML",
-    data=build_standalone_html(),
-    file_name=f"comparativo_masonline_{last_date.strftime('%Y-%m-%d')}.html",
-    mime="text/html",
-    use_container_width=False,
+_canon_map = build_tienda_canon_map(
+    [pedidos_72h, reclamos, cancelados, faltantes, pickers]
 )
+pedidos_72h = apply_tienda_canon(pedidos_72h, _canon_map)
+reclamos = apply_tienda_canon(reclamos, _canon_map)
+cancelados = apply_tienda_canon(cancelados, _canon_map)
+faltantes = apply_tienda_canon(faltantes, _canon_map)
+pickers = apply_tienda_canon(pickers, _canon_map)
 
-# ---------------------------------------------------------------------
-# Resultados del período
-# ---------------------------------------------------------------------
+# El archivo ahora trae el mes completo (desde el día 1, con fecha real por
+# fila) en vez de una sola foto del día. Para las secciones EN VIVO de esta
+# página (alertas, KPIs, filtro de Auditor/Tienda) nos quedamos solo con la
+# fecha más reciente presente en el archivo — como si fuera "la foto de
+# hoy". El resto del historial (todo el mes) se guarda aparte y se usa más
+# abajo para alimentar el ranking acumulado en Google Sheets.
+faltantes_historial_completo = faltantes
+if (
+    faltantes is not None and len(faltantes)
+    and "FechaArchivo" in faltantes.columns and faltantes["FechaArchivo"].notna().any()
+):
+    faltantes = faltantes[faltantes["FechaArchivo"] == faltantes["FechaArchivo"].max()].copy()
 
-st.markdown(
-    '<div class="section">Resultados del período</div>'
-    '<div class="section-desc">Indicadores principales del canal ecommerce — '
-    f'<b>{periodo_small_label}</b>.</div>',
-    unsafe_allow_html=True
-)
-st.markdown(kpis_html, unsafe_allow_html=True)
+# ---- Acumular Faltantes en el historial mensual (Google Sheets) ----
+# Se escribe una sola vez por archivo realmente subido (se controla con un
+# hash guardado en session_state), no en cada re-render de la página — si no,
+# cada vez que tocás el filtro de Auditor/Tienda se volvería a escribir todo.
+if faltantes_historial_completo is not None and len(faltantes_historial_completo):
+    _falt_hash = hashlib.md5(faltantes_bytes).hexdigest()
+    if st.session_state.get("_faltantes_logged_hash") != _falt_hash:
+        if replace_faltantes_meses_en_sheet(faltantes_historial_completo):
+            st.session_state["_faltantes_logged_hash"] = _falt_hash
+            load_faltantes_log.clear()
 
-# ---------------------------------------------------------------------
-# Comparativo vs año anterior
-# ---------------------------------------------------------------------
+# ---- Acumular Productividad de Pickers de hoy en el historial (Google Sheets) ----
+# Mismo criterio que Faltantes: se agrega una sola vez por archivo realmente
+# subido (hash del archivo de origen en session_state), no en cada re-render.
+# Pickers ahora se sube aparte (pickers_bytes); reporte_bytes queda de
+# respaldo solo mientras alguien todavía suba el Reporte diario viejo.
+if pickers is not None and len(pickers):
+    _pickers_source_bytes = pickers_bytes if pickers_bytes is not None else reporte_bytes
+    _pickers_hash = hashlib.md5(_pickers_source_bytes).hexdigest()
+    if st.session_state.get("_pickers_logged_hash") != _pickers_hash:
+        if replace_pickers_meses_en_sheet(pickers):
+            st.session_state["_pickers_logged_hash"] = _pickers_hash
 
-st.markdown(
-    '<div class="section" style="margin-top:30px;">Comparativo vs año anterior</div>'
-    f'<div class="section-desc"><b>{periodo_small_label}</b>. '
-    'Indicadores calculados con Venta Ecommerce (con impuesto) y Pedidos Facturados.</div>',
-    unsafe_allow_html=True
-)
-st.markdown(table_html, unsafe_allow_html=True)
+# ---- Acumular Pedidos +72h de hoy en el historial (Google Sheets) ----
+# Mismo criterio que Faltantes/Pickers: se agrega una sola vez por archivo
+# realmente subido (hash del archivo de origen en session_state), no en cada
+# re-render. pedidos_bytes es el archivo nuevo de Pedidos; reporte_bytes
+# queda de respaldo solo mientras alguien todavía suba el Reporte diario
+# viejo con la hoja de +72h adentro.
+if pedidos_72h is not None and len(pedidos_72h):
+    _pedidos_source_bytes = pedidos_bytes if pedidos_bytes is not None else reporte_bytes
+    _pedidos_hash = hashlib.md5(_pedidos_source_bytes).hexdigest()
+    if st.session_state.get("_pedidos_logged_hash") != _pedidos_hash:
+        if replace_pedidos_hoy_en_sheet(pedidos_72h):
+            st.session_state["_pedidos_logged_hash"] = _pedidos_hash
+            load_pedidos_log.clear()
 
-# ---------------------------------------------------------------------
-# Primer fin de semana del mes
-# ---------------------------------------------------------------------
+all_stores = set()
+for d in [pedidos_72h, reclamos, cancelados, faltantes]:
+    if d is not None and "Tienda" in d.columns:
+        all_stores.update([s for s in d["Tienda"].unique() if s])
 
-st.markdown(finde_section_html, unsafe_allow_html=True)
+any_data_loaded = len(all_stores) > 0
 
-# ---------------------------------------------------------------------
-# Último fin de semana
-# ---------------------------------------------------------------------
+if any_data_loaded:
+    st.markdown(f"""
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+      <div style="font-size:12px;color:#6b7280;">
+        Fecha de corte: <b style="color:#20252b;">{now_ref.strftime('%d/%m/%Y')}</b>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown(ultimo_finde_section_html, unsafe_allow_html=True)
+    auditores = sorted({a for a in (get_auditor(s) for s in all_stores) if a})
+    col_aud, col_tda, col_mes, col_estado = st.columns([1, 2, 1, 1])
+    with col_aud:
+        st.markdown('<div class="field-label">Auditor</div>', unsafe_allow_html=True)
+        auditor_sel = st.selectbox(
+            "Auditor", ["Todos los auditores"] + auditores,
+            label_visibility="collapsed"
+        )
+    filtro_auditor = None if auditor_sel == "Todos los auditores" else auditor_sel
 
-# ---------------------------------------------------------------------
-# Día a día vs año anterior
-# ---------------------------------------------------------------------
+    # Si hay un auditor elegido, el desplegable de Tienda se acota a sus tiendas.
+    stores_disponibles = (
+        {s for s in all_stores if get_auditor(s) == filtro_auditor}
+        if filtro_auditor else all_stores
+    )
+    with col_tda:
+        st.markdown('<div class="field-label">Tienda</div>', unsafe_allow_html=True)
+        tienda_sel = st.selectbox(
+            "Tienda", ["Todas las tiendas"] + sorted(stores_disponibles),
+            label_visibility="collapsed"
+        )
+    filtro_tienda = None if tienda_sel == "Todas las tiendas" else tienda_sel
 
-st.markdown(dia_section_html, unsafe_allow_html=True)
+    # Filtro por mes: sale de las fechas reales de Pedidos +72h, Reclamos,
+    # Cancelados y Faltantes — así se puede ver, por ejemplo, cuánto quedó
+    # acumulado de Pedidos +72h en un mes puntual. Productividad Pickers es
+    # una foto del día del archivo subido (sin fecha histórica por fila),
+    # así que no tiene mes para filtrar.
+    _MESES_ES = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+    }
+    # Filtro de sanidad: alguno de los archivos de origen a veces trae alguna
+    # fecha mal cargada (de años muy anteriores) que no tiene nada que ver
+    # con la operación real — sin este filtro, esas fechas sueltas
+    # terminaban agregando años viejos sueltos al desplegable de Mes. Se
+    # descarta todo lo que quede fuera de una ventana razonable alrededor de
+    # la fecha de referencia real (now_ref): hasta 24 meses atrás y hasta 2
+    # meses adelante.
+    _mes_piso = (now_ref - pd.DateOffset(months=24)).to_period("M")
+    _mes_techo = (now_ref + pd.DateOffset(months=2)).to_period("M")
+    _meses_disponibles = set()
+    for d, _col in [(pedidos_72h, "Fecha"), (reclamos, "Fecha"), (cancelados, "Fecha"), (faltantes, "FechaArchivo")]:
+        if d is not None and _col in d.columns:
+            _periodos = d[_col].dropna().dt.to_period("M")
+            _periodos = _periodos[(_periodos >= _mes_piso) & (_periodos <= _mes_techo)]
+            _meses_disponibles.update(_periodos.astype(str).unique())
+    _meses_ordenados = sorted(_meses_disponibles, reverse=True)
+    _meses_labels = {m: f"{_MESES_ES[int(m.split('-')[1])]} {m.split('-')[0]}" for m in _meses_ordenados}
+    with col_mes:
+        st.markdown('<div class="field-label">Mes</div>', unsafe_allow_html=True)
+        mes_sel = st.selectbox(
+            "Mes", ["Todos los meses"] + [_meses_labels[m] for m in _meses_ordenados],
+            label_visibility="collapsed"
+        )
+    filtro_mes = None if mes_sel == "Todos los meses" else next(
+        m for m in _meses_ordenados if _meses_labels[m] == mes_sel
+    )
 
-st.markdown(footnote_html, unsafe_allow_html=True)
+    # Filtro por Estado del pedido (ej. "readyForDelivery", "notDelivered",
+    # "picking"...): solo aplica a la sección de Pedidos +72h, que es la que
+    # trae el estado real del export de Pedidos. Reclamos/Cancelados/
+    # Faltantes tienen su propio "Estado" con otro significado (reclamo
+    # abierto/cerrado, siempre "cancelado", etc.), así que este filtro no los
+    # toca — así se puede, por ejemplo, ver solo los pedidos en
+    # "readyForDelivery" sin tocar el resto de las tarjetas.
+    estados_disponibles = sorted(
+        {e for e in (pedidos_72h["Estado"].unique() if pedidos_72h is not None else []) if e}
+    )
+    with col_estado:
+        st.markdown('<div class="field-label">Estado del pedido</div>', unsafe_allow_html=True)
+        estado_sel = st.selectbox(
+            "Estado del pedido", ["Todos los estados"] + estados_disponibles,
+            label_visibility="collapsed"
+        )
+    filtro_estado = None if estado_sel == "Todos los estados" else estado_sel
+
+    def ftr(d, date_col=None):
+        if d is None:
+            return d
+        out = d
+        if filtro_tienda is not None:
+            out = out[out["Tienda"] == filtro_tienda]
+        elif filtro_auditor is not None:
+            out = out[out["Tienda"].apply(get_auditor) == filtro_auditor]
+        if filtro_mes is not None and date_col is not None and date_col in out.columns:
+            out = out[out[date_col].dt.to_period("M").astype(str) == filtro_mes]
+        return out
+
+    pedidos_f = ftr(pedidos_72h, "Fecha")
+    if filtro_estado is not None and pedidos_f is not None and "Estado" in pedidos_f.columns:
+        pedidos_f = pedidos_f[pedidos_f["Estado"] == filtro_estado]
+    reclamos_f = ftr(reclamos, "Fecha")
+    can_f = ftr(cancelados, "Fecha")
+    falt_f = ftr(faltantes, "FechaArchivo")
+    pickers_f = ftr(pickers)
+
+    filtro_activo = (
+        filtro_tienda is not None or filtro_auditor is not None
+        or filtro_mes is not None or filtro_estado is not None
+    )
+
+    # ---- KPI row ----
+    kpis = build_kpis(
+        pedidos_f, reclamos_f, can_f, falt_f,
+        filtro_activo=filtro_activo, pickers_f=pickers_f
+    )
+
+    if kpis:
+        st.markdown(f'<div class="kpi-row">{"".join(kpis)}</div>', unsafe_allow_html=True)
+
+    # ---- Descargar todo junto (para mandar al jefe) ----
+    _full_report_html = export_full_report_html(
+        pedidos_f, reclamos_f, can_f, falt_f,
+        filtro_activo=filtro_activo, pickers_f=pickers_f
+    )
+    if _full_report_html:
+        st.download_button(
+            "📋 Descargar TODO en un solo HTML (para mandar/capturar)",
+            data=_full_report_html.encode("utf-8"),
+            file_name="operativo_reporte_completo.html",
+            mime="text/html",
+            key="dl_full_report",
+            use_container_width=True,
+        )
+
+    # ---- Pedidos +48h/+72h ----
+    st.markdown(
+        '<div class="section">📦 Pedidos sin movimiento (48hs+)</div>'
+        '<div class="section-desc">Pedidos que llevan 48hs o más en el mismo estado sin avanzar — '
+        'separados en 48–72hs (aviso temprano) y +72hs (crítico).</div>',
+        unsafe_allow_html=True
+    )
+    if pedidos_f is not None:
+        if len(pedidos_f):
+            p_72 = int((pedidos_f["Dias"] >= 3).sum())
+            p_48 = int((pedidos_f["Dias"] < 3).sum())
+            st.markdown(
+                f'<div style="font-size:12.5px;color:#565d5f;margin:-4px 0 10px;">'
+                f'{badge("critical" if p_72 else "good", f"{p_72} con +72h")} '
+                f'{badge("notice" if p_48 else "good", f"{p_48} entre 48–72h")}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            show = pedidos_f.copy().sort_values("Dias", ascending=False)
+            show["Días"] = show["Dias"].round(1)
+            show["Monto"] = show["MontoNum"].apply(money)
+            show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+            detail_cols = ["Pedido", "Tienda", "Estado", "Fecha", "Días", "Monto", "Urgencia"]
+
+            agg = pedidos_f.groupby("Tienda").agg(
+                Cantidad=("Pedido", "count")
+            ).reset_index().sort_values("Cantidad", ascending=False)
+            top10 = agg.head(10)[["Tienda", "Cantidad"]]
+            top10_html = resumen_table_html(
+                top10, "Tienda", {"Cantidad": lambda v: f"{int(v)}"}, total_label="Total (top 10)"
+            )
+
+            st.markdown('<div class="resumen-title">Top 10 tiendas con más pedidos +48hs</div>', unsafe_allow_html=True)
+            st.write(top10_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de pedidos ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
+            export_body = (
+                '<div class="resumen-title">Top 10 tiendas con más pedidos +48hs</div>' + top10_html +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle de pedidos</div>'
+                + table_html(show[detail_cols])
+            )
+            html_doc = export_section_html(
+                "📦 Pedidos sin movimiento (48hs+)",
+                "Pedidos que llevan 48hs o más en el mismo estado sin avanzar — "
+                "separados en 48–72hs (aviso temprano) y +72hs (crítico).",
+                export_body
+            )
+            section_download_button(html_doc, "operativo_pedidos_72h.html", "dl_72h")
+        else:
+            st.markdown('<div class="empty-box">Sin pedidos estancados para esta selección 🎉</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="empty-box">Subí el archivo de Pedidos +72hs para ver esta sección.</div>', unsafe_allow_html=True)
+
+    # ---- Reclamos ----
+    st.markdown(
+        f'<div class="section">🗣️ Reclamos operativos '
+        f'<span class="count-pill">{len(reclamos_f) if reclamos_f is not None else 0}</span></div>'
+        '<div class="section-desc">Franjas de alerta: 24hs y 72hs sin acción.</div>',
+        unsafe_allow_html=True
+    )
+    if reclamos_f is not None:
+        # Filtro de fecha propio de esta sección — el archivo de Reclamos
+        # Operativos ahora trae varios meses de historial en un solo archivo
+        # (no solo "la foto de hoy"), así que conviene poder acotar el rango
+        # sin tener que esperar a subir un archivo distinto.
+        _rmin, _rmax = reclamos_f["Fecha"].min(), reclamos_f["Fecha"].max()
+        if pd.notna(_rmin) and pd.notna(_rmax):
+            col_desde, col_hasta = st.columns(2)
+            with col_desde:
+                st.markdown('<div class="field-label">Desde</div>', unsafe_allow_html=True)
+                fecha_desde = st.date_input(
+                    "Desde", value=_rmin.date(), min_value=_rmin.date(), max_value=_rmax.date(),
+                    key="reclamos_desde", label_visibility="collapsed"
+                )
+            with col_hasta:
+                st.markdown('<div class="field-label">Hasta</div>', unsafe_allow_html=True)
+                fecha_hasta = st.date_input(
+                    "Hasta", value=_rmax.date(), min_value=_rmin.date(), max_value=_rmax.date(),
+                    key="reclamos_hasta", label_visibility="collapsed"
+                )
+            reclamos_f = reclamos_f[
+                (reclamos_f["Fecha"].dt.date >= fecha_desde) & (reclamos_f["Fecha"].dt.date <= fecha_hasta)
+            ]
+
+        solo_abiertos = st.checkbox("Mostrar solo abiertos (Nuevo / En proceso)", value=True, key="chk_reclamos")
+        show = reclamos_f.copy()
+        if solo_abiertos:
+            show = show[show["Estado"].isin(["Nuevo", "En proceso"])]
+        # Toda esta sección es "Reclamos Operativos": los No operativos (ej.
+        # "Devolución no aplicada FISERV", "Problema sitio web") quedan
+        # afuera de todo — detalle, rankings y totales de la tarjeta.
+        show = show[show["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+        if len(show):
+            show = show.sort_values("Horas", ascending=False)
+            show["Horas"] = show["Horas"].round(1)
+            show["Urgencia"] = show.apply(lambda r: badge(r["Sev"], r["SevLabel"]), axis=1)
+            detail_cols = ["Reclamo", "Pedido", "Tienda", "Tipo", "Estado", "Fecha", "Horas", "Urgencia"]
+
+            base = reclamos_f.copy()
+            if solo_abiertos:
+                base = base[base["Estado"].isin(["Nuevo", "En proceso"])]
+            base = base[base["Tipo"].apply(clasificar_tipo_reclamo) == "Operativo"]
+            # "Top 5 tiendas" sin los reclamos que no tienen tienda asociada
+            # (no corresponde sumarlos en un ranking por tienda).
+            agg = base[base["Tienda"] != ""].groupby("Tienda").apply(lambda g: pd.Series({
+                "Cantidad": len(g),
+                ">72h": int((g["Horas"] > 72).sum()),
+                "24–72h": int(((g["Horas"] >= 24) & (g["Horas"] <= 72)).sum()),
+            })).reset_index().sort_values("Cantidad", ascending=False).head(5)
+            agg_tipo = base.groupby("Tipo").agg(
+                Cantidad=("Pedido", "count")
+            ).reset_index().sort_values("Cantidad", ascending=False).head(5)
+
+            # Reclamos por mes y tienda — cuántos va llevando cada tienda mes
+            # a mes, dentro del rango de fechas elegido arriba.
+            base_mes = base.copy()
+            base_mes["Mes"] = base_mes["Fecha"].dt.strftime("%Y-%m")
+            piv_mes = base_mes.pivot_table(
+                index="Tienda", columns="Mes", values="Reclamo", aggfunc="count", fill_value=0
+            )
+            _meses_cols = list(piv_mes.columns)
+            piv_mes["Total"] = piv_mes[_meses_cols].sum(axis=1)
+            piv_mes = piv_mes.sort_values("Total", ascending=False).reset_index()
+            for _c in _meses_cols + ["Total"]:
+                piv_mes[_c] = piv_mes[_c].astype(int)
+            piv_mes_html = table_html(piv_mes)
+
+            resumen_html = resumen_table_html(
+                agg, "Tienda",
+                {"Cantidad": lambda v: f"{int(v)}", ">72h": lambda v: f"{int(v)}", "24–72h": lambda v: f"{int(v)}"}
+            )
+            resumen_tipo_html = resumen_table_html(agg_tipo, "Tipo", {"Cantidad": lambda v: f"{int(v)}"})
+            resumen_side_by_side = (
+                '<div style="display:flex;gap:18px;flex-wrap:wrap;">'
+                '<div style="flex:1;min-width:260px;">'
+                '<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>' + resumen_html + '</div>'
+                '<div style="flex:1;min-width:260px;">'
+                '<div class="resumen-title">Top 5 reclamos Operativos</div>' + resumen_tipo_html + '</div>'
+                '</div>'
+            )
+            export_body = (
+                resumen_side_by_side +
+                '<div class="resumen-title" style="margin-top:18px;">Reclamos por mes y tienda</div>'
+                + piv_mes_html +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+                + table_html(show[detail_cols])
+            )
+            html_doc = export_section_html(
+                "🗣️ Reclamos operativos",
+                "Franjas de alerta: 24hs y 72hs sin acción.",
+                export_body
+            )
+
+            r72_tot = int((base["Horas"] > 72).sum())
+            r24_tot = int(((base["Horas"] >= 24) & (base["Horas"] <= 72)).sum())
+            mini_card = kpi_card(
+                "Reclamos Operativos abiertos" if solo_abiertos else "Reclamos Operativos (todos)", f"{len(show)}",
+                f"{r72_tot} con +72h · {r24_tot} entre 24–72h — clickeá para bajar el HTML",
+                "crit" if r72_tot > 0 else ("warn" if r24_tot > 0 else "good")
+            )
+            st.markdown(
+                f'<div class="kpi-row" style="margin:4px 0 14px; grid-template-columns: minmax(230px, 340px);">'
+                f'{kpi_link_wrap(mini_card, html_doc, "operativo_reclamos.html")}</div>',
+                unsafe_allow_html=True
+            )
+
+            col_tienda, col_tipo = st.columns(2)
+            with col_tienda:
+                st.markdown('<div class="resumen-title">Top 5 tiendas con más reclamos Operativos</div>', unsafe_allow_html=True)
+                st.write(resumen_html, unsafe_allow_html=True)
+            with col_tipo:
+                st.markdown('<div class="resumen-title">Top 5 reclamos Operativos</div>', unsafe_allow_html=True)
+                st.write(resumen_tipo_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver reclamos por mes y tienda ({len(piv_mes)} tiendas)"):
+                with st.container(height=380):
+                    st.write(piv_mes_html, unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de reclamos ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
+            section_download_button(html_doc, "operativo_reclamos.html", "dl_reclamos")
+        else:
+            st.markdown('<div class="empty-box">Sin reclamos para esta selección 🎉</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="empty-box">Subí el archivo de Reclamos para ver esta sección.</div>', unsafe_allow_html=True)
+
+    # ---- Cancelados ----
+    st.markdown(
+        f'<div class="section">🚫 Pedidos cancelados '
+        f'<span class="count-pill">{len(can_f) if can_f is not None else 0}</span></div>'
+        '<div class="section-desc">Cancelaciones por tienda en el período del reporte.</div>',
+        unsafe_allow_html=True
+    )
+    if can_f is not None:
+        if len(can_f):
+            b = cancelados_bundle(can_f)
+
+            st.markdown('<div class="resumen-title">Top 10 tiendas con más cancelados</div>', unsafe_allow_html=True)
+            st.write(b["top10_html"], unsafe_allow_html=True)
+
+            # El resumen completo por tienda y el detalle pedido a pedido ya
+            # no se muestran acá abajo (solo el Top 10) — quedan disponibles
+            # completos en el HTML descargable.
+            section_download_button(b["html_doc"], "operativo_cancelados.html", "dl_cancelados")
+        else:
+            st.markdown('<div class="empty-box">Sin cancelaciones para esta selección 🎉</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="empty-box">Subí el archivo de Cancelados para ver esta sección.</div>', unsafe_allow_html=True)
+
+    # ---- Faltantes ----
+    _falt_total_unid = int(falt_f["CantidadFaltante"].sum()) if falt_f is not None and len(falt_f) else 0
+    st.markdown(
+        f'<div class="section">📉 Faltantes ECOM '
+        f'<span class="count-pill">{_falt_total_unid}</span></div>'
+        '<div class="section-desc">Unidades faltantes por tienda y producto, del último día cargado.</div>',
+        unsafe_allow_html=True
+    )
+    if falt_f is not None:
+        if len(falt_f):
+            show = falt_f.copy().sort_values(["Tienda", "Producto"])
+            show["Fecha"] = show["FechaArchivo"].dt.strftime("%d/%m/%Y")
+            show["Cantidad Faltante"] = show["CantidadFaltante"].apply(lambda v: f"{int(v)}")
+            detail_cols = ["Fecha", "Tienda", "Producto", "Cantidad Faltante"]
+
+            agg_tienda = falt_f.groupby("Tienda", as_index=False).agg(
+                CantidadFaltante=("CantidadFaltante", "sum")
+            ).sort_values("CantidadFaltante", ascending=False)
+            agg_tienda_top10 = agg_tienda.head(10)
+
+            agg_producto = falt_f.groupby("Producto", as_index=False).agg(
+                CantidadFaltante=("CantidadFaltante", "sum")
+            ).sort_values("CantidadFaltante", ascending=False)
+            agg_producto_top10 = agg_producto.head(10).rename(columns={"CantidadFaltante": "Cantidad faltante"})
+            agg_producto_top10["Cantidad faltante"] = agg_producto_top10["Cantidad faltante"].apply(lambda v: f"{int(v)}")
+
+            st.markdown(
+                '<div class="resumen-title">Top 10 tiendas con más faltantes — último día cargado</div>',
+                unsafe_allow_html=True
+            )
+            resumen_html = resumen_table_html(
+                agg_tienda_top10, "Tienda",
+                {"CantidadFaltante": lambda v: f"{int(v)}"},
+                total_label="Total (top 10)"
+            )
+            st.write(resumen_html, unsafe_allow_html=True)
+
+            st.markdown(
+                '<div class="resumen-title" style="margin-top:14px;">Top 10 productos que más faltan — último día cargado</div>',
+                unsafe_allow_html=True
+            )
+            st.write(table_html(agg_producto_top10), unsafe_allow_html=True)
+
+            with st.expander(f"Ver detalle de faltantes ({len(show)})"):
+                with st.container(height=380):
+                    st.write(table_html(show[detail_cols]), unsafe_allow_html=True)
+
+            resumen_html_completo = resumen_table_html(
+                agg_tienda, "Tienda",
+                {"CantidadFaltante": lambda v: f"{int(v)}"}
+            )
+            agg_producto_completo = agg_producto.rename(columns={"CantidadFaltante": "Cantidad faltante"})
+            agg_producto_completo["Cantidad faltante"] = agg_producto_completo["Cantidad faltante"].apply(lambda v: f"{int(v)}")
+            export_body = (
+                '<div class="resumen-title">Resumen por tienda — último día cargado</div>' + resumen_html_completo +
+                '<div class="resumen-title" style="margin-top:18px;">Productos que más faltan</div>'
+                + table_html(agg_producto_completo) +
+                '<div class="resumen-title" style="margin-top:18px;">Detalle completo</div>'
+                + table_html(show[detail_cols])
+            )
+            html_doc = export_section_html(
+                "📉 Faltantes ECOM",
+                "Unidades faltantes por tienda y producto, según el Reporte de Faltantes mensual.",
+                export_body
+            )
+            section_download_button(html_doc, "operativo_faltantes.html", "dl_faltantes")
+        else:
+            st.markdown('<div class="empty-box">Sin faltantes para esta selección 🎉</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="empty-box">Subí el archivo de Faltantes para ver esta sección.</div>', unsafe_allow_html=True)
+
+    # ---- Ranking del mes — tiendas y productos con más faltantes (histórico acumulado) ----
+    st.markdown(
+        '<div class="section">📈 Ranking del mes — tiendas y productos con más faltantes</div>'
+        '<div class="section-desc">Acumulado de todos los reportes de Faltantes subidos para el mes '
+        'más reciente que haya en el historial (no espera a que llegue el mes calendario actual).</div>',
+        unsafe_allow_html=True
+    )
+    log_df = load_faltantes_log()
+    if log_df is None:
+        _debug_msg = _gsheets_debug_box().get("msg")
+        _debug_html = (
+            f'<div style="font-size:11px;color:#b0413e;margin-top:8px;font-family:monospace;">{_debug_msg}</div>'
+            if _debug_msg else ""
+        )
+        st.markdown(
+            '<div class="empty-box">Este ranking todavía no está conectado — hace falta activar '
+            'el historial en Google Sheets (una configuración única) para que empiece a acumular '
+            'mes a mes.' + _debug_html + '</div>',
+            unsafe_allow_html=True
+        )
+    elif not len(log_df) or not log_df["FechaDt"].notna().any():
+        st.markdown(
+            '<div class="empty-box">Todavía no hay historial acumulado. Se va a empezar a llenar '
+            'con cada archivo de Faltantes que subas de acá en adelante.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        # El "mes" de este ranking es el mes del archivo de Faltantes más
+        # reciente que haya en el historial, no necesariamente el mes
+        # calendario de hoy — así el día 1 de octubre, por ejemplo, se sigue
+        # viendo el acumulado de septiembre (el último mes con datos reales)
+        # en vez de aparecer vacío hasta que se suba el primer archivo de
+        # octubre. Apenas entre un archivo de octubre, este ranking pasa solo
+        # a mostrar octubre.
+        _mes_ref = log_df["FechaDt"].dropna().max()
+        mes_inicio = pd.Timestamp(year=_mes_ref.year, month=_mes_ref.month, day=1)
+        _MESES_ES = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+        ]
+        _mes_ref_label = f"{_MESES_ES[mes_inicio.month - 1]} {mes_inicio.year}"
+        st.markdown(
+            f'<div style="font-size:11px;color:#9aa1ab;margin:-6px 0 10px;">Mostrando {_mes_ref_label}</div>',
+            unsafe_allow_html=True
+        )
+
+        log_mes_todas = log_df[log_df["FechaDt"] >= mes_inicio].copy()
+        log_mes = log_mes_todas
+        if filtro_tienda is not None:
+            log_mes = log_mes[log_mes["Tienda"] == filtro_tienda]
+        elif filtro_auditor is not None:
+            log_mes = log_mes[log_mes["Tienda"].apply(get_auditor) == filtro_auditor]
+
+        if not len(log_mes):
+            st.markdown(
+                '<div class="empty-box">Sin faltantes acumulados este mes para esta selección.</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            for _c in ["CantidadFaltante", "Sustituido", "NoSustituido"]:
+                log_mes[_c] = pd.to_numeric(log_mes.get(_c), errors="coerce").fillna(0)
+
+            # Día actual / día anterior: las 2 fechas más recientes con datos
+            # cargados este mes (sobre TODAS las tiendas, para que la fecha de
+            # referencia no cambie según el filtro de tienda/auditor activo).
+            _fechas_mes = sorted(log_mes_todas["FechaDt"].dropna().dt.normalize().unique(), reverse=True)
+            _fecha_actual_op = _fechas_mes[0] if len(_fechas_mes) >= 1 else None
+            _fecha_anterior_op = _fechas_mes[1] if len(_fechas_mes) >= 2 else None
+            _label_anterior_op = _fecha_anterior_op.strftime("%d/%m") if _fecha_anterior_op is not None else "—"
+
+            st.markdown(
+                '<div class="resumen-title">Top 10 tiendas con más faltantes</div>',
+                unsafe_allow_html=True
+            )
+            _tienda_mes = log_mes.groupby("Tienda")["CantidadFaltante"].sum().rename("Acumulado mes")
+            if _fecha_anterior_op is not None:
+                _tienda_ant = (
+                    log_mes[log_mes["FechaDt"].dt.normalize() == _fecha_anterior_op]
+                    .groupby("Tienda")["CantidadFaltante"].sum().rename("Día anterior")
+                )
+            else:
+                _tienda_ant = pd.Series(dtype="int64", name="Día anterior")
+            rank_tiendas = (
+                pd.concat([_tienda_mes, _tienda_ant], axis=1).fillna(0).astype(int)
+                .reset_index().sort_values("Acumulado mes", ascending=False).head(10)
+            )
+            rank_tiendas = rank_tiendas.rename(columns={"Día anterior": f"Día anterior ({_label_anterior_op})"})
+            st.write(
+                resumen_table_html(
+                    rank_tiendas, "Tienda",
+                    {"Acumulado mes": lambda v: f"{int(v)}", f"Día anterior ({_label_anterior_op})": lambda v: f"{int(v)}"},
+                    total_label="Total (top 10)"
+                ),
+                unsafe_allow_html=True
+            )
+
+            st.markdown(
+                '<div class="resumen-title" style="margin-top:18px;">Top 10 productos con más faltantes</div>',
+                unsafe_allow_html=True
+            )
+            rank = log_mes.groupby("Producto", as_index=False).agg(
+                CantidadFaltante=("CantidadFaltante", "sum"),
+                Tiendas=("Tienda", "nunique"),
+            ).sort_values("CantidadFaltante", ascending=False).head(10)
+            rank = rank.rename(columns={
+                "CantidadFaltante": "Cantidad faltante", "Tiendas": "Tiendas afectadas"
+            })
+            rank["Cantidad faltante"] = rank["Cantidad faltante"].apply(lambda v: f"{int(v)}")
+            st.write(
+                table_html(rank[["Producto", "Cantidad faltante", "Tiendas afectadas"]]),
+                unsafe_allow_html=True
+            )
+
+            with st.expander(f"Ver historial completo del mes ({len(log_mes)} filas)"):
+                with st.container(height=380):
+                    st.write(
+                        table_html(
+                            log_mes.sort_values("FechaDt", ascending=False)
+                            [["Fecha", "Tienda", "Producto", "CantidadFaltante", "Sustituido", "NoSustituido"]]
+                            .rename(columns={"CantidadFaltante": "Cantidad faltante"})
+                        ),
+                        unsafe_allow_html=True
+                    )
+
+            csv_bytes = (
+                log_mes.sort_values("FechaDt")
+                [["Fecha", "Tienda", "Producto", "SKU", "CantidadFaltante", "Sustituido", "NoSustituido"]]
+                .to_csv(index=False).encode("utf-8-sig")
+            )
+            st.download_button(
+                "⬇️ Descargar historial completo del mes (CSV)",
+                data=csv_bytes,
+                file_name=f"faltantes_historial_{fecha_hoy.strftime('%Y-%m')}.csv",
+                mime="text/csv",
+                key="dl_faltantes_historial",
+            )
+
+    st.markdown(
+        '<div style="color:#6b7280;font-size:11.5px;text-align:center;margin-top:18px;">'
+        'Operativo · datos del Reporte diario · la mayoría de las secciones no guardan historial: volvé a subir '
+        'los archivos actualizados para regenerar el panel. Faltantes es la excepción: se va acumulando '
+        'mes a mes en el ranking de arriba.</div>',
+        unsafe_allow_html=True
+    )
+
+else:
+    st.markdown(
+        '<div class="empty-box" style="margin-top:20px;">'
+        'Subí al menos un archivo arriba para ver el panel operativo.</div>',
+        unsafe_allow_html=True
+    )
