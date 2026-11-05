@@ -240,12 +240,14 @@ def _adaptar_hoja_detalle_pedidos(d):
       respaldo solo si itemsQuantity no viene en el archivo (algunos
       exports no traen itemsPickedQuantity, o la traen vacía, y ahí
       Unidades quedaba en 0).
-    - El día que cuenta para cada pedido es "commerceDateCreated" (fecha de
-      CREACIÓN del pedido), no "deliveryFinishDate" (fecha de entrega) — a
-      pedido de Emi, todas las métricas (Pedidos, Venta $ y Unidades) se
-      agrupan por este criterio. Un pedido sin commerceDateCreated cargado
-      se descarta (se cae solo más abajo, al sacar las filas sin fecha
-      válida)."""
+    - El día que cuenta para Venta $ y Unidades es "commerceDateCreated"
+      (fecha de CREACIÓN del pedido) — a pedido de Emi. Pedidos, en cambio,
+      se cuenta por "deliveryFinishDate" (fecha de ENTREGA), también a
+      pedido de Emi: son dos criterios distintos a propósito, cada métrica
+      agrupada por el suyo. Un pedido sin commerceDateCreated cargado se
+      descarta (se cae solo más abajo, al sacar las filas sin fecha
+      válida); para Pedidos, si falta deliveryFinishDate puntualmente, esa
+      fila no suma en ningún día de entrega (no se inventa una fecha)."""
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
@@ -256,6 +258,7 @@ def _adaptar_hoja_detalle_pedidos(d):
     ).fillna(0)
     out = pd.DataFrame({
         "Fecha": pd.to_datetime(d["commerceDateCreated"], errors="coerce"),
+        "FechaEntrega": pd.to_datetime(d["deliveryFinishDate"], errors="coerce"),
         COL_VENTA: monto,
         COL_FACTURACION: monto,
         COL_UNIDADES: (
@@ -278,6 +281,15 @@ try:
         if "Fecha" not in d.columns:
             continue
         d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+        # Las hojas viejas (ya agregadas por día, sin detalle de pedido) no
+        # traen fecha de entrega aparte — para esas, Pedidos se sigue
+        # contando por la misma "Fecha" que Venta/Unidades (es lo único que
+        # traen). Para las hojas nuevas (detalle de pedidos), "FechaEntrega"
+        # ya viene calculada en _adaptar_hoja_detalle_pedidos.
+        if "FechaEntrega" not in d.columns:
+            d["FechaEntrega"] = d["Fecha"]
+        else:
+            d["FechaEntrega"] = pd.to_datetime(d["FechaEntrega"], errors="coerce")
         d = d.dropna(subset=["Fecha"])
         if len(d):
             frames.append(d)
@@ -296,12 +308,41 @@ for col in [COL_VENTA, COL_PEDIDOS, COL_UNIDADES, COL_FACTURACION]:
     raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
 
 raw["date"] = raw["Fecha"].dt.normalize()
+# Pedidos sale aparte, agrupado por fecha de ENTREGA (no de creación como
+# el resto) — a pedido de Emi. Se suma por separado y se pega después al
+# resto de las métricas (que siguen por "date"/fecha de creación), para que
+# cada fila del día final tenga: Venta/Unidades/Facturación de lo CREADO
+# ese día, y Pedidos de lo ENTREGADO ese día.
+raw_entrega = raw.dropna(subset=["FechaEntrega"]).copy()
+raw_entrega["date"] = raw_entrega["FechaEntrega"].dt.normalize()
+pedidos_por_entrega = raw_entrega.groupby("date", as_index=False)[COL_PEDIDOS].sum()
+
+raw["date"] = raw["Fecha"].dt.normalize()
 df = raw.groupby("date", as_index=False).agg({
-    COL_VENTA: "sum", COL_PEDIDOS: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum"
+    COL_VENTA: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum", COL_PEDIDOS: "sum"
 }).rename(columns={
-    COL_VENTA: "ecommerce_tax", COL_PEDIDOS: "orders",
-    COL_UNIDADES: "units", COL_FACTURACION: "company_tax"
+    COL_VENTA: "ecommerce_tax",
+    COL_UNIDADES: "units", COL_FACTURACION: "company_tax", COL_PEDIDOS: "orders_creacion"
 })
+# "orders_creacion" = Pedidos por fecha de CREACIÓN (lo que ya se usaba antes
+# en todo el Comparativo). "orders" = Pedidos por fecha de ENTREGA, que a
+# pedido de Emi se usa solo en la tarjeta principal de "Resultados del
+# período" (más abajo, suma_rango). Fin de semana y "Día a día" siguen con
+# "orders_creacion": contar por entrega ahí daría números artificialmente
+# bajos en los primeros días del rango, porque el archivo todavía no trae
+# cargados los pedidos creados ANTES de donde arranca su ventana de datos,
+# aunque se hayan entregado dentro de ese rango.
+# Outer: puede haber un día con entregas pero sin pedidos CREADOS ese mismo
+# día (o al revés), así que no alcanza con un merge "left" sobre "df".
+df = df.merge(
+    pedidos_por_entrega.rename(columns={COL_PEDIDOS: "orders"}),
+    on="date", how="outer"
+)
+df["orders"] = df["orders"].fillna(0)
+df["orders_creacion"] = df["orders_creacion"].fillna(0)
+for _c in ["ecommerce_tax", "units", "company_tax"]:
+    df[_c] = df[_c].fillna(0)
+df = df.sort_values("date").reset_index(drop=True)
 
 # Siempre mostramos el último día cerrado en Argentina (igual que Venta diaria).
 arg_today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
@@ -539,7 +580,10 @@ def finde_acumulado(year, month):
     if df[df["date"] == sunday].empty:
         return None
     sub = df[df["date"].isin([friday, saturday, sunday])]
-    totales = {col: sub[col].sum() for col in ["ecommerce_tax", "orders", "units", "company_tax"]}
+    # Pedidos por fecha de CREACIÓN acá (no de entrega) — ver comentario
+    # donde se arma "orders_creacion" más arriba.
+    totales = {col: sub[col].sum() for col in ["ecommerce_tax", "units", "company_tax"]}
+    totales["orders"] = sub["orders_creacion"].sum()
     return friday, sunday, totales
 
 finde_cur = finde_acumulado(cur_year, cur_month)
@@ -611,7 +655,11 @@ def finde_totales(friday, saturday, sunday):
     sub = df[df["date"].isin([friday, saturday, sunday])]
     if sub.empty:
         return None
-    return {col: sub[col].sum() for col in ["ecommerce_tax", "orders", "units", "company_tax"]}
+    # Pedidos por fecha de CREACIÓN acá (no de entrega) — ver comentario
+    # donde se arma "orders_creacion" más arriba.
+    totales = {col: sub[col].sum() for col in ["ecommerce_tax", "units", "company_tax"]}
+    totales["orders"] = sub["orders_creacion"].sum()
+    return totales
 
 def nth_finde_fechas(year, month, n):
     friday1, _, _ = primer_finde_fechas(year, month)
@@ -703,6 +751,10 @@ def dia_a_dia(year, month):
         # rompía ese merge con un KeyError.
         return pd.DataFrame(columns=_DIA_A_DIA_COLS)
     sub["dia"] = sub["date"].dt.day
+    # Pedidos por fecha de CREACIÓN acá (no de entrega): contar por entrega
+    # día por día daría números artificialmente bajos al principio del
+    # rango (ver comentario donde se arma "orders_creacion" más arriba).
+    sub["orders"] = sub["orders_creacion"]
     return sub[_DIA_A_DIA_COLS]
 
 dia_cur_full = dia_a_dia(cur_year, cur_month)
