@@ -291,7 +291,7 @@ def _pedidos_get_shared_bytes(shared_path):
 
 _PEDIDOS_RAW_COLS = {
     "commerceDateCreated", "deliveryFinishDate", "commerceId", "commerceSequentialId",
-    "salesChannelPrefix", "totalAmount", "itemsPickedQuantity",
+    "salesChannelPrefix", "totalAmount", "itemsQuantity",
 }
 _COL_PEDIDOS_VIEJO = "Pedidos Facturados con Venta Operativa - Ecommerce"
 _COL_VENTA_VIEJO = "Venta - Ecommerce"
@@ -506,17 +506,35 @@ df["orders"] = df["orders_vsventas"].where(df["orders_vsventas"].notna(), df["or
 df["units"] = df["unidades_vsventas"].where(
     df["unidades_vsventas"].notna(), df["units_facturacion"]
 )
-# "orders_entrega"/"orders_entrega_real": antes salían de un segundo conteo
-# por fecha de ENTREGA (deliveryFinishDate); ahora, a pedido de Emi, el
-# Pedidos de toda esta página sale por fecha de CREACIÓN del pedido
-# (commerceDateCreated) — el mismo criterio que ya usa Comparativo — así
-# que estos dos quedan como alias de "orders"/el dato sin respaldo. Se
-# mantienen estos nombres para no tener que tocar cada lugar de la página
-# donde ya se usan (tarjeta DIARIO, MES EN CURSO, Top 5 del día, Resumen
-# para GDN, imagen descargable).
-df["orders_entrega"] = df["orders"]
+# "orders_entrega_real": Pedidos CREADOS ese día (commerceDateCreated) — el
+# mismo criterio que "orders"/Comparativo. Se usa para MES EN CURSO (y los
+# lugares que lo acompañan: resumen imagen, GDN), a pedido de Emi: lo que
+# importa ahí es cuánto entró ese mes, sin importar cuándo se termine de
+# entregar.
 df["orders_entrega_real"] = df["orders_vsventas"].fillna(0)
-df = df.drop(columns=["orders_vsventas", "monto_vsventas", "unidades_vsventas"])
+
+# "orders_entrega": acá sí, Pedidos ENTREGADOS ese día (deliveryFinishDate),
+# a pedido de Emi — para la tarjeta "Pedidos del día" (arriba de todo, en el
+# encabezado) y sus copias (resumen imagen, GDN, tarjetas mobile). Si para
+# esa fecha puntual "Vs de ventas" todavía no tiene el dato por entrega (por
+# ejemplo, el día más reciente recién subido), se usa como respaldo "orders"
+# (por creación, con su propio respaldo de Facturación) para no dejar la
+# tarjeta en blanco.
+df = df.merge(
+    _pedidos_dia_vs_entrega.rename(columns={
+        "orders_vsventas": "orders_vsventas_entrega",
+        "monto_vsventas": "monto_vsventas_entrega",
+        "unidades_vsventas": "unidades_vsventas_entrega",
+    }),
+    on="date", how="left"
+)
+df["orders_entrega"] = df["orders_vsventas_entrega"].where(
+    df["orders_vsventas_entrega"].notna(), df["orders"]
+)
+df = df.drop(columns=[
+    "orders_vsventas", "monto_vsventas", "unidades_vsventas",
+    "orders_vsventas_entrega", "monto_vsventas_entrega", "unidades_vsventas_entrega",
+])
 
 if len(df_tiendas):
     df_tiendas = df_tiendas.rename(columns={"orders": "orders_facturados"})
