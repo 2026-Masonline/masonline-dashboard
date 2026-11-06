@@ -14,6 +14,36 @@ st.set_page_config(
     layout="wide"
 )
 
+# Venta $ (Venta Ecommerce) y Facturación salen de "data.csv" — el mismo
+# archivo que ya arma Venta diaria y Venta fin de semana a partir del Excel
+# "Venta Con y sin Impuesto" que se sube en la página principal (app.py). A
+# pedido de Emi: antes Comparativo sacaba la Venta $ de "Vs de ventas"
+# (originalAmount), que es un sistema distinto y el total no coincidía con
+# Venta diaria. Pedidos y Unidades siguen saliendo de "Vs de ventas", sin
+# cambios — esto solo reemplaza las dos columnas de plata.
+DATA_FILE = Path(__file__).resolve().parent.parent / "data.csv"
+
+def _cargar_venta_facturacion_csv():
+    try:
+        d = pd.read_csv(DATA_FILE)
+    except Exception:
+        return pd.DataFrame(columns=["date", "ecommerce_tax", "company_tax"])
+    d["date"] = pd.to_datetime(d.get("date"), errors="coerce").dt.normalize()
+    for col in ["ecommerce_tax", "company_tax"]:
+        if col not in d.columns:
+            d[col] = 0
+        d[col] = pd.to_numeric(d[col], errors="coerce").fillna(0)
+    d = d.dropna(subset=["date"])
+    return d[["date", "ecommerce_tax", "company_tax"]]
+
+_facturacion_df = _cargar_venta_facturacion_csv()
+if _facturacion_df.empty:
+    st.warning(
+        "No encontré datos de Facturación (data.csv) — subí el Excel 'Venta Con y sin "
+        "Impuesto' en la página principal para que la Venta $ de este comparativo coincida "
+        "con Venta diaria. Mientras tanto, Venta $ va a aparecer en $0."
+    )
+
 CSS_TEXT = """
     .stApp { background: #ffffff; }
     .block-container { max-width: 1300px; padding: 0 1.2rem 1.2rem; }
@@ -220,8 +250,8 @@ def _es_hoja_detalle_pedidos(d):
 
 def _adaptar_hoja_detalle_pedidos(d):
     """Arma, a partir del detalle de pedidos (una fila por pedido), las
-    mismas 4 columnas por día que traían las hojas viejas ya agregadas, con
-    el criterio que indicó Emi:
+    columnas por día que necesita el resto de la página, con el criterio
+    que indicó Emi:
     - Se descartan los pedidos del canal Pick&Mix (salesChannelPrefix =
       "PM") y las devoluciones (commerceId que contiene "RMA") — igual que
       ya se hace con Pedidos +72h en Operativo. De paso, esos son
@@ -233,21 +263,24 @@ def _adaptar_hoja_detalle_pedidos(d):
       commerceSequentialId puede repetirse entre envíos de un mismo pedido,
       aunque en la práctica, una vez sacados PM y RMA, cada fila que queda
       ya es una commerceSequentialId distinta).
-    - "Venta - Ecommerce" y "Facturacion" = originalAmount (lo vendido en $,
-      con impuesto incluido) — no "totalAmount", que en este archivo es lo
-      que paga el cliente por el ENVÍO, no el pedido en sí.
+    - COL_VENTA/COL_FACTURACION (originalAmount) se calculan acá pero YA NO
+      se usan para la Venta $ ni la Facturación que se muestran en la
+      página: esas dos salen de data.csv (Facturación / "Venta Con y sin
+      Impuesto"), el mismo archivo que usa Venta diaria, para que los
+      totales coincidan entre páginas — a pedido de Emi.
     - "Cantidad" (unidades) = itemsQuantity, con itemsPickedQuantity como
       respaldo solo si itemsQuantity no viene en el archivo (algunos
       exports no traen itemsPickedQuantity, o la traen vacía, y ahí
       Unidades quedaba en 0).
-    - El día que cuenta para Venta $ y Unidades es "commerceDateCreated"
-      (fecha de CREACIÓN del pedido) — a pedido de Emi. Pedidos, en cambio,
-      se cuenta por "deliveryFinishDate" (fecha de ENTREGA), también a
-      pedido de Emi: son dos criterios distintos a propósito, cada métrica
-      agrupada por el suyo. Un pedido sin commerceDateCreated cargado se
-      descarta (se cae solo más abajo, al sacar las filas sin fecha
-      válida); para Pedidos, si falta deliveryFinishDate puntualmente, esa
-      fila no suma en ningún día de entrega (no se inventa una fecha)."""
+    - El día que cuenta para Unidades es "commerceDateCreated" (fecha de
+      CREACIÓN del pedido). Pedidos, en cambio, se cuenta por
+      "deliveryFinishDate" (fecha de ENTREGA) solo en la tarjeta principal
+      de "Resultados del período" — en Fin de semana y Día a día sigue por
+      creación (ver comentario más abajo, donde se arma "orders_creacion").
+      Un pedido sin commerceDateCreated cargado se descarta (se cae solo
+      más abajo, al sacar las filas sin fecha válida); para Pedidos, si
+      falta deliveryFinishDate puntualmente, esa fila no suma en ningún día
+      de entrega (no se inventa una fecha)."""
     d = d.copy()
     es_pm = d["salesChannelPrefix"].astype(str).str.strip().str.upper() == "PM"
     es_rma = d["commerceId"].astype(str).str.upper().str.contains("RMA", na=False)
@@ -302,7 +335,7 @@ if raw.empty:
     st.error("No encontré filas con fecha válida en el archivo 'Vs de ventas'.")
     st.stop()
 
-for col in [COL_VENTA, COL_PEDIDOS, COL_UNIDADES, COL_FACTURACION]:
+for col in [COL_PEDIDOS, COL_UNIDADES]:
     if col not in raw.columns:
         raw[col] = 0
     raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
@@ -311,18 +344,17 @@ raw["date"] = raw["Fecha"].dt.normalize()
 # Pedidos sale aparte, agrupado por fecha de ENTREGA (no de creación como
 # el resto) — a pedido de Emi. Se suma por separado y se pega después al
 # resto de las métricas (que siguen por "date"/fecha de creación), para que
-# cada fila del día final tenga: Venta/Unidades/Facturación de lo CREADO
-# ese día, y Pedidos de lo ENTREGADO ese día.
+# cada fila del día final tenga: Unidades de lo CREADO ese día, y Pedidos de
+# lo ENTREGADO ese día.
 raw_entrega = raw.dropna(subset=["FechaEntrega"]).copy()
 raw_entrega["date"] = raw_entrega["FechaEntrega"].dt.normalize()
 pedidos_por_entrega = raw_entrega.groupby("date", as_index=False)[COL_PEDIDOS].sum()
 
 raw["date"] = raw["Fecha"].dt.normalize()
 df = raw.groupby("date", as_index=False).agg({
-    COL_VENTA: "sum", COL_UNIDADES: "sum", COL_FACTURACION: "sum", COL_PEDIDOS: "sum"
+    COL_UNIDADES: "sum", COL_PEDIDOS: "sum"
 }).rename(columns={
-    COL_VENTA: "ecommerce_tax",
-    COL_UNIDADES: "units", COL_FACTURACION: "company_tax", COL_PEDIDOS: "orders_creacion"
+    COL_UNIDADES: "units", COL_PEDIDOS: "orders_creacion"
 })
 # "orders_creacion" = Pedidos por fecha de CREACIÓN (lo que ya se usaba antes
 # en todo el Comparativo). "orders" = Pedidos por fecha de ENTREGA, que a
@@ -338,6 +370,10 @@ df = df.merge(
     pedidos_por_entrega.rename(columns={COL_PEDIDOS: "orders"}),
     on="date", how="outer"
 )
+# Venta $ y Facturación vienen de data.csv (ver más arriba), no de "Vs de
+# ventas" — también "outer" porque puede haber días con Facturación cargada
+# pero sin pedidos en "Vs de ventas" todavía, o al revés.
+df = df.merge(_facturacion_df, on="date", how="outer")
 df["orders"] = df["orders"].fillna(0)
 df["orders_creacion"] = df["orders_creacion"].fillna(0)
 for _c in ["ecommerce_tax", "units", "company_tax"]:
