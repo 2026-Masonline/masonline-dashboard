@@ -111,57 +111,354 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-DATA_FILE = Path(__file__).resolve().parent.parent / "data.csv"
-DATA_TIENDAS_FILE = Path(__file__).resolve().parent.parent / "data_tiendas.csv"
 LOGO_FILE = Path(__file__).resolve().parent.parent / "masonline_logo.png"
 _FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 _RESUMEN_FONT_BOLD_PATH = _FONTS_DIR / "DejaVuSans-Bold.ttf"
 _RESUMEN_FONT_REG_PATH = _FONTS_DIR / "DejaVuSans.ttf"
 
-try:
-    base_df = pd.read_csv(DATA_FILE)
-    base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
-    for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
-        base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
-    # "company_tax_neto" (Venta Comercial Operativa, SIN impuesto) — mismo
-    # criterio que Venta diaria: COMPAÑÍA en esta página también muestra la
-    # venta SIN impuesto, con Facturación (con impuesto) como respaldo para
-    # fechas sin ese dato todavía (data.csv viejo, o mes no resubido).
-    if "company_tax_neto" not in base_df.columns:
-        base_df["company_tax_neto"] = pd.NA
-    base_df["company_tax_neto"] = pd.to_numeric(base_df["company_tax_neto"], errors="coerce")
-    # Guardamos la Compañía CON impuesto aparte (antes de pisarla con la
-    # versión sin impuesto) — la tarjeta COMPAÑÍA sigue mostrando sin
-    # impuesto, pero el % SHARE compara impuesto contra impuesto (Ecommerce
-    # con impuesto / Compañía con impuesto), a pedido de Emi.
-    base_df["company_tax_con_impuesto"] = base_df["company_tax"]
-    base_df["company_tax"] = base_df["company_tax_neto"].where(
-        base_df["company_tax_neto"].notna(), base_df["company_tax"]
+# ---------------------------------------------------------------------
+# Venta $ / Facturación: esta página tiene su PROPIO archivo guardado
+# aparte (cuadro de carga acá abajo), separado de data.csv — a pedido de
+# Emi: si subiera el Excel "Venta Con y sin Impuesto" por la vía de
+# siempre (página principal), eso actualiza data.csv y le cambia los
+# números a Venta diaria / Venta fin de semana, que no quiere tocar
+# cuando solo está cerrando un mes acá. Queda 100% independiente: no se
+# completa con data.csv los días/meses que todavía no se subieron acá.
+# Pedidos y Unidades siguen saliendo de "Vs de ventas" (compartido con el
+# resto de las páginas, ver más abajo), sin cambios.
+# ---------------------------------------------------------------------
+SHARED_DIR_CIERRE = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
+SHARED_CIERRE_VENTA_PATH = SHARED_DIR_CIERRE / "cierre_mes_venta.csv"
+SHARED_CIERRE_VENTA_TIENDAS_PATH = SHARED_DIR_CIERRE / "cierre_mes_venta_tiendas.csv"
+
+# Código de tienda (columna "Tienda" del Excel) -> nombre. Mismo listado
+# que ya usa la página principal, copiado acá porque cada página arma su
+# propia lógica (convención del proyecto).
+TIENDA_MAP = {
+    "1002": "Rio IV", "1003": "San Luis", "1004": "San Fernando", "1005": "Las Heras",
+    "1006": "San Juan", "1007": "La Rioja", "1008": "Corrientes", "1010": "Córdoba Sur",
+    "1011": "Salta", "1012": "Santiago", "1013": "Tigre", "1014": "Lujan",
+    "1015": "Maipú", "1016": "Avellaneda 2", "1017": "La Tablada", "1018": "Quilmes",
+    "1020": "Tucumán", "1021": "Neuquén 2", "1022": "Bariloche", "1023": "La Pampa",
+    "1024": "Formosa", "1026": "Catamarca", "1027": "Mataderos", "1028": "Alte Brown",
+    "1029": "Moreno", "1030": "José C Paz", "1031": "Jujuy", "1032": "Malvinas Arg",
+    "1033": "Rio Salí", "1035": "3 de Febrero", "1036": "Moreno Shopping", "1037": "San Martin",
+    "1038": "Cipolletti", "1039": "Paraná 2", "1042": "Trelew", "1043": "Laferrere",
+    "1044": "Hurlingham (AV, Villegas)", "1045": "Hurlingham (AV, Vergara)", "1046": "Pergamino",
+    "1050": "Lanús", "1051": "Posadas", "1052": "Oran", "1053": "Viedma",
+    "1054": "Olavarría", "1055": "Villa Mercedes", "1056": "Villa Nueva",
+    "1057": "Comodoro Rivadavia", "1058": "Resistencia", "1059": "Gonzalez Catán",
+    "1060": "Fuerza Aérea (Cba)", "1061": "Junín", "1067": "San Martín (Mza)",
+    "1068": "Palmares (Mza)", "1069": "STS", "1074": "Goya (Ctes)",
+    "1075": "Salta Fuerza Aérea", "1076": "Lomas de Zamora", "1077": "Gral Pico (La Pampa)",
+    "1078": "Salta Tartagal", "1080": "Santiago del Estero Sur", "1081": "Rawson San Juan",
+    "1082": "Tucumán (Av, Jujuy)", "1084": "San Vicente", "1085": "Corrientes (Av, Maipú)",
+    "1086": "Formosa II", "1087": "Pilar", "1088": "Tuc, Concepción", "1092": "San Juan Norte",
+    "1093": "Comodoro Rivadavia Norte", "1096": "Caseros", "1097": "Donato Alvarez (Cba)",
+    "1098": "R,S, Peña, Chaco", "1099": "Posadas II", "1100": "Santa Rosa (La Pampa) II",
+    "1106": "Tuc, Ejército Del Norte", "1108": "Puerto Madryn", "1110": "Claypole",
+    "1111": "San Pedro de Jujuy", "1114": "Clorinda", "1115": "General Roca",
+    "1116": "Moron", "1119": "Moreno Derqui", "2997": "Constituyentes", "2998": "San Justo",
+    "2999": "Avellaneda", "3601": "La Plata", "3602": "Bahía Blanca", "3603": "Santa Fe",
+    "3604": "Paraná", "3605": "Córdoba Oeste", "3606": "Córdoba Este", "3608": "Neuquén",
+    "3613": "Mendoza", "4001": "Campana",
+}
+
+def _cierre_norm_tienda_code(v):
+    try:
+        return str(int(float(v)))
+    except (TypeError, ValueError):
+        return str(v).strip()
+
+def _cierre_tienda_nombre(codigo):
+    return TIENDA_MAP.get(codigo, codigo)
+
+def _cierre_github_headers():
+    token = st.secrets.get("GITHUB_TOKEN") if hasattr(st, "secrets") else None
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Masonline-Dashboard",
+    }
+
+def _cierre_fetch_from_github(shared_path):
+    headers = _cierre_github_headers()
+    if not headers:
+        return None
+    import urllib.request
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}?ref={branch}"
+    raw_headers = {**headers, "Accept": "application/vnd.github.raw+json"}
+    try:
+        req = urllib.request.Request(url, headers=raw_headers, method="GET")
+        with urllib.request.urlopen(req, timeout=60) as response:
+            return response.read()
+    except Exception:
+        return None
+
+def _cierre_get_shared_bytes(shared_path):
+    if shared_path.exists():
+        try:
+            data = shared_path.read_bytes()
+            if data:
+                return data
+        except Exception:
+            pass
+    content = _cierre_fetch_from_github(shared_path)
+    if content:
+        try:
+            shared_path.parent.mkdir(parents=True, exist_ok=True)
+            shared_path.write_bytes(content)
+        except Exception:
+            pass
+        return content
+    return None
+
+def _cierre_save_to_github(shared_path, content_bytes, label):
+    headers = _cierre_github_headers()
+    if not headers:
+        return False, "no hay credenciales de GitHub configuradas (GITHUB_TOKEN)"
+    import urllib.request
+    import urllib.error
+    import json as _json
+    import base64 as _base64
+    repo = "2026-Masonline/masonline-dashboard"
+    branch = "main"
+    repo_path = f"shared_uploads/{shared_path.name}"
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+    try:
+        sha = None
+        request_get = urllib.request.Request(f"{url}?ref={branch}", headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request_get, timeout=60) as response:
+                sha = _json.loads(response.read().decode("utf-8"))["sha"]
+        except urllib.error.HTTPError as e_get:
+            if e_get.code != 404:
+                raise
+            # 404 = todavía no existe ese archivo en el repo; se crea solo.
+        payload = {
+            "message": f"Actualizar reporte - {label}",
+            "content": _base64.b64encode(content_bytes).decode("utf-8"),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        request_put = urllib.request.Request(
+            url, data=_json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"}, method="PUT",
+        )
+        with urllib.request.urlopen(request_put, timeout=60) as response:
+            response.read()
+        return True, None
+    except urllib.error.HTTPError as e:
+        try:
+            detalle = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            detalle = ""
+        return False, f"HTTP {e.code} {e.reason} {detalle}".strip()
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
+
+def _cierre_normalize_uploaded_excel(file):
+    """Mismo formato que 'Venta Con y sin Impuesto' (Fecha/Facturacion/
+    Venta - Ecommerce), pero sin exigir las columnas de Pedidos/Cantidad:
+    esta página ya saca esos dos datos de 'Vs de ventas'."""
+    raw = pd.read_excel(file, sheet_name=0, header=None)
+    header_row = None
+    for i in range(min(10, len(raw))):
+        vals = raw.iloc[i].astype(str).str.strip().tolist()
+        if "Fecha" in vals and "Facturacion" in vals and "Venta - Ecommerce" in vals:
+            header_row = i
+            break
+    if header_row is None:
+        raise ValueError(
+            "no encontré las columnas Fecha, Facturacion y Venta - Ecommerce"
+        )
+    d = pd.read_excel(file, sheet_name=0, header=header_row)
+    required = ["Fecha", "Facturacion", "Venta - Ecommerce"]
+    missing = [c for c in required if c not in d.columns]
+    if missing:
+        raise ValueError("faltan columnas: " + ", ".join(missing))
+    d["Fecha"] = pd.to_datetime(d["Fecha"], errors="coerce")
+    for c in required[1:]:
+        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
+    COL_COMPANY_NETO = "Venta Comercial Operativa"
+    if COL_COMPANY_NETO in d.columns:
+        d[COL_COMPANY_NETO] = pd.to_numeric(d[COL_COMPANY_NETO], errors="coerce").fillna(0)
+    else:
+        d[COL_COMPANY_NETO] = d["Facturacion"]
+    d = d.dropna(subset=["Fecha"])
+
+    out = d.groupby("Fecha", as_index=False).agg(
+        company_tax=("Facturacion", "sum"),
+        company_tax_neto=(COL_COMPANY_NETO, "sum"),
+        ecommerce_tax=("Venta - Ecommerce", "sum"),
     )
+    out = out.rename(columns={"Fecha": "date"})
+
+    out_tiendas = pd.DataFrame(columns=["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax"])
+    if "Tienda" in d.columns:
+        dt = d.copy()
+        dt["Tienda"] = dt["Tienda"].apply(_cierre_norm_tienda_code)
+        out_tiendas = dt.groupby(["Fecha", "Tienda"], as_index=False).agg(
+            company_tax=("Facturacion", "sum"),
+            ecommerce_tax=("Venta - Ecommerce", "sum"),
+        )
+        out_tiendas = out_tiendas.rename(columns={"Fecha": "date"})
+        out_tiendas["Nombre"] = out_tiendas["Tienda"].apply(_cierre_tienda_nombre)
+
+    return out, out_tiendas
+
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:14px 16px;margin-bottom:16px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    CARGAR VENTA DEL MES A CERRAR
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Subí acá el/los Excel "Venta Con y sin Impuesto" del mes que estás cerrando (podés
+    elegir más de uno a la vez). Queda guardado solo para esta página — no modifica
+    Venta diaria ni Venta fin de semana.
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+_cierre_uploads = st.file_uploader(
+    "Archivos Venta Con y sin Impuesto (Cierre de mes)",
+    type=["xlsx", "xls"],
+    key="cierre_mes_upload",
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+)
+
+if _cierre_uploads:
+    _cierre_nuevas, _cierre_nuevas_tiendas, _cierre_errores = [], [], []
+    for _cf in _cierre_uploads:
+        try:
+            _co, _cot = _cierre_normalize_uploaded_excel(_cf)
+            _cierre_nuevas.append(_co)
+            if len(_cot):
+                _cierre_nuevas_tiendas.append(_cot)
+        except Exception as _ce:
+            _cierre_errores.append(f"{_cf.name}: {_ce}")
+
+    if _cierre_errores:
+        st.error("No pude procesar: " + " · ".join(_cierre_errores))
+
+    if _cierre_nuevas:
+        _cierre_prev_bytes = _cierre_get_shared_bytes(SHARED_CIERRE_VENTA_PATH)
+        _cierre_prev_df = pd.DataFrame(columns=["date", "company_tax", "company_tax_neto", "ecommerce_tax"])
+        if _cierre_prev_bytes:
+            try:
+                _cierre_prev_df = pd.read_csv(io.BytesIO(_cierre_prev_bytes))
+                _cierre_prev_df["date"] = pd.to_datetime(_cierre_prev_df["date"], errors="coerce")
+            except Exception:
+                pass
+        _cierre_combinado = pd.concat([_cierre_prev_df] + _cierre_nuevas, ignore_index=True)
+        _cierre_combinado = (
+            _cierre_combinado.dropna(subset=["date"])
+            .sort_values("date")
+            .drop_duplicates(subset=["date"], keep="last")
+            .reset_index(drop=True)
+        )
+        _cierre_csv_bytes = _cierre_combinado.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
+        try:
+            SHARED_CIERRE_VENTA_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SHARED_CIERRE_VENTA_PATH.write_bytes(_cierre_csv_bytes)
+        except Exception:
+            pass
+        _cierre_ok, _cierre_err = _cierre_save_to_github(
+            SHARED_CIERRE_VENTA_PATH, _cierre_csv_bytes, "Cierre de mes (Venta)"
+        )
+
+        if _cierre_nuevas_tiendas:
+            _cierre_prev_bytes_t = _cierre_get_shared_bytes(SHARED_CIERRE_VENTA_TIENDAS_PATH)
+            _cierre_prev_df_t = pd.DataFrame(
+                columns=["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax"]
+            )
+            if _cierre_prev_bytes_t:
+                try:
+                    _cierre_prev_df_t = pd.read_csv(io.BytesIO(_cierre_prev_bytes_t))
+                    _cierre_prev_df_t["date"] = pd.to_datetime(_cierre_prev_df_t["date"], errors="coerce")
+                    _cierre_prev_df_t["Tienda"] = _cierre_prev_df_t["Tienda"].astype(str)
+                except Exception:
+                    pass
+            _cierre_combinado_t = pd.concat([_cierre_prev_df_t] + _cierre_nuevas_tiendas, ignore_index=True)
+            _cierre_combinado_t = (
+                _cierre_combinado_t.dropna(subset=["date"])
+                .sort_values(["date", "Tienda"])
+                .drop_duplicates(subset=["date", "Tienda"], keep="last")
+                .reset_index(drop=True)
+            )
+            _cierre_csv_bytes_t = _cierre_combinado_t.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
+            try:
+                SHARED_CIERRE_VENTA_TIENDAS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                SHARED_CIERRE_VENTA_TIENDAS_PATH.write_bytes(_cierre_csv_bytes_t)
+            except Exception:
+                pass
+            _cierre_save_to_github(
+                SHARED_CIERRE_VENTA_TIENDAS_PATH, _cierre_csv_bytes_t, "Cierre de mes (Venta por tienda)"
+            )
+
+        if _cierre_ok:
+            st.success("Archivo(s) cargados y guardados — ya se ven abajo.")
+        else:
+            st.warning(
+                "Se cargó para esta sesión, pero el respaldo permanente en GitHub falló "
+                f"({_cierre_err}) — si la app se reinicia vas a tener que volver a subirlo."
+            )
+
+_cierre_venta_bytes = _cierre_get_shared_bytes(SHARED_CIERRE_VENTA_PATH)
+if _cierre_venta_bytes:
+    base_df = pd.read_csv(io.BytesIO(_cierre_venta_bytes))
+    base_df["date"] = pd.to_datetime(base_df["date"], errors="coerce")
+    for col in ["company_tax", "ecommerce_tax", "company_tax_neto"]:
+        if col not in base_df.columns:
+            base_df[col] = 0
+        base_df[col] = pd.to_numeric(base_df[col], errors="coerce").fillna(0)
     base_df = base_df.dropna(subset=["date"])
-except Exception as e:
-    st.error(f"No se pudo leer data.csv: {e}")
-    st.stop()
+else:
+    base_df = pd.DataFrame(columns=["date", "company_tax", "company_tax_neto", "ecommerce_tax"])
+    base_df["date"] = pd.to_datetime(base_df["date"])
+
+# "orders"/"units" de acá quedan en 0 a propósito: más abajo se pisan
+# siempre con lo que traiga "Vs de ventas" (fuente real de Pedidos y
+# Unidades en esta página) para las fechas que tenga; si Vs de ventas no
+# tiene una fecha puntual, antes caía a data.csv como respaldo — ahora, al
+# ser esta página independiente, esa fecha simplemente queda en 0 en vez
+# de arrastrar un dato de otra fuente.
+base_df["orders"] = 0
+base_df["units"] = 0
+# Guardamos la Compañía CON impuesto aparte (antes de pisarla con la
+# versión sin impuesto) — la tarjeta COMPAÑÍA sigue mostrando sin
+# impuesto, pero el % SHARE compara impuesto contra impuesto (Ecommerce
+# con impuesto / Compañía con impuesto), a pedido de Emi.
+base_df["company_tax_con_impuesto"] = base_df["company_tax"]
+base_df["company_tax"] = base_df["company_tax_neto"].where(
+    base_df["company_tax_neto"].notna(), base_df["company_tax"]
+)
 
 TIENDAS_COLUMNS = ["date", "Tienda", "Nombre", "company_tax", "ecommerce_tax", "orders", "units"]
 
-def _empty_tiendas_df():
-    empty = pd.DataFrame(columns=TIENDAS_COLUMNS)
-    empty["date"] = pd.to_datetime(empty["date"])
-    return empty
-
-try:
-    if DATA_TIENDAS_FILE.exists():
-        base_df_tiendas = pd.read_csv(DATA_TIENDAS_FILE)
-        base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
-        base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
-        for col in ["company_tax", "ecommerce_tax", "orders", "units"]:
-            base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
-        base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
-    else:
-        base_df_tiendas = _empty_tiendas_df()
-except Exception:
-    base_df_tiendas = _empty_tiendas_df()
+_cierre_tiendas_bytes = _cierre_get_shared_bytes(SHARED_CIERRE_VENTA_TIENDAS_PATH)
+if _cierre_tiendas_bytes:
+    base_df_tiendas = pd.read_csv(io.BytesIO(_cierre_tiendas_bytes))
+    base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"], errors="coerce")
+    base_df_tiendas["Tienda"] = base_df_tiendas["Tienda"].astype(str)
+    for col in ["company_tax", "ecommerce_tax"]:
+        base_df_tiendas[col] = pd.to_numeric(base_df_tiendas[col], errors="coerce").fillna(0)
+    base_df_tiendas = base_df_tiendas.dropna(subset=["date"])
+    base_df_tiendas["orders"] = 0
+    base_df_tiendas["units"] = 0
+    base_df_tiendas = base_df_tiendas[TIENDAS_COLUMNS]
+else:
+    base_df_tiendas = pd.DataFrame(columns=TIENDAS_COLUMNS)
+    base_df_tiendas["date"] = pd.to_datetime(base_df_tiendas["date"])
 
 df = base_df.copy()
 df_tiendas = base_df_tiendas.copy()
@@ -400,7 +697,7 @@ current = df[
 if current.empty:
     st.error(
         f"Todavía no hay datos de {MES_NOMBRE.lower()} {REF_YEAR} cargados. "
-        'Subí el Excel "Venta Con y sin Impuesto" de ese mes desde la pestaña "app".'
+        'Subí el Excel "Venta Con y sin Impuesto" de ese mes en el cuadro de arriba.'
     )
     st.stop()
 
