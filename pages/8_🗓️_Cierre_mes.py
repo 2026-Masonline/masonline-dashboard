@@ -130,6 +130,11 @@ _RESUMEN_FONT_REG_PATH = _FONTS_DIR / "DejaVuSans.ttf"
 SHARED_DIR_CIERRE = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
 SHARED_CIERRE_VENTA_PATH = SHARED_DIR_CIERRE / "cierre_mes_venta.csv"
 SHARED_CIERRE_VENTA_TIENDAS_PATH = SHARED_DIR_CIERRE / "cierre_mes_venta_tiendas.csv"
+# Pedidos (Vs de ventas) de esta página, independiente del "vsventas.xlsx"
+# compartido que usan Comparativo/Venta diaria/etc. — mismo motivo que la
+# Venta $ de arriba: a pedido de Emi, subirlo acá no les tiene que tocar
+# nada a esas otras páginas.
+SHARED_CIERRE_PEDIDOS_PATH = SHARED_DIR_CIERRE / "cierre_mes_pedidos.xlsx"
 
 # Código de tienda (columna "Tienda" del Excel) -> nombre. Mismo listado
 # que ya usa la página principal, copiado acá porque cada página arma su
@@ -413,6 +418,46 @@ if _cierre_uploads:
                 f"({_cierre_err}) — si la app se reinicia vas a tener que volver a subirlo."
             )
 
+st.markdown("""
+<div style="background:white;border:1px solid #e8ebef;border-radius:12px;
+padding:14px 16px;margin-bottom:16px;">
+  <div style="font-size:13px;font-weight:800;color:#20252b;margin-bottom:5px;">
+    CARGAR PEDIDOS DEL MES A CERRAR
+  </div>
+  <div style="font-size:12px;color:#6b7280;">
+    Subí acá el Excel "Vs de ventas" (Pedidos) del mes que estás cerrando. Queda guardado
+    solo para esta página — no modifica Comparativo, Venta diaria ni el resto de las
+    pestañas que usan ese mismo reporte. Reemplaza al anterior con cada subida (subí el
+    archivo completo, con todas las hojas/años que necesites ver acá).
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+_cierre_pedidos_upload = st.file_uploader(
+    "Archivo Vs de ventas / Pedidos (Cierre de mes)",
+    type=["xlsx", "xls"],
+    key="cierre_mes_pedidos_upload",
+    label_visibility="collapsed",
+)
+
+if _cierre_pedidos_upload is not None:
+    _cierre_pedidos_bytes_nuevo = _cierre_pedidos_upload.getvalue()
+    try:
+        SHARED_CIERRE_PEDIDOS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SHARED_CIERRE_PEDIDOS_PATH.write_bytes(_cierre_pedidos_bytes_nuevo)
+    except Exception:
+        pass
+    _cierre_pedidos_ok, _cierre_pedidos_err = _cierre_save_to_github(
+        SHARED_CIERRE_PEDIDOS_PATH, _cierre_pedidos_bytes_nuevo, "Cierre de mes (Pedidos)"
+    )
+    if _cierre_pedidos_ok:
+        st.success("Archivo de Pedidos cargado y guardado — ya se ve abajo.")
+    else:
+        st.warning(
+            "Se cargó para esta sesión, pero el respaldo permanente en GitHub falló "
+            f"({_cierre_pedidos_err}) — si la app se reinicia vas a tener que volver a subirlo."
+        )
+
 _cierre_venta_bytes = _cierre_get_shared_bytes(SHARED_CIERRE_VENTA_PATH)
 if _cierre_venta_bytes:
     base_df = pd.read_csv(io.BytesIO(_cierre_venta_bytes))
@@ -467,13 +512,14 @@ if len(df_tiendas):
     df_tiendas = df_tiendas.dropna(subset=["date"]).copy()
 
 # ---------------------------------------------------------------------
-# Pedidos y Unidades: salen de "Vs de ventas" (el mismo archivo compartido
-# que ya usan Venta diaria, Comparativo, Venta hoy, etc.), contados por
-# fecha de CREACIÓN del pedido — mismo criterio que Venta diaria. La Venta
-# $ (ecommerce_tax) sigue 100% de Facturación (data.csv), sin tocar.
+# Pedidos y Unidades: salen del "Vs de ventas" PROPIO de esta página
+# (cuadro "CARGAR PEDIDOS DEL MES A CERRAR" más arriba, archivo
+# SHARED_CIERRE_PEDIDOS_PATH) — no del "vsventas.xlsx" compartido que usan
+# Venta diaria, Comparativo, Venta hoy, etc., a pedido de Emi (mismo
+# motivo que la Venta $). Se cuentan por fecha de CREACIÓN del pedido —
+# mismo criterio que Venta diaria.
 # ---------------------------------------------------------------------
-SHARED_DIR_PEDIDOS = Path(tempfile.gettempdir()) / "masonline_shared_uploads"
-SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_DIR_PEDIDOS / "vsventas.xlsx"
+SHARED_VSVENTAS_PATH_PEDIDOS = SHARED_CIERRE_PEDIDOS_PATH
 
 
 def _pedidos_github_headers():
