@@ -532,6 +532,44 @@ _PEDIDOS_RAW_COLS = {
 _COL_PEDIDOS_VIEJO = "Pedidos Facturados con Venta Operativa - Ecommerce"
 _COL_UNIDADES_VIEJO = "Cantidad Venta Operativa - Ecommerce"
 
+# Traducción del "status" crudo de "Vs de ventas" — misma lista que ya usa
+# Venta hoy (_VH_ESTADO_PEDIDO_LABELS), copiada acá porque cada página
+# arma su propia lógica, más los estados nuevos que aparecieron en
+# archivos reales y todavía no estaban en esa lista. Cualquier estado que
+# no esté acá se muestra tal cual viene, en vez de ocultarse.
+_ESTADO_PEDIDO_LABELS = {
+    "delivered": "Entregado",
+    "canceled": "Cancelado",
+    "cancelled": "Cancelado",
+    "readyfordelivery": "Listo para entregar",
+    "notdelivered": "No entregado",
+    "readyforpicking": "Listo para picking",
+    "readyforinvoice": "Listo para facturar",
+    "indelivery": "En camino",
+    "cancelationrequested": "Cancelación solicitada",
+    "pendingcandidatesconfirmation": "Pendiente de confirmación",
+    "needsrescheduling": "Necesita reprogramación",
+    "processingrepacking": "En repacking",
+    "needsrepacking": "En repacking",
+    "picking": "En picking",
+    "needsintervention": "Necesita intervención",
+    "candidatesconfirmationdeadlineexceeded": "Venció confirmación de reemplazo",
+    "inpostpickingaudit": "En auditoría post-picking",
+    "validatingpayments": "Validando pago",
+    "preparinginternaldistribution": "En distribución interna",
+    "readyforinternaldistribution": "Listo para distribución interna",
+    "fulfillinginternaldistribution": "En distribución interna",
+}
+# Los únicos dos estados que cuentan como "resuelto" (no pendiente): el
+# resto, sea cual sea, es pendiente — a propósito, para que un estado
+# nuevo que todavía no esté en el diccionario de arriba caiga como
+# pendiente (más seguro que darlo por resuelto sin saber qué es).
+_ESTADOS_PEDIDO_RESUELTOS = {"delivered", "canceled", "cancelled"}
+
+def _estado_pedido_label(v):
+    s = str(v).strip() if v is not None and not pd.isna(v) else ""
+    return _ESTADO_PEDIDO_LABELS.get(s.lower(), s if s else "Sin especificar")
+
 
 def _pedidos_norm_codigo(v):
     if pd.isna(v):
@@ -654,9 +692,48 @@ def _cargar_pedidos_vsventas(vsventas_bytes, tienda_codes_tuple):
     return pedidos_dia, pedidos_tienda
 
 
+@st.cache_data(ttl=180, show_spinner=False)
+def _cargar_pedidos_estado_vsventas(vsventas_bytes):
+    """Detalle de pedidos (fecha de CREACIÓN + estado crudo) a partir de
+    'Vs de ventas', para el cuadro 'Pedidos por estado' más abajo. Solo las
+    hojas de detalle (una fila por pedido) traen "status" — las hojas
+    viejas (ya agregadas por tienda-día, de años anteriores) no lo traen,
+    así que quedan afuera de este detalle (el total de Pedidos del mes,
+    más arriba, no necesita el estado y sigue contando esas hojas igual)."""
+    cols = ["Id", "date", "status"]
+    vacio = pd.DataFrame(columns=cols)
+    if not vsventas_bytes:
+        return vacio
+    try:
+        xl = pd.ExcelFile(io.BytesIO(vsventas_bytes))
+        partes = []
+        for sheet in xl.sheet_names:
+            d = xl.parse(sheet)
+            d.columns = [str(c).strip() for c in d.columns]
+            if not _pedidos_es_hoja_detalle(d):
+                continue
+            es_pm = d.get("salesChannelPrefix", "").astype(str).str.strip().str.upper() == "PM"
+            es_rma = d.get("commerceId", "").astype(str).str.upper().str.contains("RMA", na=False)
+            d = d[~es_pm & ~es_rma & d["commerceSequentialId"].notna()]
+            partes.append(pd.DataFrame({
+                "Id": d["commerceSequentialId"].values,
+                "date": pd.to_datetime(d["commerceDateCreated"], errors="coerce").dt.normalize(),
+                "status": d.get("status", pd.Series([""] * len(d))).values,
+            }))
+        if not partes:
+            return vacio
+        todo = pd.concat(partes, ignore_index=True, sort=False)
+        todo = todo.dropna(subset=["Id"]).drop_duplicates(subset=["Id"])
+        todo = todo.dropna(subset=["date"])
+    except Exception:
+        return vacio
+    return todo[cols]
+
+
 _tienda_codes_conocidos = tuple(sorted(set(df_tiendas["Tienda"].astype(str)))) if len(df_tiendas) else tuple()
 _vsventas_bytes_pedidos = _pedidos_get_shared_bytes(SHARED_VSVENTAS_PATH_PEDIDOS)
 _pedidos_dia_vs, _pedidos_tienda_vs = _cargar_pedidos_vsventas(_vsventas_bytes_pedidos, _tienda_codes_conocidos)
+_pedidos_estado_df = _cargar_pedidos_estado_vsventas(_vsventas_bytes_pedidos)
 
 df = df.rename(columns={"orders": "orders_facturados", "units": "units_facturacion"})
 df = df.merge(_pedidos_dia_vs, on="date", how="left")
@@ -831,6 +908,92 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# Pedidos por estado — detalle de "Vs de ventas" para el mes cerrado,
+# separando Pendientes (cualquier estado que no sea Entregado ni
+# Cancelado) del resto, a pedido de Emi.
+# ---------------------------------------------------------------------
+st.markdown('<div class="section">Pedidos por estado</div>', unsafe_allow_html=True)
+
+_pedidos_mes_estado = _pedidos_estado_df[
+    (_pedidos_estado_df["date"].dt.year == REF_YEAR) &
+    (_pedidos_estado_df["date"].dt.month == REF_MONTH)
+].copy() if len(_pedidos_estado_df) else _pedidos_estado_df
+
+if not len(_pedidos_mes_estado):
+    st.markdown(
+        '<div style="color:#6b7280;font-size:13px;">No encontré detalle de estado para '
+        f'{MES_NOMBRE.lower()} {REF_YEAR} en "Vs de ventas" (puede ser un archivo en formato '
+        'viejo, de años anteriores, que no trae el estado de cada pedido).</div>',
+        unsafe_allow_html=True
+    )
+else:
+    _conteo_estado = _pedidos_mes_estado["status"].value_counts(dropna=False)
+    _total_pedidos_estado = int(_conteo_estado.sum())
+    _status_norm = _pedidos_mes_estado["status"].astype(str).str.strip().str.lower()
+    _total_pendientes = int((~_status_norm.isin(_ESTADOS_PEDIDO_RESUELTOS)).sum())
+    _total_resueltos = _total_pedidos_estado - _total_pendientes
+    _pct_pendientes = (_total_pendientes / _total_pedidos_estado) if _total_pedidos_estado else 0
+
+    cpe1, cpe2 = st.columns(2)
+    with cpe1:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #d97706;">
+          <div class="label" style="color:#d97706;">PEDIDOS PENDIENTES</div>
+          <div class="value">{intfmt(_total_pendientes)}</div>
+          <div class="small">{pct(_pct_pendientes)} de los {intfmt(_total_pedidos_estado)} de {MES_NOMBRE.lower()}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with cpe2:
+        st.markdown(f"""
+        <div class="card" style="border-top:4px solid #2f9e66;">
+          <div class="label" style="color:#2f9e66;">PEDIDOS RESUELTOS</div>
+          <div class="value">{intfmt(_total_resueltos)}</div>
+          <div class="small">Entregados + Cancelados</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    _filas_estado = ""
+    for _status_raw, _cant in _conteo_estado.sort_values(ascending=False).items():
+        _label = _estado_pedido_label(_status_raw)
+        _es_pend = str(_status_raw).strip().lower() not in _ESTADOS_PEDIDO_RESUELTOS
+        _pct_fila = (_cant / _total_pedidos_estado) if _total_pedidos_estado else 0
+        _badge = (
+            '<span style="color:#d97706;font-weight:700;">● Pendiente</span>' if _es_pend
+            else '<span style="color:#2f9e66;font-weight:700;">● Resuelto</span>'
+        )
+        _filas_estado += (
+            f'<tr><td>{html.escape(_label)}</td><td>{_badge}</td>'
+            f'<td style="text-align:right;">{intfmt(_cant)}</td>'
+            f'<td style="text-align:right;">{pct(_pct_fila)}</td></tr>'
+        )
+
+    st.markdown(f"""
+    <div class="rank-table-card">
+    <div class="table-scroll">
+    <table class="rank-table">
+      <thead>
+        <tr>
+          <th>Estado</th><th></th>
+          <th style="text-align:right;">Pedidos</th>
+          <th style="text-align:right;">% del mes</th>
+        </tr>
+      </thead>
+      <tbody>{_filas_estado}</tbody>
+    </table>
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(
+        '<div style="color:#9ca3af;font-size:11.5px;margin-top:6px;">'
+        f'Pedidos de {MES_NOMBRE.lower()} {REF_YEAR} por fecha de creación, según el estado que '
+        'traía "Vs de ventas" en la última carga (puede no ser el estado más actual si no la '
+        'volviste a subir hace poco). "Pendiente" = cualquier estado que no sea Entregado ni '
+        'Cancelado.</div>',
+        unsafe_allow_html=True
+    )
 
 st.markdown('<div class="section">Resumen para GDN</div>', unsafe_allow_html=True)
 st.markdown(
