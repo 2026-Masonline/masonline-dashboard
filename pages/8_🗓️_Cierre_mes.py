@@ -816,7 +816,7 @@ st.markdown(f"""
     <div class="hero-sub">E-COMMERCE · CIERRE DE MES</div>
   </div>
   <div class="hero-date">
-    {MES_LABEL}
+    Ventas {MES_LABEL}
     <small>Mes cerrado — {intfmt(len(current))} días con datos</small>
   </div>
 </div>
@@ -878,6 +878,179 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# ---------------------------------------------------------------------
+# HTML DESCARGABLE: copia independiente de esta página, sin Streamlit —
+# mismo patrón que ya usa Venta diaria ("Descargar dashboard HTML").
+# ---------------------------------------------------------------------
+
+def _cierre_build_standalone_html():
+    if LOGO_FILE.exists():
+        _html_logo = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            'style="height:58px;max-width:330px;object-fit:contain;">'
+        )
+    else:
+        _html_logo = '<div class="hero-brand">Más<span>Online</span></div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ventas {html.escape(MES_LABEL)}</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{
+    margin: 0;
+    padding: 34px 42px 42px;
+    background: #ffffff;
+    color: #20252b;
+    font-family: Arial, Helvetica, sans-serif;
+}}
+.container {{ max-width: 1500px; margin: 0 auto; }}
+.hero {{
+    background: #ffffff;
+    color: #20252b;
+    padding: 22px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 112px;
+    border-bottom: 4px solid #ff5a1f;
+}}
+.hero-brand {{ font-size: 30px; font-weight: 800; letter-spacing: -.5px; }}
+.hero-brand span {{ font-weight: 400; }}
+.hero-sub {{ font-size: 11px; letter-spacing: 3px; margin-top: 3px; opacity: .85; }}
+.hero-date {{ text-align: right; font-size: 19px; font-weight: 800; }}
+.hero-date small {{ display: block; font-size: 12px; font-weight: 400; margin-top: 4px; opacity: .8; }}
+.kpis {{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-top: 16px;
+}}
+.card, .progress-wrap {{
+    background: white;
+    border: 1px solid #e8ebef;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06);
+}}
+.card {{ padding: 20px 22px; min-height: 125px; }}
+.label {{ color: #6b7280; font-size: 14px; font-weight: 700; }}
+.value {{ color: #20252b; font-size: 30px; font-weight: 800; margin-top: 7px; }}
+.small {{ color: #20252b; font-size: 13px; font-weight: 700; margin-top: 7px; }}
+.section {{ font-size: 20px; font-weight: 800; margin: 26px 0 12px; }}
+.progress-wrap {{ padding: 20px 22px; }}
+.progress-layout {{ display: flex; align-items: center; gap: 28px; }}
+.progress-main {{ flex: 1; }}
+.progress-track {{
+    height: 16px; background: #e6e9ed; border-radius: 20px;
+    overflow: hidden; margin: 10px 0 8px;
+}}
+.progress-fill {{ height: 100%; width: {progress:.1f}%; background: #2f9e66; border-radius: 20px; }}
+.progress-row {{ display: flex; justify-content: space-between; color: #6b7280; font-size: 13px; }}
+.progress-target {{
+    width: 150px; color: #208653; font-size: 30px; font-weight: 800;
+    text-align: right; line-height: 1;
+}}
+.progress-target small {{ display: block; color: #6b7280; font-size: 12px; font-weight: 400; margin-top: 5px; }}
+.footer {{
+    display: flex; justify-content: space-between; color: #6b7280;
+    font-size: 12px; margin-top: 14px;
+}}
+@media (max-width: 900px) {{
+    body {{ padding: 18px; }}
+    .kpis {{ grid-template-columns: repeat(2, 1fr); }}
+}}
+@media (max-width: 600px) {{
+    .hero {{ flex-direction: column; align-items: flex-start; gap: 15px; }}
+    .hero-date {{ text-align: left; }}
+    .kpis {{ grid-template-columns: 1fr; }}
+    .progress-layout {{ flex-direction: column; align-items: stretch; }}
+    .progress-target {{ width: auto; text-align: left; }}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="hero">
+  <div>
+    {_html_logo}
+    <div class="hero-sub">E-COMMERCE · CIERRE DE MES</div>
+  </div>
+  <div class="hero-date">
+    Ventas {html.escape(MES_LABEL)}
+    <small>Mes cerrado — {html.escape(intfmt(len(current)))} días con datos</small>
+  </div>
+</div>
+
+<div class="kpis">
+
+<div class="card" style="border-top:4px solid #f5a623;">
+  <div class="label" style="color:#f5a623;">PARTICIPACIÓN E-COMMERCE</div>
+  <div class="value">{html.escape(pct(share))}</div>
+  <div class="small">Objetivo: 3,00% · Brecha: {gap*100:.2f} pp</div>
+</div>
+
+<div class="card" style="border-top:4px solid #3b82c4;">
+  <div class="label" style="color:#2566a0;">COMPAÑÍA</div>
+  <div class="value">{html.escape(money(acc_company))}</div>
+  <div class="small">Venta del mes (sin impuesto)</div>
+</div>
+
+<div class="card" style="border-top:4px solid #e8432c;">
+  <div class="label" style="color:#e8432c;">ECOMMERCE</div>
+  <div class="value" style="color:#e8432c;">{html.escape(money(acc_ecom))}</div>
+  <div class="small">Venta del mes (con impuesto)</div>
+</div>
+
+<div class="card" style="border-top:4px solid #59636e;">
+  <div class="label">PEDIDOS Y UNIDADES</div>
+  <div class="value">{html.escape(intfmt(acc_orders))}</div>
+  <div class="small">{html.escape(intfmt(acc_units))} unidades</div>
+</div>
+
+</div>
+
+<div class="section">Avance de participación</div>
+<div class="progress-wrap">
+  <div class="progress-layout">
+    <div class="progress-main">
+      <div class="progress-track">
+        <div class="progress-fill"></div>
+      </div>
+      <div class="progress-row">
+        <span>Participación del mes: {html.escape(pct(share))}</span>
+        <span>Objetivo: {html.escape(pct(target))}</span>
+      </div>
+    </div>
+    <div class="progress-target">
+      {html.escape(f"{share/target:.0%}" if target else "0%")}
+      <small>del objetivo</small>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>Fuente: venta con impuesto de MicroStrategy.</span>
+  <span>MásOnline | E-commerce</span>
+</div>
+
+</div>
+</body>
+</html>
+"""
+
+_cierre_html_dashboard = _cierre_build_standalone_html()
+
+st.download_button(
+    "⬇️ Descargar dashboard HTML",
+    data=_cierre_html_dashboard,
+    file_name=f"cierre_mes_{REF_YEAR}{REF_MONTH:02d}.html",
+    mime="text/html",
+    use_container_width=True,
+)
 
 st.markdown(
     '<div class="footer">'
